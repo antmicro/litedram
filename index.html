@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LiteDRAM benchmarks summary</title>
+
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
+
+    <script type="text/javascript" charset="utf8" src="https://cdn.datatables.net/1.10.19/js/jquery.dataTables.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.10.19/css/jquery.dataTables.css">
+    <script type="text/javascript" charset="utf8" src="https://cdn.datatables.net/fixedheader/3.1.5/js/dataTables.fixedHeader.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/fixedheader/3.1.5/css/fixedHeader.dataTables.min.css">
+
+    <style type="text/css" media="all">
+body {
+  font-family: 'Roboto', sans-serif;
+}
+
+footer {
+  text-align: center;
+  font-size: 10px;
+  padding: 20px;
+}
+
+.dataTables_filter {
+  margin: 15px 50px 10px 50px;
+}
+
+.dataTables_filter input {
+  width: 400px;
+}
+
+.table-select {
+  width: 100%;
+  margin: 0 auto;
+}
+
+.table-select ul {
+  list-style-type: none;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.table-select li {
+  float: left;
+}
+
+.table-select li a {
+  display: block;
+  padding: 10px 0px;
+  margin: 0px 20px;
+  text-align: center;
+  text-decoration: none;
+  font-size: 18px;
+  color:inherit;
+  border-bottom: 1px solid;
+  border-color: #ccc;
+  transition: 0.2s;
+}
+
+.table-select li a:hover {
+  border-color: #111;
+}
+
+/* did not work, .focus() couldn't turn it on */
+/* .table-select li a:focus { */
+/*   border-color: #222; */
+/* } */
+.table-select-active {
+  border-color: #111 !important;
+}
+
+.tables-wrapper {
+  width: 100%;
+  margin: auto;
+}
+
+.loading {
+  z-index: 999;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin-right: -50%;
+  transform: translate(-50%, -50%);
+}
+
+/* Loading animation */
+.lds-dual-ring {
+  display: inline-block;
+  width: 80px;
+  height: 80px;
+}
+.lds-dual-ring:after {
+  content: " ";
+  display: block;
+  width: 64px;
+  height: 64px;
+  margin: 8px;
+  border-radius: 50%;
+  border: 6px solid #fff;
+  border-color: #aaa transparent #aaa transparent;
+  animation: lds-dual-ring 1.2s linear infinite;
+}
+@keyframes lds-dual-ring {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+/* vim: set ts=2 sw=2: */
+
+.table-select li {
+  width: calc(100% / 5);
+}
+    </style>
+  </head>
+  <body>
+    
+    <div class="loading lds-dual-ring"></div>
+
+    
+    <div class="table-select">
+      <ul>
+        
+          <li id='latency-button'><a href="#">Latency</a></li>
+        
+          <li id='custom_access_pattern-button'><a href="#">Custom access pattern</a></li>
+        
+          <li id='sequential_access_pattern-button'><a href="#">Sequential access pattern</a></li>
+        
+          <li id='random_access_pattern-button'><a href="#">Random access pattern</a></li>
+        
+          <li id='failures-button'><a href="#">Failures</a></li>
+        
+      </ul>
+      
+    </div>
+
+    
+    <div class="tables-wrapper">
+      
+        
+        <div id="latency-div" style="display: none;">
+          <table border="0" class="dataframe" id="latency">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>name</th>
+      <th>sdram_module</th>
+      <th>sdram_data_width</th>
+      <th>bist_alternating</th>
+      <th>num_generators</th>
+      <th>num_checkers</th>
+      <th>write_latency</th>
+      <th>read_latency</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>test_0</td>
+      <td>MT41K128M16</td>
+      <td>32</td>
+      <td>True</td>
+      <td>1</td>
+      <td>1</td>
+      <td>2 clk</td>
+      <td>36 clk</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>test_1</td>
+      <td>MT41K128M16</td>
+      <td>32</td>
+      <td>True</td>
+      <td>1</td>
+      <td>1</td>
+      <td>2 clk</td>
+      <td>36 clk</td>
+    </tr>
+  </tbody>
+</table>
+        </div>
+      
+        
+        <div id="custom_access_pattern-div" style="display: none;">
+          <table border="0" class="dataframe" id="custom_access_pattern">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>name</th>
+      <th>sdram_module</th>
+      <th>sdram_data_width</th>
+      <th>bist_alternating</th>
+      <th>num_generators</th>
+      <th>num_checkers</th>
+      <th>length</th>
+      <th>pattern_file</th>
+      <th>write_bandwidth</th>
+      <th>read_bandwidth</th>
+      <th>write_efficiency</th>
+      <th>read_efficiency</th>
+    </tr>
+  </thead>
+  <tbody>
+  </tbody>
+</table>
+        </div>
+      
+        
+        <div id="sequential_access_pattern-div" style="display: none;">
+          <table border="0" class="dataframe" id="sequential_access_pattern">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>name</th>
+      <th>sdram_module</th>
+      <th>sdram_data_width</th>
+      <th>bist_alternating</th>
+      <th>num_generators</th>
+      <th>num_checkers</th>
+      <th>bist_length</th>
+      <th>write_bandwidth</th>
+      <th>read_bandwidth</th>
+      <th>write_efficiency</th>
+      <th>read_efficiency</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>3</th>
+      <td>test_3</td>
+      <td>MT41K128M16</td>
+      <td>32</td>
+      <td>True</td>
+      <td>1</td>
+      <td>1</td>
+      <td>1024</td>
+      <td>1.2 Gbps</td>
+      <td>1.1 Gbps</td>
+      <td>4.9 %</td>
+      <td>4.7 %</td>
+    </tr>
+  </tbody>
+</table>
+        </div>
+      
+        
+        <div id="random_access_pattern-div" style="display: none;">
+          <table border="0" class="dataframe" id="random_access_pattern">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>name</th>
+      <th>sdram_module</th>
+      <th>sdram_data_width</th>
+      <th>bist_alternating</th>
+      <th>num_generators</th>
+      <th>num_checkers</th>
+      <th>bist_length</th>
+      <th>write_bandwidth</th>
+      <th>read_bandwidth</th>
+      <th>write_efficiency</th>
+      <th>read_efficiency</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>2</th>
+      <td>test_2</td>
+      <td>MT41K128M16</td>
+      <td>32</td>
+      <td>True</td>
+      <td>1</td>
+      <td>1</td>
+      <td>1024</td>
+      <td>1.0 Gbps</td>
+      <td>992.7 Mbps</td>
+      <td>4.3 %</td>
+      <td>4.1 %</td>
+    </tr>
+  </tbody>
+</table>
+        </div>
+      
+        
+        <div id="failures-div" style="display: none;">
+          <table border="0" class="dataframe" id="failures">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>name</th>
+      <th>sdram_module</th>
+      <th>sdram_data_width</th>
+      <th>bist_alternating</th>
+      <th>num_generators</th>
+      <th>num_checkers</th>
+      <th>bist_length</th>
+      <th>bist_random</th>
+      <th>pattern_file</th>
+      <th>length</th>
+      <th>generator_ticks</th>
+      <th>checker_errors</th>
+      <th>checker_ticks</th>
+    </tr>
+  </thead>
+  <tbody>
+  </tbody>
+</table>
+        </div>
+      
+    </div>
+  </body>
+
+  <footer id="footer">
+    <a href="https://github.com/enjoy-digital/litedram">LiteDRAM</a> is a part of <a href="https://github.com/enjoy-digital/litex">Litex</a>.
+    <br>
+    Generated using
+    <a href="https://github.com/enjoy-digital/litedram/blob/099399453ed3bd1e464ac0444173db896e47636a/test/run_benchmarks.py">test/run_benchmarks.py</a>,
+    revision
+    <a href="https://github.com/enjoy-digital/litedram/commit/099399453ed3bd1e464ac0444173db896e47636a">0993994</a>,
+    2020-02-17 13:37:15.
+  </footer>
+
+  
+  <script>
+    
+    table_ids = [
+      
+        'latency',
+    
+        'custom_access_pattern',
+    
+        'sequential_access_pattern',
+    
+        'random_access_pattern',
+    
+        'failures',
+    
+    ];
+
+    
+    show_table = function(id) {
+      if (!table_ids.includes(id)) {
+        console.log('Error: show_table(' + id + ')');
+        return;
+      }
+      for (var table_div of $('.tables-wrapper').children()) {
+        if (table_div.id) {
+          var table_div = $('#' + table_div.id)
+          if (table_div.attr('id') == id + '-div') {
+            table_div.show();
+          } else {
+            table_div.hide();
+          }
+        }
+      }
+    }
+
+    // sort human-readable values assuming format "123 Kb", only first letter of unit is used
+    jQuery.fn.dataTable.ext.type.order['file-size-pre'] = function(data) {
+      var matches = data.match(/^(\d+(?:\.\d+)?)\s*([a-z]+)/i);
+      var multipliers = {
+        k: Math.pow(2, 10),
+        m: Math.pow(2, 20),
+        g: Math.pow(2, 30),
+        t: Math.pow(2, 40),
+      };
+
+      console.log(matches);
+      if (matches) {
+        var float = parseFloat(matches[1]);
+        var prefix = matches[2].toLowerCase()[0];
+        var multiplier = multipliers[prefix];
+        if (multiplier) {
+          float = float * multiplier;
+          console.log(matches, float, multiplier);
+        }
+        return float;
+      } else {
+        return -1;
+      };
+    };
+
+    
+    $(document).ready(function() {
+      // generate data tables
+      for (var id of table_ids) {
+        // add human readable class to all bandwidth columns
+        var columns = $('#' + id + ' > thead > tr > th').filter(function(index) {
+          return $(this).text().toLowerCase().includes('bandwidth');
+        });
+        console.log(columns)
+        columns.addClass('human-readable-data');
+
+        // construct data table
+        table = $('#' + id);
+        table.DataTable({
+          paging: false,
+          fixedHeader: true,
+          columnDefs: [
+            { type: 'file-size', targets: [ 'human-readable-data' ] },
+            { className: 'dt-body-right', targets: [ '_all' ] },
+            { className: 'dt-head-center', targets: [ '_all' ] },
+          ]
+        });
+        table.addClass("stripe");
+        table.addClass("hover");
+        table.addClass("order-column");
+        table.addClass("cell-border");
+        table.addClass("row-border");
+      }
+
+      // add click handlers that change the table being shown
+      for (var id of table_ids) {
+        var ahref = $('#' + id + '-button a');
+        // use nested closure so that we avoid the situation
+        // where all click handlers end up with the last id
+        ahref.click(function(table_id) {
+          return function() {
+            // get rid of this class after first click
+            $('.table-select a').removeClass('table-select-active');
+            $(this).addClass('table-select-active');
+            show_table(table_id);
+          }
+        }(id))
+      }
+
+      // show the first one
+      $('#' + table_ids[0] + '-button a:first').click();
+
+      // hide all elements of class loading
+      $('.loading').hide();
+    });
+  </script>
+</html>
