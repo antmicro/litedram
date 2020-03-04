@@ -9,7 +9,7 @@ before_install:
 
 install:
   # Get Migen / LiteX / Cores
-  - wget https://raw.githubusercontent.com/enjoy-digital/litex/master/litex_setup.py
+  - wget https://raw.githubusercontent.com/antmicro/litex/mglb/multiple-sdrams-support-ci/litex_setup.py
   - python3 litex_setup.py init install
   # litex_setup.py fails for litedram, which has already been cloned by Travis
   # now install the local litedram so that it is available for benchmarks script
@@ -77,3 +77,6 @@ jobs:
         local_dir: gh-pages
         on:
           branch: master
+
+  allow_failures:
+    - stage: "Unit tests"
