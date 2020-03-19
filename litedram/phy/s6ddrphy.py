@@ -78,8 +78,8 @@ class S6HalfRateDDRPHY(Module):
 
         # DFI Interface ----------------------------------------------------------------------------
         self.dfi = dfi = Interface(addressbits, bankbits, nranks, 2*databits, nphases)
-        self.clk4x_wr_strb = Signal()
-        self.clk4x_rd_strb = Signal()
+        self.clk4x_wr_strb = dict((g.name, Signal()) for g in pads.groups)
+        self.clk4x_rd_strb = dict((g.name, Signal()) for g in pads.groups)
 
         # # #
 
@@ -89,12 +89,23 @@ class S6HalfRateDDRPHY(Module):
         # sdram_full_wr_clk : full rate sdram write clk
         # sdram_full_rd_clk : full rate sdram read clk
         sd_sys = getattr(self.sync, "sys")
-        sd_sdram_half = getattr(self.sync, "sdram_half")
-
         sys_clk = ClockSignal("sys")
-        sdram_half_clk = ClockSignal("sdram_half")
-        sdram_full_wr_clk = ClockSignal("sdram_full_wr")
-        sdram_full_rd_clk = ClockSignal("sdram_full_rd")
+
+        sd_sdram_half = dict((g.name, getattr(self.sync, "sdram_half_" + g.name)) for g in pads.groups)
+
+        sdram_half_clk = dict((g.name, ClockSignal("sdram_half_" + g.name)) for g in pads.groups)
+        sdram_full_wr_clk = dict((g.name, ClockSignal("sdram_full_wr_" + g.name)) for g in pads.groups)
+        sdram_full_rd_clk = dict((g.name, ClockSignal("sdram_full_rd_" + g.name)) for g in pads.groups)
+
+        def signal_clk(clk_dict, signal):
+            if isinstance(clk_dict, dict):
+                for group in pads.groups:
+                    for sig,_ in group.iter_flat():
+                        if signal.value == sig:
+                            return clk_dict[group.name]
+                raise
+            else:
+                return clk_dict
 
         # Addresses and Commands -------------------------------------------------------------------
 
@@ -107,36 +118,38 @@ class S6HalfRateDDRPHY(Module):
 
         sd_sys += phase_sys.eq(phase_half)
 
-        sd_sdram_half += [
-            If(phase_half == phase_sys,
-                phase_sel.eq(0),
-            ).Else(
-                phase_sel.eq(phase_sel+1)
-            ),
-            phase_half.eq(phase_half+1),
-        ]
+        for g in pads.groups:
+            sd_sdram_half[g.name] += [
+                If(phase_half == phase_sys,
+                    phase_sel.eq(0),
+                ).Else(
+                    phase_sel.eq(phase_sel+1)
+                ),
+                phase_half.eq(phase_half+1),
+            ]
 
         # register dfi cmds on half_rate clk
         r_dfi = Array(Record(phase_cmd_description(addressbits, bankbits, nranks=nranks)) for i in range(nphases))
         for n, phase in enumerate(dfi.phases):
-            sd_sdram_half += [
-                r_dfi[n].reset_n.eq(phase.reset_n),
-                r_dfi[n].odt.eq(phase.odt),
-                r_dfi[n].address.eq(phase.address),
-                r_dfi[n].bank.eq(phase.bank),
-                r_dfi[n].cs_n.eq(phase.cs_n),
-                r_dfi[n].cke.eq(phase.cke),
-                r_dfi[n].cas_n.eq(phase.cas_n),
-                r_dfi[n].ras_n.eq(phase.ras_n),
-                r_dfi[n].we_n.eq(phase.we_n)
-            ]
+            for g in pads.groups:
+                sd_sdram_half[g.name] += [
+                    r_dfi[n].reset_n.eq(phase.reset_n),
+                    r_dfi[n].odt.eq(phase.odt),
+                    r_dfi[n].address.eq(phase.address),
+                    r_dfi[n].bank.eq(phase.bank),
+                    r_dfi[n].cs_n.eq(phase.cs_n),
+                    r_dfi[n].cke.eq(phase.cke),
+                    r_dfi[n].cas_n.eq(phase.cas_n),
+                    r_dfi[n].ras_n.eq(phase.ras_n),
+                    r_dfi[n].we_n.eq(phase.we_n)
+                ]
 
         # Iterate on pads groups -------------------------------------------------------------------
         for pads_group in range(len(pads.groups)):
             pads.sel_group(pads_group)
 
             # output cmds
-            sd_sdram_half += [
+            sd_sdram_half[pads.groups[pads_group].name] += [
                 pads.a.eq(r_dfi[phase_sel].address),
                 pads.ba.eq(r_dfi[phase_sel].bank),
                 pads.cke.eq(r_dfi[phase_sel].cke),
@@ -147,7 +160,7 @@ class S6HalfRateDDRPHY(Module):
             # optional pads
             for name in "reset_n", "cs_n", "odt":
               if hasattr(pads, name):
-                  sd_sdram_half += getattr(pads, name).eq(getattr(r_dfi[phase_sel], name))
+                  sd_sdram_half[pads.groups[pads_group].name] += getattr(pads, name).eq(getattr(r_dfi[phase_sel], name))
 
         # Bitslip ----------------------------------------------------------------------------------
         bitslip_cnt = Signal(4)
@@ -163,8 +176,10 @@ class S6HalfRateDDRPHY(Module):
         ]
 
         # DQ/DQS/DM data ---------------------------------------------------------------------------
-        sdram_half_clk_n = Signal()
-        self.comb += sdram_half_clk_n.eq(~sdram_half_clk)
+        sdram_half_clk_n = {}
+        for g in pads.groups:
+            sdram_half_clk_n[g.name] = Signal()
+            self.comb += sdram_half_clk_n[g.name].eq(~sdram_half_clk[g.name])
 
         postamble = Signal()
         drive_dqs = Signal()
@@ -186,8 +201,8 @@ class S6HalfRateDDRPHY(Module):
                 p_INIT=0,
                 p_SRTYPE="ASYNC",
 
-                i_C0=sdram_half_clk,
-                i_C1=sdram_half_clk_n,
+                i_C0=signal_clk(sdram_half_clk, pads.dqs[i]),
+                i_C1=signal_clk(sdram_half_clk_n, pads.dqs[i]),
 
                 i_CE=1,
                 i_D0=0,
@@ -204,8 +219,8 @@ class S6HalfRateDDRPHY(Module):
                 p_INIT=0,
                 p_SRTYPE="ASYNC",
 
-                i_C0=sdram_half_clk,
-                i_C1=sdram_half_clk_n,
+                i_C0=signal_clk(sdram_half_clk, pads.dqs[i]),
+                i_C1=signal_clk(sdram_half_clk_n, pads.dqs[i]),
 
                 i_CE=1,
                 i_D0=dqs_t_d0,
@@ -233,7 +248,8 @@ class S6HalfRateDDRPHY(Module):
                     o_O=pads.dqs[i]
                 )
 
-        sd_sdram_half += postamble.eq(drive_dqs)
+        for g in pads.groups:
+            sd_sdram_half[g.name] += postamble.eq(drive_dqs)
 
         d_dfi = [Record(phase_wrdata_description(nphases*databits)+phase_rddata_description(nphases*databits))
             for i in range(2*nphases)]
@@ -277,11 +293,11 @@ class S6HalfRateDDRPHY(Module):
 
                 o_OQ=dq_o[i],
                 i_OCE=1,
-                i_CLK0=sdram_full_wr_clk,
+                i_CLK0=signal_clk(sdram_full_wr_clk, pads.dq[i]),
                 i_CLK1=0,
-                i_IOCE=self.clk4x_wr_strb,
+                i_IOCE=signal_clk(self.clk4x_wr_strb, pads.dq[i]),
                 i_RST=0,
-                i_CLKDIV=sys_clk,
+                i_CLKDIV=signal_clk(sys_clk, pads.dq[i]),
 
                 i_D1=dq_wrdata[wr_bitslip+3][i],
                 i_D2=dq_wrdata[wr_bitslip+2][i],
@@ -311,11 +327,11 @@ class S6HalfRateDDRPHY(Module):
 
                 i_D=dq_i[i],
                 i_CE0=1,
-                i_CLK0=sdram_full_rd_clk,
+                i_CLK0=signal_clk(sdram_full_rd_clk, pads.dq[i]),
                 i_CLK1=0,
-                i_IOCE=self.clk4x_rd_strb,
+                i_IOCE=signal_clk(self.clk4x_rd_strb, pads.dq[i]),
                 i_RST=ResetSignal(),
-                i_CLKDIV=sys_clk,
+                i_CLKDIV=signal_clk(sys_clk, pads.dq[i]),
                 i_BITSLIP=bitslip_inc,
 
                 o_Q1=d_dfi[0*nphases+0].rddata[i+databits],
@@ -349,11 +365,11 @@ class S6HalfRateDDRPHY(Module):
 
                 o_OQ=pads.dm[i],
                 i_OCE=1,
-                i_CLK0=sdram_full_wr_clk,
+                i_CLK0=signal_clk(sdram_full_wr_clk, pads.dm[i]),
                 i_CLK1=0,
-                i_IOCE=self.clk4x_wr_strb,
+                i_IOCE=signal_clk(self.clk4x_wr_strb, pads.dm[i]),
                 i_RST=0,
-                i_CLKDIV=sys_clk,
+                i_CLKDIV=signal_clk(sys_clk, pads.dm[i]),
 
                 i_D1=dq_wrdata_mask[wr_bitslip+3][i],
                 i_D2=dq_wrdata_mask[wr_bitslip+2][i],
@@ -376,7 +392,8 @@ class S6HalfRateDDRPHY(Module):
 
         if memtype == "DDR3":
             r_drive_dq = Signal(self.settings.cwl-1)
-            sd_sdram_half += r_drive_dq.eq(Cat(wrdata_en, r_drive_dq))
+            for g in pads.groups:
+                sd_sdram_half[g.name] += r_drive_dq.eq(Cat(wrdata_en, r_drive_dq))
             self.comb += drive_dq.eq(r_drive_dq[self.settings.cwl-2])
         else:
             self.comb += drive_dq.eq(wrdata_en)
@@ -388,7 +405,8 @@ class S6HalfRateDDRPHY(Module):
             r_dfi_wrdata_en = Signal(max(self.settings.cwl, self.settings.cl))
         else:
             r_dfi_wrdata_en = Signal(self.settings.cl)
-        sd_sdram_half += r_dfi_wrdata_en.eq(Cat(wrdata_en_d, r_dfi_wrdata_en))
+        for g in pads.groups:
+            sd_sdram_half[g.name] += r_dfi_wrdata_en.eq(Cat(wrdata_en_d, r_dfi_wrdata_en))
 
         if memtype == "DDR3":
             self.comb += drive_dqs.eq(r_dfi_wrdata_en[self.settings.cwl-1])
