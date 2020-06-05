@@ -887,10 +887,10 @@ class KVR21SE15S84(DDR4Module):
     ncols       = 1024
     # timings
     trefi = {"1x": 64e6/8192,   "2x": (64e6/8192)/2, "4x": (64e6/8192)/4}
-    trfc  = {"1x": (None, 350), "2x": (None, 260),   "4x": (None, 160)}
-    technology_timings = _TechnologyTimings(tREFI=trefi, tWTR=(4, 7.5), tCCD=(4, None), tRRD=(4, 4.9), tZQCS=(128, 80))
+    trfc  = {"1x": (None, 260), "2x": (None, 160),   "4x": (None, 110)}
+    technology_timings = _TechnologyTimings(tREFI=trefi, tWTR=(4, 7.5), tCCD=(4, 5.628), tRRD=(4, 5.3), tZQCS=(128, 80))
     speedgrade_timings = {
-        "2133": _SpeedgradeTimings(tRP=13.5, tRCD=13.5, tWR=15, tRFC=trfc, tFAW=(20, 25), tRAS=33),
+        "2133": _SpeedgradeTimings(tRP=13.5, tRCD=13.5, tWR=15, tRFC=trfc, tFAW=(20, 21), tRAS=33),
     }
     speedgrade_timings["default"] = speedgrade_timings["2133"]
 
@@ -904,11 +904,12 @@ class MTA4ATF51264HZ(DDR4Module):
     # timings
     trefi = {"1x": 64e6/8192,   "2x": (64e6/8192)/2, "4x": (64e6/8192)/4}
     trfc  = {"1x": (None, 350), "2x": (None, 260),   "4x": (None, 160)}
-    technology_timings = _TechnologyTimings(tREFI=trefi, tWTR=(4, 7.5), tCCD=(4, None), tRRD=(4, 4.9), tZQCS=(128, 80))
+    technology_timings = _TechnologyTimings(tREFI=trefi, tWTR=(4, 7.5), tCCD=(4, 5), tRRD=(4, 6.4), tZQCS=(128, 80))
     speedgrade_timings = {
-        "2133": _SpeedgradeTimings(tRP=13.5, tRCD=13.5, tWR=15, tRFC=trfc, tFAW=(20, 25), tRAS=33),
+        "2133": _SpeedgradeTimings(tRP=13.5, tRCD=13.5, tWR=15, tRFC=trfc, tFAW=(28, 30), tRAS=33),
+        "2666": _SpeedgradeTimings(tRP=13.75, tRCD=13.75, tWR=15, tRFC=trfc, tFAW=(28, 30), tRAS=32),
     }
-    speedgrade_timings["default"] = speedgrade_timings["2133"]
+    speedgrade_timings["default"] = speedgrade_timings["2666"]
 
 # DDR4 (RDIMM) -------------------------------------------------------------------------------------
 
