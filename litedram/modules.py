@@ -907,7 +907,9 @@ class MTA4ATF51264HZ(DDR4Module):
     technology_timings = _TechnologyTimings(tREFI=trefi, tWTR=(4, 7.5), tCCD=(4, 5), tRRD=(4, 6.4), tZQCS=(128, 80))
     speedgrade_timings = {
         "2133": _SpeedgradeTimings(tRP=13.5, tRCD=13.5, tWR=15, tRFC=trfc, tFAW=(28, 30), tRAS=33),
+        "2400": _SpeedgradeTimings(tRP=13.75, tRCD=13.75, tWR=15, tRFC=trfc, tFAW=(28, 30), tRAS=32),
         "2666": _SpeedgradeTimings(tRP=13.75, tRCD=13.75, tWR=15, tRFC=trfc, tFAW=(28, 30), tRAS=32),
+        "3200": _SpeedgradeTimings(tRP=13.75, tRCD=13.75, tWR=15, tRFC=trfc, tFAW=(28, 30), tRAS=32),
     }
     speedgrade_timings["default"] = speedgrade_timings["2666"]
 
