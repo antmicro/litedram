@@ -23,49 +23,110 @@ class EM6GA16L(SDRAMModule):
 
 # RPC Commands -------------------------------------------------------------------------------------
 
+class ModeRegister:
+    CL = {
+        8:  0b000,  # default
+        10: 0b001,
+        11: 0b010,
+        13: 0b011,
+        3:  0b110,
+    }
+    nWR = {
+        4:  0b000,
+        6:  0b001,
+        7:  0b010,
+        8:  0b011,  # default
+        10: 0b100,
+        12: 0b101,
+        14: 0b110,
+        16: 0b111,
+    }
+    # resistance in Ohms
+    Zout = {
+        120:     0b0010,
+        90:      0b0100,
+        51.4:    0b0110,
+        60:      0b1000,
+        40:      0b1010,
+        36:      0b1100,
+        27.7:    0b1110,
+        "short": 0b0001,  # 0bxxx1
+        "open":  0b0000,  # output disabled, default
+    }
+    ODT = {
+        60:     0b001,
+        45:     0b010,
+        25.7:   0b011,
+        30:     0b100,
+        20:     0b101,
+        18:     0b110,
+        13.85:  0b111,
+        "open": 0b000,
+    }
+
+    def __init__(self):
+        # CAS latency, what is the encoding?
+        self.cl      = Signal(3)
+        # in LPDDR3 nWR is the number of clock cycles determining when to start internal precharge
+        # for a write burst when auto-precharge is enabled (ceil(tRW/tCK) ?)
+        # but in RPC we don't seem to b able to specify auto-precharge in any way, right?
+        self.nwr     = Signal(3)
+        self.zout    = Signal(4)
+        # on-die-termination resistance configuration
+        self.odt     = Signal(3)
+        # as we have no ODT pin, these is probably used to enable/disable ODT
+        self.odt_stb = Signal(1)
+        # ??
+        self.csr_fx  = Signal(1)
+        # probably like odt_stb
+        self.odt_pd  = Signal(1)
+        self.tm      = Signal(1)
+
 class DFIAdapter(Module):
     # Translate DFI controls to RPC versions
     # It seems that the encoding is different when we use STB serial pin and CD data pins
     # For now we want to focus on CD encoding
+
+    ZQC_OP = {
+        "init":  0b00,  # calibration after initialization
+        "long":  0b01,
+        "short": 0b10,
+        "reset": 0b11,  # ZQ reset
+    }
+    REF_OP = {
+        "FST": 0b00,  # FST refresh: tREFi = 100ns
+        "LP":  0b00,  # LP refresh:  tREFi = 3.2us
+    }
+    UTR_OP = {  # Utility Register read pattern
+        "0101": 0b00,
+        "1100": 0b01,
+        "0011": 0b10,
+        "1010": 0b11,
+    }
+
     # dfi: single DFI phase
     def __init__(self, dfi):
-        # data for positive and negative edge
+        # Request Packet: data for positive and negative edge
         self.db_p = Signal(16)
         self.db_n = Signal(16)
-        # serial
+        # Serial Packet
         self.stb  = Signal(16)
 
-        class ModeRegister:
-            def __init__(self):
-                # CAS latency, what is the encoding?
-                self.cl      = Signal(3)
-                # in LPDDR3 nWR is the number of clock cycles determining when to start internal precharge
-                # for a write burst when auto-precharge is enabled (ceil(tRW/tCK) ?)
-                # but in RPC we don't seem to b able to specify auto-precharge in any way, right?
-                self.nwr     = Signal(3)
-                self.zout    = Signal(4)
-                # on-die-termination resistance configuration
-                self.odt     = Signal(3)
-                # as we have no ODT pin, these is probably used to enable/disable ODT
-                self.odt_stb = Signal(1)
-                # ??
-                self.csr_fx  = Signal(1)
-                # probably like odt_stb
-                self.odt_pd  = Signal(1)
-                self.tm      = Signal(1)
         self.mr = ModeRegister()
 
         # use it to send PRE on STB
         auto_precharge = Signal()
         self.comb += auto_precharge.eq(dfi.address[10])
 
-        # TODO: what are these signals
-        # byte count? burst count?
-        bc = Signal(6)
-        # refresh what?
-        ref_op = Signal(2)
-        # zqc what?
-        zqc_op = Signal(2)
+        # burst count - specifies the number of 32-byte bursts in the transfer
+        self.bc = Signal(6)
+        # Refresh
+        self.ref_op = Signal(2)
+        # ZQ Calibration
+        self.zqc_op = Signal(2)
+        # utility register read
+        self.utr_en = Signal()
+        self.utr_op = Signal(2)
 
         # for WR and RD, it seems to be a banks mask, so PRECHARGE ALL would be 0b1111
         bk = Signal(4)
@@ -111,7 +172,7 @@ class DFIAdapter(Module):
             "RD": [
                 self.db_p[0:2   +1].eq(0b000),
                 self.db_p[3:4   +1].eq(dfi.bank[:2]),
-                self.db_p[5:10  +1].eq(bc),
+                self.db_p[5:10  +1].eq(self.bc),
                 self.db_p[13:15 +1].eq(dfi.address[4:6 +1]),
                 self.db_n[0       ].eq(0),
                 self.db_n[13:15 +1].eq(dfi.address[7:9 +1]),
@@ -119,7 +180,7 @@ class DFIAdapter(Module):
             "WR": [
                 self.db_p[0:2   +1].eq(0b001),
                 self.db_p[3:4   +1].eq(dfi.bank[:2]),
-                self.db_p[5:10  +1].eq(bc),
+                self.db_p[5:10  +1].eq(self.bc),
                 self.db_p[13:15 +1].eq(dfi.address[4:6 +1]),
                 self.db_n[0       ].eq(0),
                 self.db_n[13:15 +1].eq(dfi.address[7:9 +1]),
@@ -132,12 +193,12 @@ class DFIAdapter(Module):
             "REF": [
                 self.db_p[6:9+1].eq(bk),
                 self.db_p[0:2+1].eq(0b110),
-                self.db_n[1:2+3].eq(ref_op),
+                self.db_n[1:2+3].eq(self.ref_op),
                 self.db_n[0    ].eq(0),
             ],
             "ZQC": [
                 self.db_p[0:2  +1].eq(0b001),
-                self.db_p[14:15+1].eq(zqc_op),
+                self.db_p[14:15+1].eq(self.zqc_op),
                 self.db_n[0      ].eq(1),
             ],
             "MRS": [
@@ -146,84 +207,112 @@ class DFIAdapter(Module):
                 self.db_n[0      ].eq(0),
                 self.db_n[12:15+1].eq(Cat(self.mr.odt_stb, self.mr.csr_fx, self.mr.odt_pd, self.mr.tm)),
             ],
+            "UTR": [
+                self.db_p[0:2  +1].eq(0b111),
+                self.db_p[3      ].eq(self.utr_en),
+                self.db_p[4:5  +1].eq(self.utr_op),
+                self.db_n[0      ].eq(0),
+            ],
         }
 
         # command encoding for STB serial line
-        # TODO: need more info on command encoding
+        stb_op   = Signal(2)
+        stb_addr = Signal(14)
+        self.comb += [
+            self.stb[:2].eq(stb_op),
+            self.stb[2:].eq(stb_addr),
+        ]
+        rd_wr = 0  # TODO: which one is 0 and which is 1
         serial_cmd = {
             "NOP": [
-                self.stb.eq(0),
+                stb_op.eq(0b11),
             ],
             "ACT": [
-                self.stb[14:15+1].eq(0b10),
-                self.stb[0:13 +1].eq(Cat(dfi.address[:12], dfi.bank[:2])),
+                stb_op.eq(0b10),
+                stb_addr.eq(Cat(dfi.bank[:2], dfi.address[:12])),
             ],
             "RD": [
-                self.stb[14:15+1].eq(0b01),  # burst, TODO: may require "Toggle RW" before
-                self.stb[0:13 +1].eq(Cat(dfi.address[:12], dfi.bank[:2])),  # ?
+                stb_op.eq(0b01),  # burst, TODO: may require "Toggle RW" before
+                stb_addr.eq(Cat(dfi.bank[:2], rd_wr, dfi.address[4:9+1])),
             ],
             "WR": [
-                self.stb[14:15+1].eq(0b01),  # burst, TODO: may require "Toggle RW" before
-                self.stb[0:13 +1].eq(Cat(dfi.address[:12], dfi.bank[:2])),  # ?
+                stb_op.eq(0b01),  # burst, TODO: may require "Toggle RW" before
+                stb_addr.eq(Cat(dfi.bank[:2], rd_wr, dfi.address[4:9+1])),
             ],
-            "PRE": [],
+            "PRE": [
+                stb_op.eq(0b00),  # utility
+            ],
+            # ZQC: not available
+            # MRS: not available
+            # TODO: the rest is a bit more compicated, rework STB encoding
             "REF": [],
-            "ZQC": [],
-            "MRS": [],
-            # there should be also:
-            # - Toggle RW
-            # - Burst Stop
+            "TOGGLE_RW": [
+                stb_op.eq(0b00),
+                stb_addr[0].eq(1),
+            ],
+            # Burst Stop
         }
 
         parallel_cases = {dfi_cmd[cmd]: parallel_cmd[cmd] for cmd in dfi_cmd.keys()}
-        serial_cases   = {dfi_cmd[cmd]: serial_cmd[cmd]   for cmd in dfi_cmd.keys()}
+        #  serial_cases   = {dfi_cmd[cmd]: serial_cmd[cmd]   for cmd in dfi_cmd.keys()}
         self.comb += [
             Case(cmd_sig(dfi), parallel_cases),
-            Case(cmd_sig(dfi), serial_cases),
+            #  Case(cmd_sig(dfi), serial_cases),
         ]
 
 # ECP5 Etron RPC DRAM PHY --------------------------------------------------------------------------
 
 class ECP5RPCPHY(Module):
     def __init__(self, pads):
-        # we should be able to use both DDR3 pads and RPC-specific pads
-        # so we must omit:
-        # - pads.a (besides 1 line used for STB - ?pads.a[0]?)
-        # - pads.ba
-        # - pads.ras_n
-        # - pads.cas_n
-        # - pads.we_n
-        # - pads.dm
-        # - pads.cke
-        # - pads.odt
-        # - pads.reset_n
-        # FIXME: multiple chips?
+        # TODO: multiple chips?
+        # TODO: we should be able to use both DDR3 pads and RPC-specific pads
         pads = PHYPadsCombiner(pads)
 
         # TODO: verify DDR3 compatibility
-        stb = pads.a[0]
+        if hasattr(pads, "stb"):
+            stb = pads.stb
+        else:
+            stb = pads.a[0]
 
         phytype = self.__class__.__name__
         memtype = "RPC"
+        tck     = 2 / (4*sys_clk_freq)  # 2 for DDR, 4 for DDR3 frequency ratio
 
         databits = len(pads.dq)
         assert databits == 16
         addressbits = 14
         bankbits = 2
-        nranks   = 1 if not hasattr(pads, "cs_n") else len(pads.cs_n)
+        nranks = 1 if not hasattr(pads, "cs_n") else len(pads.cs_n)
         nphases = 4
 
-        # TODO
-        rdphase = 0
-        wrphase = 0
-        rdcmdphase = 0
-        wrcmdphase = 0
-        cl = 0
-        cwl = 0
-        read_latency = 0
-        write_latency = 0
-
         # PHY settings -----------------------------------------------------------------------------
+        # RPC always has AL=1 and both read and write latencies are equal: RL = WL = AL + CL
+        def get_cl_cw(tck):  # TODO: add to litedram.common
+            # tck is for DDR frequency
+            f_to_cl = OrderedDict()
+            f_to_cl[533e6]  =  3
+            f_to_cl[800e6]  =  8
+            f_to_cl[1200e6] =  8
+            f_to_cl[1333e6] = 10
+            f_to_cl[1600e6] = 11
+            f_to_cl[1866e6] = 13
+            for f, cl in f_to_cl.items():
+                if tck >= 2/f:
+                    cwl = cl
+                    return cl + 1, cwl + 1
+            raise ValueError(tck)
+
+        cl, cwl         = get_cl_cw(tck)
+        cl_sys_latency  = get_sys_latency(nphases, cl)
+        cwl_sys_latency = get_sys_latency(nphases, cwl)
+
+        rdcmdphase, rdphase = get_sys_phases(nphases, cl_sys_latency, cl)
+        wrcmdphase, wrphase = get_sys_phases(nphases, cwl_sys_latency, cwl)
+
+        read_latency = cl_sys_latency
+        # TODO: we must additionally transmit write mask before every burst, so +1?
+        write_latency = cwl_sys_latency
+
         self.settings = PhySettings(
             phytype       = phytype,
             memtype       = memtype,
