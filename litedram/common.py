@@ -169,6 +169,43 @@ class Settings:
 
 
 class PhySettings(Settings):
+    """PHY settings
+
+    phytype: str
+        Name of the PHY.
+    memtype: str
+        Memory type (e.g. "SDR", "DDR", "DDR3", ...).
+    databits: int
+        Width of DQ line.
+    dfi_databits: int
+        Width of DFI wrdata/rddata for each phase. Generally depends on `nphases`,
+        `databits` and BL (burst length).
+    nphases: int
+        Number of phases, i.e. frequency ratio between PHY and DRAM DQ lines.
+    rdphase: int
+        Phase used for issuing READ commands.
+    rdcmdphase: int
+        Phase used for issuing ACT before READ.
+    wrphase: int
+        Phase used for issuing WRITE commands.
+    wrcmdphase: int
+        Phase used for issuing ACT before WRITE.
+    cl: int
+        CAS latency, i.e. the delay after READ command when the data is available.
+    cwl: int
+        CAS write latency, i.e. the delay after WRITE command when the write data
+        is latched.
+    read_latency: int
+        Cummulative delay between READ command and when the data is available,
+        including AL (additive latency) and PHY delays. This is the delay between
+        READ being sent to PHY and read data being available on DFI.
+    write_latency: int
+        Cummulative delay between WRITE command and when the data is latched from
+        DFI, including AL (additive latency) and PHY delays. This is the delay
+        between WRITE being sent to PHY and write data being latched from DFI.
+    nranks: int
+        Number of separate DRAM chips (width of Chip Select).
+    """
     def __init__(self, phytype, memtype, databits, dfi_databits,
                  nphases,
                  rdphase, wrphase,
