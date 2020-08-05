@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+from collections import defaultdict
 
 from migen import *
 
@@ -39,6 +40,9 @@ from litedram.phy.etronrpcphy import EM6GA16L, DFIAdapter
 
 _io = [
     ("sys_clk", 0, Pins(1)),
+    ("sys2x_clk", 0, Pins(1)),
+    ("sys4x_clk", 0, Pins(1)),
+    ("sys4x_ddr_clk", 0, Pins(1)),
     ("sys_rst", 0, Pins(1)),
     ("serial", 0,
         Subsignal("source_valid", Pins(1)),
@@ -104,19 +108,44 @@ def get_sdram_phy_settings(memtype, data_width, clk_freq):
 
 # Simulation SoC -----------------------------------------------------------------------------------
 
+class _CRG(Module):
+    def __init__(self, platform, domains=None):
+        if domains is None:
+            domains = ["sys"]
+        # request() before clreating domains to avoid signal renaming problem
+        domains = {name: platform.request(name + "_clk") for name in domains}
+
+        self.clock_domains.cd_por = ClockDomain(reset_less=True)
+        for name in domains.keys():
+            setattr(self.clock_domains, "cd_" + name, ClockDomain(name=name))
+
+        int_rst = Signal(reset=1)
+        self.sync.por += int_rst.eq(0)
+        self.comb += self.cd_por.clk.eq(self.cd_sys.clk)
+
+        for name, clk in domains.items():
+            cd = getattr(self, "cd_" + name)
+            self.comb += cd.clk.eq(clk)
+            self.comb += cd.rst.eq(int_rst)
+
 class SimSoC(SoCCore):
-    def __init__(self, **kwargs):
+    def __init__(self, sys_clk_freq, **kwargs):
         platform     = Platform()
-        sys_clk_freq = int(1e6)
 
         # SoCCore ----------------------------------------------------------------------------------
         SoCCore.__init__(self, platform, clk_freq=sys_clk_freq,
             ident         = "LiteX Simulation",
             ident_version = True,
+            cpu_variant   = "lite",
             **kwargs)
 
         # CRG --------------------------------------------------------------------------------------
-        self.submodules.crg = CRG(platform.request("sys_clk"))
+        domains = ["sys", "sys2x", "sys4x", "sys4x_ddr"]
+        self.submodules.crg = _CRG(platform, domains)
+
+        for name in domains + ["por"]:
+            s = Signal(name="test_" + name)
+            self.comb += s.eq(getattr(self.crg, "cd_" + name).clk)
 
         # Simulation trigger -----------------------------------------------------------------------
         class SimTrigger(Module, AutoCSR):
@@ -126,10 +155,10 @@ class SimSoC(SoCCore):
         self.submodules.sim_trigger = SimTrigger(self.platform.request("sim_trigger"))
         self.add_csr("sim_trigger")
 
+        return
+
         # RPC DRAM ---------------------------------------------------------------------------------
-        sdram_clk_freq = int(100e6)
-        sdram_rate     = "1:4"
-        sdram_module   = EM6GA16L(sdram_clk_freq, sdram_rate)
+        sdram_module   = EM6GA16L(sys_clk_freq, "1:4")
         phy_settings   = get_sdram_phy_settings(
             #  memtype    = sdram_module.memtype,
             memtype    = "DDR3",
@@ -175,12 +204,18 @@ def main():
     parser.add_argument("--trace-start",          default=0,               help="Cycle to start tracing")
     parser.add_argument("--trace-end",            default=-1,              help="Cycle to end tracing")
     parser.add_argument("--opt-level",            default="O3",            help="Compilation optimization level")
+    parser.add_argument("--sys-clk-freq",         default="100e6",         help="Core clock frequency")
     args = parser.parse_args()
 
     soc_kwargs     = soc_sdram_argdict(args)
     builder_kwargs = builder_argdict(args)
 
-    sim_config = SimConfig(default_clk="sys_clk")
+    sys_clk_freq = int(float(args.sys_clk_freq))
+    sim_config = SimConfig()
+    sim_config.add_clocker("sys_clk",       freq_hz=sys_clk_freq)
+    sim_config.add_clocker("sys2x_clk",     freq_hz=2*sys_clk_freq)
+    sim_config.add_clocker("sys4x_clk",     freq_hz=4*sys_clk_freq)
+    sim_config.add_clocker("sys4x_ddr_clk", freq_hz=2*4*sys_clk_freq)
 
     # Configuration --------------------------------------------------------------------------------
 
@@ -196,8 +231,9 @@ def main():
 
     # SoC ------------------------------------------------------------------------------------------
     soc = SimSoC(
-        with_analyzer  = args.with_analyzer,
-        sdram_init     = [] if args.sdram_init is None else get_mem_data(args.sdram_init, cpu.endianness),
+        with_analyzer = args.with_analyzer,
+        sys_clk_freq  = sys_clk_freq,
+        sdram_init    = [] if args.sdram_init is None else get_mem_data(args.sdram_init, cpu.endianness),
         **soc_kwargs)
 
     # Build/Run ------------------------------------------------------------------------------------
