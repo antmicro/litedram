@@ -52,7 +52,6 @@ _io = [
         Subsignal("sink_ready",   Pins(1)),
         Subsignal("sink_data",    Pins(8)),
     ),
-    ("sim_trigger", 0, Pins(1))
 ]
 
 class Platform(SimPlatform):
@@ -147,15 +146,8 @@ class SimSoC(SoCCore):
             s = Signal(name="test_" + name)
             self.comb += s.eq(getattr(self.crg, "cd_" + name).clk)
 
-        # Simulation trigger -----------------------------------------------------------------------
-        class SimTrigger(Module, AutoCSR):
-            def __init__(self, trigger_pin):
-                self.trigger = CSR()
-                self.comb += trigger_pin.eq(self.trigger.re)
-        self.submodules.sim_trigger = SimTrigger(self.platform.request("sim_trigger"))
-        self.add_csr("sim_trigger")
-
-        return
+        # Debugging --------------------------------------------------------------------------------
+        platform.add_debug(self)
 
         # RPC DRAM ---------------------------------------------------------------------------------
         sdram_module   = EM6GA16L(sys_clk_freq, "1:4")
@@ -163,11 +155,11 @@ class SimSoC(SoCCore):
             #  memtype    = sdram_module.memtype,
             memtype    = "DDR3",
             data_width = 16,
-            clk_freq   = sdram_clk_freq)
+            clk_freq   = sys_clk_freq)
         self.submodules.sdrphy = SDRAMPHYModel(
             module    = sdram_module,
             settings  = phy_settings,
-            clk_freq  = sdram_clk_freq,
+            clk_freq  = sys_clk_freq,
             verbosity = 0,
             init      = [])
         self.add_sdram("sdram",
