@@ -260,10 +260,10 @@ class DFIAdapter(Module):
             #  Case(cmd_sig(dfi), serial_cases),
         ]
 
-# ECP5 Etron RPC DRAM PHY --------------------------------------------------------------------------
+# Etron RPC DRAM PHY model -------------------------------------------------------------------------
 
-class ECP5RPCPHY(Module):
-    def __init__(self, pads):
+class RPCPHY(Module):
+    def __init__(self, pads, sys_clk_freq):
         # TODO: multiple chips?
         # TODO: we should be able to use both DDR3 pads and RPC-specific pads
         pads = PHYPadsCombiner(pads)
@@ -333,3 +333,8 @@ class ECP5RPCPHY(Module):
         # DFI Interface ----------------------------------------------------------------------------
         # minimal BL=16, which gives 16*16=256 bits of data, with 4 phases we need 16/4=4 data widths
         self.dfi = dfi = Interface(addressbits, bankbits, nranks, 4*databits, nphases)
+
+        # DFI Interface Adaptation -----------------------------------------------------------------
+        for phase in dfi.phases:
+            adapter = DFIAdapter(phase)
+            self.submodules += adapter

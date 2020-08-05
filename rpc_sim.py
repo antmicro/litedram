@@ -21,6 +21,7 @@ from litedram import modules as litedram_modules
 from litedram.modules import parse_spd_hexdump
 from litedram.common import *
 from litedram.phy.model import SDRAMPHYModel
+from litedram.phy import dfi
 
 from liteeth.phy.model import LiteEthPHYModel
 from liteeth.mac import LiteEthMAC
@@ -34,7 +35,7 @@ from liteeth.common import *
 
 from litescope import LiteScopeAnalyzer
 
-from litedram.phy.etronrpcphy import EM6GA16L, DFIAdapter
+from litedram.phy.etronrpcphy import EM6GA16L, DFIAdapter, RPCPHY
 
 # Platform -----------------------------------------------------------------------------------------
 
@@ -44,6 +45,7 @@ _io = [
     ("sys4x_clk", 0, Pins(1)),
     ("sys4x_ddr_clk", 0, Pins(1)),
     ("sys_rst", 0, Pins(1)),
+
     ("serial", 0,
         Subsignal("source_valid", Pins(1)),
         Subsignal("source_ready", Pins(1)),
@@ -51,6 +53,21 @@ _io = [
         Subsignal("sink_valid",   Pins(1)),
         Subsignal("sink_ready",   Pins(1)),
         Subsignal("sink_data",    Pins(8)),
+    ),
+
+    # DDR3 pads
+    ("ddram", 0,
+        Subsignal("a",     Pins(14)),
+        Subsignal("ba",    Pins(3)),
+        Subsignal("ras_n", Pins(1)),
+        Subsignal("cas_n", Pins(1)),
+        Subsignal("we_n",  Pins(1)),
+        Subsignal("dm",    Pins(2)),
+        Subsignal("dq",    Pins(16)),
+        Subsignal("dqs_p", Pins(2)),
+        Subsignal("clk_p", Pins(1)),
+        Subsignal("cke",   Pins(1)),
+        Subsignal("odt",   Pins(1)),
     ),
 ]
 
@@ -150,18 +167,41 @@ class SimSoC(SoCCore):
         platform.add_debug(self)
 
         # RPC DRAM ---------------------------------------------------------------------------------
-        sdram_module   = EM6GA16L(sys_clk_freq, "1:4")
-        phy_settings   = get_sdram_phy_settings(
-            #  memtype    = sdram_module.memtype,
+        class PhyDuplicator(Module):
+            def __init__(self, main_phy, *phys, **dfi_kwargs):
+                self.submodules += main_phy
+                self.settings = main_phy.settings
+                self.dfi = dfi.Interface(**dfi_kwargs)
+                self.comb += self.dfi.connect(main_phy.dfi)
+                for phy in phys:
+                    self.submodules += phy
+                    omit = {"rddata", "rddata_valid"}
+                    self.comb += self.dfi.connect(phy.dfi, omit=omit)
+
+        sdram_module = EM6GA16L(sys_clk_freq, "1:4")
+        rpc_phy = RPCPHY(platform.request("ddram"), sys_clk_freq=sys_clk_freq)
+
+        phy_settings = get_sdram_phy_settings(
             memtype    = "DDR3",
             data_width = 16,
             clk_freq   = sys_clk_freq)
-        self.submodules.sdrphy = SDRAMPHYModel(
+        phy_settings.dfi_databits = 4 * phy_settings.databits
+        model_phy = SDRAMPHYModel(
             module    = sdram_module,
             settings  = phy_settings,
             clk_freq  = sys_clk_freq,
             verbosity = 0,
             init      = [])
+
+        self.submodules.sdrphy = PhyDuplicator(
+            model_phy, rpc_phy,
+            addressbits = sdram_module.geom_settings.addressbits,
+            bankbits    = sdram_module.geom_settings.bankbits,
+            nranks      = phy_settings.nranks,
+            databits    = phy_settings.databits,
+            nphases     = phy_settings.nphases,
+        )
+
         self.add_sdram("sdram",
             phy                     = self.sdrphy,
             module                  = sdram_module,
@@ -174,11 +214,6 @@ class SimSoC(SoCCore):
         # Reduce memtest size for simulation speedup
         self.add_constant("MEMTEST_DATA_SIZE", 8*1024)
         self.add_constant("MEMTEST_ADDR_SIZE", 8*1024)
-
-        self.submodules.dfi_adapter_p0 = DFIAdapter(self.sdrphy.dfi.p0)
-        self.submodules.dfi_adapter_p1 = DFIAdapter(self.sdrphy.dfi.p1)
-        self.submodules.dfi_adapter_p2 = DFIAdapter(self.sdrphy.dfi.p2)
-        self.submodules.dfi_adapter_p3 = DFIAdapter(self.sdrphy.dfi.p3)
 
 # Build --------------------------------------------------------------------------------------------
 
