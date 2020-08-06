@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# This file is Copyright (c) 2020 Antmicro <www.antmicro.com>
 
 import argparse
 from collections import defaultdict
@@ -40,10 +41,7 @@ from litedram.phy.etronrpcphy import EM6GA16L, DFIAdapter, RPCPHY
 # Platform -----------------------------------------------------------------------------------------
 
 _io = [
-    ("sys_clk", 0, Pins(1)),
-    ("sys2x_clk", 0, Pins(1)),
-    ("sys4x_clk", 0, Pins(1)),
-    ("sys4x_ddr_clk", 0, Pins(1)),
+    # clocks added later
     ("sys_rst", 0, Pins(1)),
 
     ("serial", 0,
@@ -73,6 +71,7 @@ _io = [
 
 class Platform(SimPlatform):
     def __init__(self):
+        print('_io', end=' = '); __import__('pprint').pprint(_io)
         SimPlatform.__init__(self, "SIM", _io)
 
 # DFI PHY model settings ---------------------------------------------------------------------------
@@ -122,7 +121,21 @@ def get_sdram_phy_settings(memtype, data_width, clk_freq):
         **sdram_phy_settings,
     )
 
-# Simulation SoC -----------------------------------------------------------------------------------
+# Clocks -------------------------------------------------------------------------------------------
+
+class Clocks(dict):
+    # FORMAT: {name: {"freq_hz": _, "phase_deg": _}, ...}
+    def names(self):
+        return list(self.keys())
+
+    def add_io(self, io):
+        for name in self.names():
+            print((name + "_clk", 0, Pins(1)))
+            io.append((name + "_clk", 0, Pins(1)))
+
+    def add_clockers(self, sim_config):
+        for name, desc in self.items():
+            sim_config.add_clocker(name + "_clk", **desc)
 
 class _CRG(Module):
     def __init__(self, platform, domains=None):
@@ -144,9 +157,12 @@ class _CRG(Module):
             self.comb += cd.clk.eq(clk)
             self.comb += cd.rst.eq(int_rst)
 
+# Simulation SoC -----------------------------------------------------------------------------------
+
 class SimSoC(SoCCore):
-    def __init__(self, sys_clk_freq, **kwargs):
+    def __init__(self, clocks, **kwargs):
         platform     = Platform()
+        sys_clk_freq = clocks["sys"]["freq_hz"]
 
         # SoCCore ----------------------------------------------------------------------------------
         SoCCore.__init__(self, platform, clk_freq=sys_clk_freq,
@@ -156,12 +172,7 @@ class SimSoC(SoCCore):
             **kwargs)
 
         # CRG --------------------------------------------------------------------------------------
-        domains = ["sys", "sys2x", "sys4x", "sys4x_ddr"]
-        self.submodules.crg = _CRG(platform, domains)
-
-        for name in domains + ["por"]:
-            s = Signal(name="test_" + name)
-            self.comb += s.eq(getattr(self.crg, "cd_" + name).clk)
+        self.submodules.crg = _CRG(platform, clocks.names())
 
         # Debugging --------------------------------------------------------------------------------
         platform.add_debug(self)
@@ -181,11 +192,16 @@ class SimSoC(SoCCore):
         sdram_module = EM6GA16L(sys_clk_freq, "1:4")
         rpc_phy = RPCPHY(platform.request("ddram"), sys_clk_freq=sys_clk_freq)
 
-        phy_settings = get_sdram_phy_settings(
-            memtype    = "DDR3",
-            data_width = 16,
-            clk_freq   = sys_clk_freq)
-        phy_settings.dfi_databits = 4 * phy_settings.databits
+        #  phy_settings = get_sdram_phy_settings(
+        #      memtype    = "DDR3",
+        #      data_width = 16,
+        #      clk_freq   = sys_clk_freq)
+        #  phy_settings.dfi_databits = rpc_phy.dfi_databits
+        import copy
+        phy_settings = copy.deepcopy(rpc_phy.settings)
+        phy_settings.memtype = "DDR3"
+        phy_settings.phytype = "SDRAMPHYModel"
+
         model_phy = SDRAMPHYModel(
             module    = sdram_module,
             settings  = phy_settings,
@@ -215,6 +231,24 @@ class SimSoC(SoCCore):
         self.add_constant("MEMTEST_DATA_SIZE", 8*1024)
         self.add_constant("MEMTEST_ADDR_SIZE", 8*1024)
 
+        # Print info
+        def dump(obj):
+            print()
+            print(" " + obj.__class__.__name__)
+            print(" " + "-" * len(obj.__class__.__name__))
+            d = obj if isinstance(obj, dict) else vars(obj)
+            for var, val in d.items():
+                if var == "self":
+                    continue
+                print("  {}: {}".format(var, val))
+        print("=" * 80)
+        dump(clocks)
+        dump(phy_settings)
+        dump(sdram_module.geom_settings)
+        dump(sdram_module.timing_settings)
+        print()
+        print("=" * 80)
+
 # Build --------------------------------------------------------------------------------------------
 
 def main():
@@ -238,11 +272,19 @@ def main():
     builder_kwargs = builder_argdict(args)
 
     sys_clk_freq = int(float(args.sys_clk_freq))
+    clocks = Clocks({
+        "sys":       dict(freq_hz=sys_clk_freq),
+        "sys2x":     dict(freq_hz=2*sys_clk_freq),
+        "sys4x":     dict(freq_hz=4*sys_clk_freq),
+        "sys4x_90":  dict(freq_hz=4*sys_clk_freq, phase_deg=90),
+        "sys4x_270": dict(freq_hz=4*sys_clk_freq, phase_deg=270),
+        "sys4x_ddr": dict(freq_hz=2*4*sys_clk_freq),
+    })
+
+    clocks.add_io(_io)
+
     sim_config = SimConfig()
-    sim_config.add_clocker("sys_clk",       freq_hz=sys_clk_freq)
-    sim_config.add_clocker("sys2x_clk",     freq_hz=2*sys_clk_freq)
-    sim_config.add_clocker("sys4x_clk",     freq_hz=4*sys_clk_freq)
-    sim_config.add_clocker("sys4x_ddr_clk", freq_hz=2*4*sys_clk_freq)
+    clocks.add_clockers(sim_config)
 
     # Configuration --------------------------------------------------------------------------------
 
@@ -259,7 +301,7 @@ def main():
     # SoC ------------------------------------------------------------------------------------------
     soc = SimSoC(
         with_analyzer = args.with_analyzer,
-        sys_clk_freq  = sys_clk_freq,
+        clocks        = clocks,
         sdram_init    = [] if args.sdram_init is None else get_mem_data(args.sdram_init, cpu.endianness),
         **soc_kwargs)
 

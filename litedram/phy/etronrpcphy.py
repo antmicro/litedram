@@ -1,6 +1,8 @@
+# This file is Copyright (c) 2020 Antmicro <www.antmicro.com>
 # Etron RPC DRAM PHY
 
 from migen import *
+from migen.fhdl.specials import Tristate
 
 from litedram.common import *
 from litedram.phy.dfi import *
@@ -254,10 +256,12 @@ class DFIAdapter(Module):
         }
 
         parallel_cases = {dfi_cmd[cmd]: parallel_cmd[cmd] for cmd in dfi_cmd.keys()}
-        #  serial_cases   = {dfi_cmd[cmd]: serial_cmd[cmd]   for cmd in dfi_cmd.keys()}
+        parallel_cases["default"] = parallel_cmd["NOP"]
+        serial_cases   = {dfi_cmd[cmd]: serial_cmd["NOP"]   for cmd in dfi_cmd.keys()}
+        #  serial_cases["default"] = serial_cmd["NOP"]
         self.comb += [
             Case(cmd_sig(dfi), parallel_cases),
-            #  Case(cmd_sig(dfi), serial_cases),
+            Case(cmd_sig(dfi), serial_cases),
         ]
 
 # Etron RPC DRAM PHY model -------------------------------------------------------------------------
@@ -266,7 +270,8 @@ class RPCPHY(Module):
     def __init__(self, pads, sys_clk_freq):
         # TODO: multiple chips?
         # TODO: we should be able to use both DDR3 pads and RPC-specific pads
-        pads = PHYPadsCombiner(pads)
+        # TODO: pads groups
+        #  pads = PHYPadsCombiner(pads)
 
         # TODO: verify DDR3 compatibility
         if hasattr(pads, "stb"):
@@ -276,7 +281,7 @@ class RPCPHY(Module):
 
         phytype = self.__class__.__name__
         memtype = "RPC"
-        tck     = 2 / (4*sys_clk_freq)  # 2 for DDR, 4 for DDR3 frequency ratio
+        tck     = 2 / (2*4*sys_clk_freq)
 
         databits = len(pads.dq)
         assert databits == 16
@@ -335,6 +340,152 @@ class RPCPHY(Module):
         self.dfi = dfi = Interface(addressbits, bankbits, nranks, 4*databits, nphases)
 
         # DFI Interface Adaptation -----------------------------------------------------------------
+        self.adapters = []
         for phase in dfi.phases:
             adapter = DFIAdapter(phase)
             self.submodules += adapter
+            self.adapters.append(adapter)
+
+        # Clocks -----------------------------------------------------------------------------------
+        sd_sys  = getattr(self.sync, "sys")
+        sd_half = getattr(self.sync, "sys2x")
+        sd_full = getattr(self.sync, "sys4x")
+
+        sd_sys_clk  = ClockSignal("sys")
+        sd_half_clk = ClockSignal("sys2x")
+        sd_full_clk = ClockSignal("sys4x")
+
+        # current phase number
+        phase_sel = Signal(max=nphases)
+        sd_full += phase_sel.eq(phase_sel + 1)
+
+        # Commands ---------------------------------------------------------------------------------
+        # send commands on DQ if we are not reading/writing
+        dq_oe = Signal()
+        dq_wr_en = Signal()
+        dq_rd_en  = Signal()
+        dq_cmd_en = Signal()
+        self.comb += dq_cmd_en.eq(~dq_wr_en & ~dq_rd_en)
+        self.comb += dq_oe.eq(dq_wr_en | dq_cmd_en),
+
+        for i in range(databits):
+            # parallel command output
+            dq_cmd = Signal()
+            # data output
+            dq_data = Signal()
+            # to tristate
+            dq_o  = Signal()
+            dq_i  = Signal()
+
+            # Parallel command + address
+            db = []
+            for p in range(nphases):
+                db.append(self.adapters[p].db_p[i])
+                db.append(self.adapters[p].db_n[i])
+            ser = Serializer(getattr(self.sync, "sys4x_ddr"), 0, db)
+            self.submodules += ser
+            self.comb += dq_cmd.eq(ser.o)
+
+            # Data out
+            data = []
+            for p in range(nphases):
+                data += [
+                    dfi.phases[p].wrdata[i+0*databits],
+                    dfi.phases[p].wrdata[i+1*databits],
+                    dfi.phases[p].wrdata[i+2*databits],
+                    dfi.phases[p].wrdata[i+3*databits],
+                ]
+            ser = Serializer(getattr(self.sync, "sys4x_ddr"), 0, data)
+            self.submodules += ser
+            self.comb += dq_data.eq(ser.o)
+
+            # Mux cmd/data
+            self.comb += Case(dq_wr_en, {
+                1: dq_o.eq(dq_data),
+                0: dq_o.eq(dq_cmd),
+            })
+
+            # Tristate
+            self.specials += Tristate(pads.dq[i], dq_o, dq_oe, dq_i)
+
+        # Write Control Path -----------------------------------------------------------------------
+        # Creates a shift register of write commands coming from the DFI interface. This shift register
+        # is used to control DQ/DQS tristates.
+        wrdata_en = Signal(cwl_sys_latency + 2)
+        wrdata_en_last = Signal.like(wrdata_en)
+        self.comb += wrdata_en.eq(Cat(dfi.phases[self.settings.wrphase].wrdata_en, wrdata_en_last))
+        self.sync += wrdata_en_last.eq(wrdata_en)
+        self.comb += dq_wr_en.eq(wrdata_en[cwl_sys_latency])
+        #  self.comb += If(self._wlevel_en.storage, dqs_oe.eq(1)).Else(dqs_oe.eq(dq_oe))
+
+
+# I/O Primitives -----------------------------------------------------------------------------------
+
+class DDRClockGen(Module):
+    """Generate sync.ddr_pos and sync.ddr_neg for simulation purpose"""
+    def __init__(self, clk):
+        self.clock_domains.cd_ddr_pos = ClockDomain("ddr_pos", reset_less=True)
+        self.clock_domains.cd_ddr_neg = ClockDomain("ddr_neg", reset_less=True)
+        self.comb += [
+            self.cd_ddr_pos.clk.eq(clk),
+            self.cd_ddr_neg.clk.eq(~clk),
+        ]
+
+class DDROut(Module):
+    """Output on both edges of the clock (1 cycle latency)"""
+    def __init__(self, i1, i2, o):
+        # delay the second input to maintain correct order
+        i2_r = Signal()
+        self.sync.ddr_pos += i2_r.eq(i2)
+        # drive the output pin
+        self.sync.ddr_pos += o.eq(i1)
+        self.sync.ddr_neg += o.eq(i2_r)
+
+class DDRIn(Module):
+    """Read on both edges of the clock (1 cycle latency)"""
+    # TODO: test if it's correct
+    def __init__(self, i, o1, o2):
+        i1 = Signal()
+        i2 = Signal()
+        # register the inputs
+        self.sync.ddr_pos += i1.eq(i)
+        self.sync.ddr_neg += i2.eq(i)
+        # drive outputs on positive edge
+        self.sync.ddr_pos += [
+            o1.eq(i1),
+            o2.eq(i2),
+        ]
+
+class Serializer(Module):
+    """Serialize input signals into one output in the `sd` clock domain, reset with `strb`"""
+    def __init__(self, sd, strb, inputs):
+        assert(len(inputs) > 0)
+        assert(len(s) == len(inputs[0]) for s in inputs)
+
+        data_width = len(inputs)
+        signal_width = len(inputs[0])
+
+        if not isinstance(inputs, Array):
+            inputs = Array(inputs)
+
+        self.o = Signal(signal_width)
+        data_cntr = Signal(log2_int(data_width), reset=strb)
+        sd += data_cntr.eq(data_cntr+1)
+        self.comb += self.o.eq(inputs[data_cntr])
+
+class Deserializer(Module):
+    """Deserialize an input signal into outputs in the `sd` clock domain, reset by `strb`"""
+    def __init__(self, sd, strb, input, outputs):
+        assert(len(outputs) > 0)
+        assert(len(s) == len(outputs[0]) for s in outputs)
+        assert(len(outputs[0]) == len(input))
+
+        data_width = len(outputs)
+        signal_width = len(outputs[0])
+
+        if not isinstance(outputs, Array):
+            outputs = Array(outputs)
+
+        data_cntr = Signal(log2_int(data_width), reset=strb)
+        sd += data_cntr.eq(data_cntr+1)
+        sd += outputs[data_cntr].eq(input)
