@@ -114,6 +114,8 @@ class DFIAdapter(Module):
         # Serial Packet
         self.stb  = Signal(16)
 
+        self.db_valid = Signal(reset=1)
+
         self.mr = ModeRegister()
 
         # use it to send PRE on STB
@@ -164,6 +166,7 @@ class DFIAdapter(Module):
             "NOP": [
                 self.db_p.eq(0),
                 self.db_n.eq(0),
+                self.db_valid.eq(0),
             ],
             "ACT": [
                 self.db_p[0:2  +1].eq(0b101),
@@ -274,10 +277,8 @@ class RPCPHY(Module):
         #  pads = PHYPadsCombiner(pads)
 
         # TODO: verify DDR3 compatibility
-        if hasattr(pads, "stb"):
-            stb = pads.stb
-        else:
-            stb = pads.a[0]
+        stb = Signal()
+        self.comb += stb.eq(pads.stb if hasattr(pads, "stb") else pads.a[0])
 
         phytype = self.__class__.__name__
         memtype = "RPC"
@@ -291,8 +292,7 @@ class RPCPHY(Module):
         nphases = 4
 
         # PHY settings -----------------------------------------------------------------------------
-        # RPC always has AL=1 and both read and write latencies are equal: RL = WL = AL + CL
-        def get_cl_cw(tck):  # TODO: add to litedram.common
+        def get_cl(tck):
             # tck is for DDR frequency
             f_to_cl = OrderedDict()
             f_to_cl[533e6]  =  3
@@ -303,11 +303,15 @@ class RPCPHY(Module):
             f_to_cl[1866e6] = 13
             for f, cl in f_to_cl.items():
                 if tck >= 2/f:
-                    cwl = cl
-                    return cl + 1, cwl + 1
+                    return cl
             raise ValueError(tck)
 
-        cl, cwl         = get_cl_cw(tck)
+        # RPC always has AL=1 and both read and write latencies are equal: RL = WL = AL + CL
+        al = 1
+        # in IDLE state we have to assert STB 2 cycles before sending command
+        stb_latency = 2
+        cwl = cl = get_cl(tck) + al + stb_latency
+
         cl_sys_latency  = get_sys_latency(nphases, cl)
         cwl_sys_latency = get_sys_latency(nphases, cwl)
 
@@ -336,7 +340,7 @@ class RPCPHY(Module):
         )
 
         # DFI Interface ----------------------------------------------------------------------------
-        # minimal BL=16, which gives 16*16=256 bits of data, with 4 phases we need 16/4=4 data widths
+        # minimal BL=16, which gives 16*16=256 bits; with 4 phases we need 16/4=4 data widths
         self.dfi = dfi = Interface(addressbits, bankbits, nranks, 4*databits, nphases)
 
         # DFI Interface Adaptation -----------------------------------------------------------------
@@ -378,13 +382,27 @@ class RPCPHY(Module):
             dq_i  = Signal()
 
             # Parallel command + address
+            # TODO: it must be center-aligned to the full-rate clk
             db = []
+            stb_preamble = []
             for p in range(nphases):
-                db.append(self.adapters[p].db_p[i])
-                db.append(self.adapters[p].db_n[i])
+                # before sending parallel command on DB pins we need to send 2 full-rate clk cycles
+                # of STB, so we delay the signals by 1 half-rate cycle
+                db_p = Signal()
+                db_n = Signal()
+                phase = (p - stb_latency) % nphases
+                sd_half += db_p.eq(self.adapters[phase].db_p[i])
+                sd_half += db_n.eq(self.adapters[phase].db_n[i])
+                db += [db_p, db_n]
+                # STB must be 0 for 2 cycles, so check this and previous phase
+                stb_en = self.adapters[p].db_valid | self.adapters[(p - 1) % nphases].db_valid
+                stb_preamble += [~stb_en, ~stb_en]
             ser = Serializer(getattr(self.sync, "sys4x_ddr"), 0, db)
             self.submodules += ser
             self.comb += dq_cmd.eq(ser.o)
+            ser = Serializer(getattr(self.sync, "sys4x_ddr"), 0, stb_preamble)
+            self.submodules += ser
+            self.comb += stb.eq(ser.o)
 
             # Data out
             data = []
@@ -417,7 +435,6 @@ class RPCPHY(Module):
         self.sync += wrdata_en_last.eq(wrdata_en)
         self.comb += dq_wr_en.eq(wrdata_en[cwl_sys_latency])
         #  self.comb += If(self._wlevel_en.storage, dqs_oe.eq(1)).Else(dqs_oe.eq(dq_oe))
-
 
 # I/O Primitives -----------------------------------------------------------------------------------
 
