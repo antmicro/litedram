@@ -21,6 +21,7 @@ from litex.soc.cores.cpu import CPUS
 from litedram import modules as litedram_modules
 from litedram.modules import parse_spd_hexdump
 from litedram.common import *
+from litedram.core.controller import ControllerSettings
 from litedram.phy.model import SDRAMPHYModel
 from litedram.phy import dfi
 
@@ -221,6 +222,9 @@ class SimSoC(SoCCore):
             nphases     = phy_settings.nphases,
         )
 
+        controller_settings = ControllerSettings()
+        controller_settings.auto_precharge = False
+
         self.add_sdram("sdram",
             phy                     = self.sdrphy,
             module                  = sdram_module,
@@ -228,7 +232,8 @@ class SimSoC(SoCCore):
             size                    = kwargs.get("max_sdram_size", 0x40000000),
             l2_cache_size           = kwargs.get("l2_size", 8192),
             l2_cache_min_data_width = kwargs.get("min_l2_data_width", 128),
-            l2_cache_reverse        = False
+            l2_cache_reverse        = False,
+            controller_settings     = controller_settings
         )
         # Reduce memtest size for simulation speedup
         self.add_constant("MEMTEST_DATA_SIZE", 8*1024)

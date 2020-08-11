@@ -308,9 +308,7 @@ class RPCPHY(Module):
 
         # RPC always has AL=1 and both read and write latencies are equal: RL = WL = AL + CL
         al = 1
-        # in IDLE state we have to assert STB 2 cycles before sending command
-        stb_latency = 2
-        cwl = cl = get_cl(tck) + al + stb_latency
+        cwl = cl = get_cl(tck) + al
 
         cl_sys_latency  = get_sys_latency(nphases, cl)
         cwl_sys_latency = get_sys_latency(nphases, cwl)
@@ -318,9 +316,10 @@ class RPCPHY(Module):
         rdcmdphase, rdphase = get_sys_phases(nphases, cl_sys_latency, cl)
         wrcmdphase, wrphase = get_sys_phases(nphases, cwl_sys_latency, cwl)
 
-        read_latency = cl_sys_latency
+        # +1 for both for sending STB before parallel cmd
+        read_latency = cl_sys_latency + 1
         # TODO: we must additionally transmit write mask before every burst, so +1?
-        write_latency = cwl_sys_latency
+        write_latency = cwl_sys_latency + 1
 
         self.settings = PhySettings(
             phytype       = phytype,
@@ -343,12 +342,18 @@ class RPCPHY(Module):
         # minimal BL=16, which gives 16*16=256 bits; with 4 phases we need 16/4=4 data widths
         self.dfi = dfi = Interface(addressbits, bankbits, nranks, 4*databits, nphases)
 
+        dfi_r = Interface(addressbits, bankbits, nranks, 4*databits, nphases)
+        self.sync += dfi.connect(dfi_r)
+
         # DFI Interface Adaptation -----------------------------------------------------------------
+        # hold the commands for 1 more cycle so that we can insert STB and DQS before the command
         self.adapters = []
-        for phase in dfi.phases:
+        for phase in dfi_r.phases + dfi.phases:
             adapter = DFIAdapter(phase)
             self.submodules += adapter
             self.adapters.append(adapter)
+            # always send one WORD
+            self.comb += adapter.bc.eq(1)
 
         # Clocks -----------------------------------------------------------------------------------
         sd_sys  = getattr(self.sync, "sys")
@@ -363,13 +368,14 @@ class RPCPHY(Module):
         phase_sel = Signal(max=nphases)
         sd_full += phase_sel.eq(phase_sel + 1)
 
-        # Commands ---------------------------------------------------------------------------------
+        # Logic ------------------------------------------------------------------------------------
+
         # send commands on DQ if we are not reading/writing
         dq_oe = Signal()
         dq_wr_en = Signal()
         dq_rd_en  = Signal()
         dq_cmd_en = Signal()
-        self.comb += dq_cmd_en.eq(~dq_wr_en & ~dq_rd_en)
+        self.comb += dq_cmd_en.eq(reduce(or_, [adapter.db_valid for adapter in self.adapters]))
         self.comb += dq_oe.eq(dq_wr_en | dq_cmd_en),
 
         for i in range(databits):
@@ -381,21 +387,21 @@ class RPCPHY(Module):
             dq_o  = Signal()
             dq_i  = Signal()
 
-            # Parallel command + address
+            # Parallel command
+            # CLK: ____----____----____----____----____----____
+            # STB: ----------________________------------------
+            # DQS: ....................----____----____........
+            # DB:  ..........................PPPPnnnn..........
             # TODO: it must be center-aligned to the full-rate clk
             db = []
             stb_preamble = []
             for p in range(nphases):
                 # before sending parallel command on DB pins we need to send 2 full-rate clk cycles
-                # of STB, so we delay the signals by 1 half-rate cycle
-                db_p = Signal()
-                db_n = Signal()
-                phase = (p - stb_latency) % nphases
-                sd_half += db_p.eq(self.adapters[phase].db_p[i])
-                sd_half += db_n.eq(self.adapters[phase].db_n[i])
+                # of STB low, so we delay the DB signals by 2
+                db_p = self.adapters[p].db_p[i]
+                db_n = self.adapters[p].db_n[i]
                 db += [db_p, db_n]
-                # STB must be 0 for 2 cycles, so check this and previous phase
-                stb_en = self.adapters[p].db_valid | self.adapters[(p - 1) % nphases].db_valid
+                stb_en = self.adapters[p + 2].db_valid | self.adapters[p + 1].db_valid
                 stb_preamble += [~stb_en, ~stb_en]
             ser = Serializer(getattr(self.sync, "sys4x_ddr"), 0, db)
             self.submodules += ser
@@ -426,15 +432,58 @@ class RPCPHY(Module):
             # Tristate
             self.specials += Tristate(pads.dq[i], dq_o, dq_oe, dq_i)
 
+        # Data strobe
+        dqs_oe = Signal()
+        dqs_i  = Signal()  # width 1
+        dqs_o  = Signal()  # width 1
+        dqs_pattern = Signal(8)
+        dqs_wr_preamble = Signal()
+
+        self.comb += \
+            If(dqs_wr_preamble,  # (transmitted LSB first)
+                dqs_pattern.eq(0b01000000)
+            ).Else(
+                dqs_pattern.eq(0b01010101)
+            )
+
+        dqs_cmd_oes = []
+        dqs_cmd_oe = Signal()
+
+        for p in range(nphases):
+            # strobe starts 1 cycle before command
+            oe = self.adapters[p + 1].db_valid | self.adapters[p].db_valid
+            dqs_cmd_oes += [oe, oe]
+
+        ser = Serializer(getattr(self.sync, "sys4x_ddr"), 0, dqs_pattern)
+        self.submodules += ser
+        self.comb += dqs_o.eq(ser.o)
+
+        ser = Serializer(getattr(self.sync, "sys4x_ddr"), 0, dqs_cmd_oes)
+        self.submodules += ser
+        self.comb += dqs_cmd_oe.eq(ser.o)
+
+        self.comb += dqs_oe.eq(dqs_cmd_oe | dq_wr_en | dqs_wr_preamble)
+
+        # Tristate
+        self.specials += Tristate(pads.dqs_p[0], dqs_o, dqs_oe, dqs_i)
+        self.specials += Tristate(pads.dqs_n[0], ~dqs_o, dqs_oe)
+
         # Write Control Path -----------------------------------------------------------------------
         # Creates a shift register of write commands coming from the DFI interface. This shift register
         # is used to control DQ/DQS tristates.
-        wrdata_en = Signal(cwl_sys_latency + 2)
+        wrdata_en = Signal(write_latency + 2)
         wrdata_en_last = Signal.like(wrdata_en)
         self.comb += wrdata_en.eq(Cat(dfi.phases[self.settings.wrphase].wrdata_en, wrdata_en_last))
         self.sync += wrdata_en_last.eq(wrdata_en)
-        self.comb += dq_wr_en.eq(wrdata_en[cwl_sys_latency])
+        self.comb += dq_wr_en.eq(wrdata_en[write_latency])
         #  self.comb += If(self._wlevel_en.storage, dqs_oe.eq(1)).Else(dqs_oe.eq(dq_oe))
+
+        #  # Write DQS Postamble/Preamble Control Path ------------------------------------------------
+        #  # Generates DQS Preamble 1 cycle before the first write and Postamble 1 cycle after the last
+        #  # write. During writes, DQS tristate is configured as output for at least 3 sys_clk cycles:
+        #  # 1 for Preamble, 1 for the Write and 1 for the Postamble.
+        self.comb += dqs_wr_preamble.eq(wrdata_en[write_latency - 1] & ~wrdata_en[write_latency])
+        #  self.comb += dqs_pattern.postamble.eq(wrdata_en[write_latency + 1] & ~wrdata_en[write_latency])
 
 # I/O Primitives -----------------------------------------------------------------------------------
 
