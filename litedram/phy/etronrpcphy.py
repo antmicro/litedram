@@ -114,6 +114,7 @@ class DFIAdapter(Module):
         # Serial Packet
         self.stb  = Signal(16)
 
+        # 1 when not in NOP
         self.db_valid = Signal(reset=1)
 
         self.mr = ModeRegister()
@@ -342,13 +343,15 @@ class RPCPHY(Module):
         # minimal BL=16, which gives 16*16=256 bits; with 4 phases we need 16/4=4 data widths
         self.dfi = dfi = Interface(addressbits, bankbits, nranks, 4*databits, nphases)
 
+        # register DFI commands to have a 2 cycles window of 8 phases to choose from
         dfi_r = Interface(addressbits, bankbits, nranks, 4*databits, nphases)
         self.sync += dfi.connect(dfi_r)
+        dfi_phases_x2 = dfi_r.phases + dfi.phases
 
         # DFI Interface Adaptation -----------------------------------------------------------------
         # hold the commands for 1 more cycle so that we can insert STB and DQS before the command
         self.adapters = []
-        for phase in dfi_r.phases + dfi.phases:
+        for phase in dfi_phases_x2:
             adapter = DFIAdapter(phase)
             self.submodules += adapter
             self.adapters.append(adapter)
@@ -383,6 +386,7 @@ class RPCPHY(Module):
             dq_cmd = Signal()
             # data output
             dq_data = Signal()
+            dq_mask = Signal()
             # to tristate
             dq_o  = Signal()
             dq_i  = Signal()
@@ -401,6 +405,7 @@ class RPCPHY(Module):
                 db_p = self.adapters[p].db_p[i]
                 db_n = self.adapters[p].db_n[i]
                 db += [db_p, db_n]
+
                 stb_en = self.adapters[p + 2].db_valid | self.adapters[p + 1].db_valid
                 stb_preamble += [~stb_en, ~stb_en]
             ser = Serializer(getattr(self.sync, "sys4x_ddr"), 0, db)
@@ -414,16 +419,29 @@ class RPCPHY(Module):
             data = []
             for p in range(nphases):
                 data += [
-                    dfi.phases[p].wrdata[i+0*databits],
-                    dfi.phases[p].wrdata[i+1*databits],
-                    dfi.phases[p].wrdata[i+2*databits],
-                    dfi.phases[p].wrdata[i+3*databits],
+                    dfi_phases_x2[nphases+p].wrdata[i+0*databits],
+                    dfi_phases_x2[nphases+p].wrdata[i+1*databits],
+                    dfi_phases_x2[nphases+p].wrdata[i+2*databits],
+                    dfi_phases_x2[nphases+p].wrdata[i+3*databits],
                 ]
             ser = Serializer(getattr(self.sync, "sys4x_ddr"), 0, data)
             self.submodules += ser
             self.comb += dq_data.eq(ser.o)
 
-            # Mux cmd/data
+            # Data mask
+            mask = []
+            for p in range(nphases):
+                mask += [
+                    dfi_phases_x2[nphases+p].wrdata_mask[i+0*(databits//8)],
+                    dfi_phases_x2[nphases+p].wrdata_mask[i+1*(databits//8)],
+                    dfi_phases_x2[nphases+p].wrdata_mask[i+2*(databits//8)],
+                    dfi_phases_x2[nphases+p].wrdata_mask[i+3*(databits//8)],
+                ]
+            ser = Serializer(getattr(self.sync, "sys4x_ddr"), 0, mask)
+            self.submodules += ser
+            self.comb += dq_mask.eq(ser.o)
+
+            # Mux cmd/data/data_mask
             self.comb += Case(dq_wr_en, {
                 1: dq_o.eq(dq_data),
                 0: dq_o.eq(dq_cmd),
