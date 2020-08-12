@@ -376,10 +376,11 @@ class RPCPHY(Module):
         # send commands on DQ if we are not reading/writing
         dq_oe = Signal()
         dq_wr_en = Signal()
+        dq_dm_en = Signal()
         dq_rd_en  = Signal()
         dq_cmd_en = Signal()
         self.comb += dq_cmd_en.eq(reduce(or_, [adapter.db_valid for adapter in self.adapters]))
-        self.comb += dq_oe.eq(dq_wr_en | dq_cmd_en),
+        self.comb += dq_oe.eq(dq_wr_en | (dq_dm_en & ~sd_sys_clk) | dq_cmd_en),
 
         for i in range(databits):
             # parallel command output
@@ -434,27 +435,31 @@ class RPCPHY(Module):
             self.submodules += ser
             self.comb += dq_data.eq(ser.o)
 
-            #  # Data mask
-            #  # Two 32-bit masks (4 DDR cycles) are sent before write data.
-            #  # In the mask each 0 bit means "write" and 1 means "mask".
-            #  # The 1st 32-bits mask the first data WORD (32 bytes), and
-            #  # the 2nd 32-bits mask the last data WORD. Because we always
-            #  # send 1 WORD of data (BC=1), we don't care for the 2nd mask.
-            #  mask = [ ]
-            #  for p in range(nphases):
-            #      mask += [
-            #          dfi_phases_x2[nphases+p].wrdata_mask[i+0*(databits//8)],
-            #          dfi_phases_x2[nphases+p].wrdata_mask[i+1*(databits//8)],
-            #      ]
-            #  ser = Serializer(getattr(self.sync, "sys4x_ddr"), mask)
-            #  self.submodules += ser
-            #  self.comb += dq_mask.eq(ser.o)
+            # Data mask
+            # Two 32-bit masks (4 DDR cycles) are sent before write data.
+            # In the mask each 0 bit means "write" and 1 means "mask".
+            # The 1st 32-bits mask the first data WORD (32 bytes), and
+            # the 2nd 32-bits mask the last data WORD. Because we always
+            # send 1 WORD of data (BC=1), we don't care for the 2nd mask.
+            #  mask = [
+            #      dfi_phases_x2[nphases + i//8 + 0].wrdata_mask[i%8], # WL-2
+            #      dfi_phases_x2[nphases + i//8 + 2].wrdata_mask[i%8], # WL-2
+            #      Constant(1) # WL-1,
+            #      Constant(1) # WL-1,
+            #  ]
+            # TODO: send actual data mask; this will require reducing write_latency by 1,
+            # storing 1 more clock of DFI history (dfi_phases_x3) and increasing tWR appropriately
+            self.comb += dq_mask.eq(0)
 
             # Mux cmd/data/data_mask
-            self.comb += Case(dq_wr_en, {
-                1: dq_o.eq(dq_data),
-                0: dq_o.eq(dq_cmd),
-            })
+            self.comb += \
+                If(dq_wr_en,
+                    dq_o.eq(dq_data)
+                ).Elif(dq_dm_en,
+                    dq_o.eq(dq_mask)
+                ).Else(
+                    dq_o.eq(dq_cmd)
+                )
 
             # Tristate
             self.specials += Tristate(pads.dq[i], dq_o, dq_oe, dq_i)
@@ -468,7 +473,7 @@ class RPCPHY(Module):
 
         self.comb += \
             If(dqs_wr_preamble,  # (transmitted LSB first)
-                dqs_pattern.eq(0b01000000)
+                dqs_pattern.eq(0b01010100)
             ).Else(
                 dqs_pattern.eq(0b01010101)
             )
@@ -503,6 +508,7 @@ class RPCPHY(Module):
         self.comb += wrdata_en.eq(Cat(dfi.phases[self.settings.wrphase].wrdata_en, wrdata_en_last))
         self.sync += wrdata_en_last.eq(wrdata_en)
         self.comb += dq_wr_en.eq(wrdata_en[write_latency] | wrdata_en[write_latency + 1])
+        self.comb += dq_dm_en.eq(wrdata_en[write_latency - 1])
         #  self.comb += If(self._wlevel_en.storage, dqs_oe.eq(1)).Else(dqs_oe.eq(dq_oe))
 
         #  # Write DQS Postamble/Preamble Control Path ------------------------------------------------
