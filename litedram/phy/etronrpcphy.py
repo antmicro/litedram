@@ -408,38 +408,47 @@ class RPCPHY(Module):
 
                 stb_en = self.adapters[p + 2].db_valid | self.adapters[p + 1].db_valid
                 stb_preamble += [~stb_en, ~stb_en]
-            ser = Serializer(getattr(self.sync, "sys4x_ddr"), 0, db)
+            ser = Serializer(getattr(self.sync, "sys4x_ddr"), db)
             self.submodules += ser
             self.comb += dq_cmd.eq(ser.o)
-            ser = Serializer(getattr(self.sync, "sys4x_ddr"), 0, stb_preamble)
+            ser = Serializer(getattr(self.sync, "sys4x_ddr"), stb_preamble)
             self.submodules += ser
             self.comb += stb.eq(ser.o)
 
             # Data out
+            # TODO: add 1 to tWR bacause we need 2 cycles to send data from 1 cycle
             data = []
             for p in range(nphases):
+                # In first sys_clk cycle we send from current phases, in the second
+                # we use the data registered in the previous cycle.
+                if p < nphases//2:
+                    p += nphases
                 data += [
-                    dfi_phases_x2[nphases+p].wrdata[i+0*databits],
-                    dfi_phases_x2[nphases+p].wrdata[i+1*databits],
-                    dfi_phases_x2[nphases+p].wrdata[i+2*databits],
-                    dfi_phases_x2[nphases+p].wrdata[i+3*databits],
+                    dfi_phases_x2[p].wrdata[i+0*databits],
+                    dfi_phases_x2[p].wrdata[i+1*databits],
+                    dfi_phases_x2[p].wrdata[i+2*databits],
+                    dfi_phases_x2[p].wrdata[i+3*databits],
                 ]
-            ser = Serializer(getattr(self.sync, "sys4x_ddr"), 0, data)
+            # Start counting when dq_wr_en turns high (required as we serialize over 2 sys_clk cycles).
+            ser = Serializer(getattr(self.sync, "sys4x_ddr"), data, reset=~dq_wr_en)
             self.submodules += ser
             self.comb += dq_data.eq(ser.o)
 
-            # Data mask
-            mask = []
-            for p in range(nphases):
-                mask += [
-                    dfi_phases_x2[nphases+p].wrdata_mask[i+0*(databits//8)],
-                    dfi_phases_x2[nphases+p].wrdata_mask[i+1*(databits//8)],
-                    dfi_phases_x2[nphases+p].wrdata_mask[i+2*(databits//8)],
-                    dfi_phases_x2[nphases+p].wrdata_mask[i+3*(databits//8)],
-                ]
-            ser = Serializer(getattr(self.sync, "sys4x_ddr"), 0, mask)
-            self.submodules += ser
-            self.comb += dq_mask.eq(ser.o)
+            #  # Data mask
+            #  # Two 32-bit masks (4 DDR cycles) are sent before write data.
+            #  # In the mask each 0 bit means "write" and 1 means "mask".
+            #  # The 1st 32-bits mask the first data WORD (32 bytes), and
+            #  # the 2nd 32-bits mask the last data WORD. Because we always
+            #  # send 1 WORD of data (BC=1), we don't care for the 2nd mask.
+            #  mask = [ ]
+            #  for p in range(nphases):
+            #      mask += [
+            #          dfi_phases_x2[nphases+p].wrdata_mask[i+0*(databits//8)],
+            #          dfi_phases_x2[nphases+p].wrdata_mask[i+1*(databits//8)],
+            #      ]
+            #  ser = Serializer(getattr(self.sync, "sys4x_ddr"), mask)
+            #  self.submodules += ser
+            #  self.comb += dq_mask.eq(ser.o)
 
             # Mux cmd/data/data_mask
             self.comb += Case(dq_wr_en, {
@@ -472,11 +481,11 @@ class RPCPHY(Module):
             oe = self.adapters[p + 1].db_valid | self.adapters[p].db_valid
             dqs_cmd_oes += [oe, oe]
 
-        ser = Serializer(getattr(self.sync, "sys4x_ddr"), 0, dqs_pattern)
+        ser = Serializer(getattr(self.sync, "sys4x_ddr"), dqs_pattern)
         self.submodules += ser
         self.comb += dqs_o.eq(ser.o)
 
-        ser = Serializer(getattr(self.sync, "sys4x_ddr"), 0, dqs_cmd_oes)
+        ser = Serializer(getattr(self.sync, "sys4x_ddr"), dqs_cmd_oes)
         self.submodules += ser
         self.comb += dqs_cmd_oe.eq(ser.o)
 
@@ -493,7 +502,7 @@ class RPCPHY(Module):
         wrdata_en_last = Signal.like(wrdata_en)
         self.comb += wrdata_en.eq(Cat(dfi.phases[self.settings.wrphase].wrdata_en, wrdata_en_last))
         self.sync += wrdata_en_last.eq(wrdata_en)
-        self.comb += dq_wr_en.eq(wrdata_en[write_latency])
+        self.comb += dq_wr_en.eq(wrdata_en[write_latency] | wrdata_en[write_latency + 1])
         #  self.comb += If(self._wlevel_en.storage, dqs_oe.eq(1)).Else(dqs_oe.eq(dq_oe))
 
         #  # Write DQS Postamble/Preamble Control Path ------------------------------------------------
@@ -541,8 +550,8 @@ class DDRIn(Module):
         ]
 
 class Serializer(Module):
-    """Serialize input signals into one output in the `sd` clock domain, reset with `strb`"""
-    def __init__(self, sd, strb, inputs):
+    """Serialize input signals into one output in the `sd` clock domain"""
+    def __init__(self, sd, inputs, reset=0):
         assert(len(inputs) > 0)
         assert(len(s) == len(inputs[0]) for s in inputs)
 
@@ -553,13 +562,13 @@ class Serializer(Module):
             inputs = Array(inputs)
 
         self.o = Signal(signal_width)
-        data_cntr = Signal(log2_int(data_width), reset=strb)
-        sd += data_cntr.eq(data_cntr+1)
+        data_cntr = Signal(log2_int(data_width))
+        sd += If(reset, data_cntr.eq(0)).Else(data_cntr.eq(data_cntr+1))
         self.comb += self.o.eq(inputs[data_cntr])
 
 class Deserializer(Module):
-    """Deserialize an input signal into outputs in the `sd` clock domain, reset by `strb`"""
-    def __init__(self, sd, strb, input, outputs):
+    """Deserialize an input signal into outputs in the `sd` clock domain"""
+    def __init__(self, sd, input, outputs, reset=0):
         assert(len(outputs) > 0)
         assert(len(s) == len(outputs[0]) for s in outputs)
         assert(len(outputs[0]) == len(input))
@@ -570,6 +579,6 @@ class Deserializer(Module):
         if not isinstance(outputs, Array):
             outputs = Array(outputs)
 
-        data_cntr = Signal(log2_int(data_width), reset=strb)
-        sd += data_cntr.eq(data_cntr+1)
+        data_cntr = Signal(log2_int(data_width))
+        sd += If(reset, data_cntr.eq(0)).Else(data_cntr.eq(data_cntr+1))
         sd += outputs[data_cntr].eq(input)
