@@ -218,7 +218,7 @@ class SimSoC(SoCCore):
             addressbits = sdram_module.geom_settings.addressbits,
             bankbits    = sdram_module.geom_settings.bankbits,
             nranks      = phy_settings.nranks,
-            databits    = phy_settings.databits,
+            databits    = phy_settings.dfi_databits,
             nphases     = phy_settings.nphases,
         )
 
