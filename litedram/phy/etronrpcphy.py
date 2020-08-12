@@ -279,7 +279,8 @@ class RPCPHY(Module):
 
         # TODO: verify DDR3 compatibility
         stb = Signal()
-        self.comb += stb.eq(pads.stb if hasattr(pads, "stb") else pads.a[0])
+        stb_pad = pads.stb if hasattr(pads, "stb") else pads.a[0]
+        self.comb += stb_pad.eq(stb)
 
         phytype = self.__class__.__name__
         memtype = "RPC"
@@ -382,6 +383,21 @@ class RPCPHY(Module):
         self.comb += dq_cmd_en.eq(reduce(or_, [adapter.db_valid for adapter in self.adapters]))
         self.comb += dq_oe.eq(dq_wr_en | (dq_dm_en & ~sd_sys_clk) | dq_cmd_en),
 
+        stb_preamble_en = Signal()
+        stb_preamble = []
+        for p in range(nphases):
+            # before sending parallel command on DB pins we need to send 2 full-rate clk cycles
+            # of STB low, so we delay the DB signals by 2
+            en = self.adapters[p + 2].db_valid | self.adapters[p + 1].db_valid
+            stb_preamble += [en, en]
+        ser = Serializer(getattr(self.sync, "sys4x_ddr"), stb_preamble)
+        self.submodules += ser
+        self.comb += stb_preamble_en.eq(ser.o)
+
+        self.comb += If(stb_preamble_en, stb.eq(0)).Else(stb.eq(1))  # 0b11 means NOP
+
+        dq_i = Signal(16)
+
         for i in range(databits):
             # parallel command output
             dq_cmd = Signal()
@@ -390,7 +406,7 @@ class RPCPHY(Module):
             dq_mask = Signal()
             # to tristate
             dq_o  = Signal()
-            dq_i  = Signal()
+            #  dq_i  = Signal()
 
             # Parallel command
             # CLK: ____----____----____----____----____----____
@@ -399,22 +415,13 @@ class RPCPHY(Module):
             # DB:  ..........................PPPPnnnn..........
             # TODO: it must be center-aligned to the full-rate clk
             db = []
-            stb_preamble = []
             for p in range(nphases):
-                # before sending parallel command on DB pins we need to send 2 full-rate clk cycles
-                # of STB low, so we delay the DB signals by 2
                 db_p = self.adapters[p].db_p[i]
                 db_n = self.adapters[p].db_n[i]
                 db += [db_p, db_n]
-
-                stb_en = self.adapters[p + 2].db_valid | self.adapters[p + 1].db_valid
-                stb_preamble += [~stb_en, ~stb_en]
             ser = Serializer(getattr(self.sync, "sys4x_ddr"), db)
             self.submodules += ser
             self.comb += dq_cmd.eq(ser.o)
-            ser = Serializer(getattr(self.sync, "sys4x_ddr"), stb_preamble)
-            self.submodules += ser
-            self.comb += stb.eq(ser.o)
 
             # Data out
             # TODO: add 1 to tWR bacause we need 2 cycles to send data from 1 cycle
@@ -462,7 +469,8 @@ class RPCPHY(Module):
                 )
 
             # Tristate
-            self.specials += Tristate(pads.dq[i], dq_o, dq_oe, dq_i)
+            #  self.specials += Tristate(pads.dq[i], dq_o, dq_oe, dq_i)
+            self.specials += Tristate(pads.dq[i], dq_o, dq_oe, None)
 
         # Data strobe
         dqs_oe = Signal()
@@ -517,6 +525,78 @@ class RPCPHY(Module):
         #  # 1 for Preamble, 1 for the Write and 1 for the Postamble.
         self.comb += dqs_wr_preamble.eq(wrdata_en[write_latency - 1] & ~wrdata_en[write_latency])
         #  self.comb += dqs_pattern.postamble.eq(wrdata_en[write_latency + 1] & ~wrdata_en[write_latency])
+
+        # # #
+        dummy_read = DummyReadGenerator(pads.dq, dq_i, stb_pad, cl=cl)
+        self.submodules += ClockDomainsRenamer({"sys": "sys4x_ddr"})(dummy_read)
+
+class DummyReadGenerator(Module):
+    def __init__(self, dq_in, dq_out, stb, cl):
+        # self.sync should be sys4x_ddr
+        # sys4x:     ----____----____
+        # sys4x_ddr: --__--__--__--__
+        # pos:       1 0 1 0 1 0 1 0
+        pos = Signal(reset=1)
+        self.sync += pos.eq(~pos)
+
+        stb_zero_counter = Signal(max=4)
+        data_counter = Signal(max=16)
+
+        data = Array([
+            0x0110,
+            0x1221,
+            0x2332,
+            0x3443,
+            0x4554,
+            0x5665,
+            0x6776,
+            0x7887,
+            0x8998,
+            0x9aa9,
+            0xabba,
+            0xbccb,
+            0xcddc,
+            0xdeed,
+            0xeffe,
+            0xf00f,
+        ])
+
+        self.submodules.fsm = fsm = FSM()
+        fsm.act("IDLE",
+            If(stb == 0,
+                NextValue(stb_zero_counter, stb_zero_counter + 1),
+                If(stb_zero_counter == 4 - 1,
+                    If(pos,
+                        Display("ERROR: end of STB preable on positive edge!")
+                    ),
+                    NextState("CHECK_CMD_P")
+                )
+            ).Else(
+                NextValue(stb_zero_counter, 0)
+            )
+        )
+        fsm.act("CHECK_CMD_P",
+            If(dq_in[:2] == 0,
+                NextState("CHECK_CMD_N")
+            ).Else(
+                NextState("IDLE")
+            )
+        )
+        fsm.act("CHECK_CMD_N",
+            If(dq_in[0] == 0,
+                NextState("CL_WAIT")
+            ).Else(
+                NextState("IDLE")
+            )
+        )
+        fsm.delayed_enter("CL_WAIT", "SEND_DATA", 2*(cl - 1))  # 2x for DDR, -1 for CHECK_CMD_*
+        fsm.act("SEND_DATA",
+            NextValue(data_counter, data_counter + 1),
+            dq_out.eq(data[data_counter]),
+            If(data_counter == 16 - 1,
+                NextState("IDLE")
+            )
+        )
 
 # I/O Primitives -----------------------------------------------------------------------------------
 
