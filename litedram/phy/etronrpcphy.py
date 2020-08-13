@@ -319,8 +319,8 @@ class RPCPHY(Module):
         wrcmdphase, wrphase = get_sys_phases(nphases, cwl_sys_latency, cwl)
 
         # +1 for both for sending STB before parallel cmd
-        read_latency = cl_sys_latency + 1
-        # TODO: we must additionally transmit write mask before every burst, so +1?
+        # +2 to assemble the data and put on DFI
+        read_latency = cl_sys_latency + 1 + 2
         write_latency = cwl_sys_latency + 1
 
         self.settings = PhySettings(
@@ -396,7 +396,8 @@ class RPCPHY(Module):
 
         self.comb += If(stb_preamble_en, stb.eq(0)).Else(stb.eq(1))  # 0b11 means NOP
 
-        dq_i = Signal(16)
+        dq_i_dummy = Signal(16)
+        rddata_available = Signal()
 
         for i in range(databits):
             # parallel command output
@@ -406,7 +407,7 @@ class RPCPHY(Module):
             dq_mask = Signal()
             # to tristate
             dq_o  = Signal()
-            #  dq_i  = Signal()
+            dq_i  = Signal()
 
             # Parallel command
             # CLK: ____----____----____----____----____----____
@@ -425,20 +426,20 @@ class RPCPHY(Module):
 
             # Data out
             # TODO: add 1 to tWR bacause we need 2 cycles to send data from 1 cycle
-            data = []
+            wrdata = []
             for p in range(nphases):
                 # In first sys_clk cycle we send from current phases, in the second
                 # we use the data registered in the previous cycle.
                 if p < nphases//2:
                     p += nphases
-                data += [
+                wrdata += [
                     dfi_phases_x2[p].wrdata[i+0*databits],
                     dfi_phases_x2[p].wrdata[i+1*databits],
                     dfi_phases_x2[p].wrdata[i+2*databits],
                     dfi_phases_x2[p].wrdata[i+3*databits],
                 ]
             # Start counting when dq_wr_en turns high (required as we serialize over 2 sys_clk cycles).
-            ser = Serializer(getattr(self.sync, "sys4x_ddr"), data, reset=~dq_wr_en)
+            ser = Serializer(getattr(self.sync, "sys4x_ddr"), wrdata, reset=~dq_wr_en)
             self.submodules += ser
             self.comb += dq_data.eq(ser.o)
 
@@ -458,6 +459,22 @@ class RPCPHY(Module):
             # storing 1 more clock of DFI history (dfi_phases_x3) and increasing tWR appropriately
             self.comb += dq_mask.eq(0)
 
+            # Data in
+            # TODO: synchronize deserializer to rd start
+            rddata = Signal(16)
+            des = Deserializer(getattr(self.sync, "sys4x_ddr"), dq_i_dummy[i], rddata,
+                               reset=~rddata_available)
+            self.submodules += des
+
+            for p in range(nphases):
+                domain = self.sync if p < nphases//2 else self.comb
+                domain += [
+                    dfi_phases_x2[nphases+p].rddata[i+0*databits].eq(rddata[p*nphases+0]),
+                    dfi_phases_x2[nphases+p].rddata[i+1*databits].eq(rddata[p*nphases+1]),
+                    dfi_phases_x2[nphases+p].rddata[i+2*databits].eq(rddata[p*nphases+2]),
+                    dfi_phases_x2[nphases+p].rddata[i+3*databits].eq(rddata[p*nphases+3]),
+                ]
+
             # Mux cmd/data/data_mask
             self.comb += \
                 If(dq_wr_en,
@@ -469,8 +486,7 @@ class RPCPHY(Module):
                 )
 
             # Tristate
-            #  self.specials += Tristate(pads.dq[i], dq_o, dq_oe, dq_i)
-            self.specials += Tristate(pads.dq[i], dq_o, dq_oe, None)
+            self.specials += Tristate(pads.dq[i], dq_o, dq_oe, dq_i)
 
         # Data strobe
         dqs_oe = Signal()
@@ -508,6 +524,19 @@ class RPCPHY(Module):
         self.specials += Tristate(pads.dqs_p[0], dqs_o, dqs_oe, dqs_i)
         self.specials += Tristate(pads.dqs_n[0], ~dqs_o, dqs_oe)
 
+        # Read Control Path ------------------------------------------------------------------------
+        # Creates a shift register of read commands coming from the DFI interface. This shift register
+        # is used to indicate to the DFI interface that the read data is valid.
+        #
+        # The read data valid is asserted for 1 sys_clk cycle when the data is available on the DFI
+        # interface, the latency is the sum of the OSERDESE2, CAS, ISERDESE2 and Bitslip latencies.
+        rddata_en      = Signal(self.settings.read_latency)
+        rddata_en_last = Signal.like(rddata_en)
+        self.comb += rddata_en.eq(Cat(dfi.phases[self.settings.rdphase].rddata_en, rddata_en_last))
+        self.sync += rddata_en_last.eq(rddata_en)
+        self.sync += rddata_available.eq(rddata_en[-2] | rddata_en[-3])
+        self.sync += [phase.rddata_valid.eq(rddata_en[-1]) for phase in dfi.phases]
+
         # Write Control Path -----------------------------------------------------------------------
         # Creates a shift register of write commands coming from the DFI interface. This shift register
         # is used to control DQ/DQS tristates.
@@ -527,7 +556,7 @@ class RPCPHY(Module):
         #  self.comb += dqs_pattern.postamble.eq(wrdata_en[write_latency + 1] & ~wrdata_en[write_latency])
 
         # # #
-        dummy_read = DummyReadGenerator(pads.dq, dq_i, stb_pad, cl=cl)
+        dummy_read = DummyReadGenerator(pads.dq, dq_i_dummy, stb_pad, cl=cl)
         self.submodules += ClockDomainsRenamer({"sys": "sys4x_ddr"})(dummy_read)
 
 class DummyReadGenerator(Module):
@@ -543,22 +572,22 @@ class DummyReadGenerator(Module):
         data_counter = Signal(max=16)
 
         data = Array([
-            0x0110,
-            0x1221,
-            0x2332,
-            0x3443,
-            0x4554,
-            0x5665,
-            0x6776,
-            0x7887,
-            0x8998,
-            0x9aa9,
-            0xabba,
-            0xbccb,
-            0xcddc,
-            0xdeed,
-            0xeffe,
-            0xf00f,
+            0x0000, # 0x0110,
+            0x1111, # 0x1221,
+            0x2222, # 0x2332,
+            0x3333, # 0x3443,
+            0x4444, # 0x4554,
+            0x5555, # 0x5665,
+            0x6666, # 0x6776,
+            0x7777, # 0x7887,
+            0x8888, # 0x8998,
+            0x9999, # 0x9aa9,
+            0xaaaa, # 0xabba,
+            0xbbbb, # 0xbccb,
+            0xcccc, # 0xcddc,
+            0xdddd, # 0xdeed,
+            0xeeee, # 0xeffe,
+            0xffff, # 0xf00f,
         ])
 
         self.submodules.fsm = fsm = FSM()
