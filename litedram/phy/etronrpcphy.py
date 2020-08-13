@@ -322,7 +322,7 @@ class RPCPHY(Module):
         # +2 to assemble the data and put on DFI
         # +3 for bitslip
         read_latency = cl_sys_latency + 1 + 2 + 3
-        write_latency = cwl_sys_latency + 1
+        write_latency = cwl_sys_latency
 
         self.settings = PhySettings(
             phytype       = phytype,
@@ -348,12 +348,14 @@ class RPCPHY(Module):
         # register DFI commands to have a 2 cycles window of 8 phases to choose from
         dfi_r = Interface(addressbits, bankbits, nranks, 4*databits, nphases)
         self.sync += dfi.connect(dfi_r)
-        dfi_phases_x2 = dfi_r.phases + dfi.phases
+        dfi_r2 = Interface(addressbits, bankbits, nranks, 4*databits, nphases)
+        self.sync += dfi_r.connect(dfi_r2)
+        dfi_phases_x3 = dfi_r2.phases + dfi_r.phases + dfi.phases
 
         # DFI Interface Adaptation -----------------------------------------------------------------
-        # hold the commands for 1 more cycle so that we can insert STB and DQS before the command
+        # hold the commands for 2 more cycles so that we can insert STB, DQS and DM before the command
         self.adapters = []
-        for phase in dfi_phases_x2:
+        for phase in dfi_phases_x3:
             adapter = DFIAdapter(phase)
             self.submodules += adapter
             self.adapters.append(adapter)
@@ -368,10 +370,6 @@ class RPCPHY(Module):
         sd_sys_clk  = ClockSignal("sys")
         sd_half_clk = ClockSignal("sys2x")
         sd_full_clk = ClockSignal("sys4x")
-
-        # current phase number
-        phase_sel = Signal(max=nphases)
-        sd_full += phase_sel.eq(phase_sel + 1)
 
         # Logic ------------------------------------------------------------------------------------
 
@@ -389,6 +387,7 @@ class RPCPHY(Module):
         for p in range(nphases):
             # before sending parallel command on DB pins we need to send 2 full-rate clk cycles
             # of STB low, so we delay the DB signals by 2
+            p += nphases
             en = self.adapters[p + 2].db_valid | self.adapters[p + 1].db_valid
             stb_preamble += [en, en]
         ser = Serializer(getattr(self.sync, "sys4x_ddr"), stb_preamble)
@@ -418,6 +417,7 @@ class RPCPHY(Module):
             # TODO: it must be center-aligned to the full-rate clk
             db = []
             for p in range(nphases):
+                p += nphases
                 db_p = self.adapters[p].db_p[i]
                 db_n = self.adapters[p].db_n[i]
                 db += [db_p, db_n]
@@ -431,13 +431,14 @@ class RPCPHY(Module):
             for p in range(nphases):
                 # In first sys_clk cycle we send from current phases, in the second
                 # we use the data registered in the previous cycle.
+                p += nphases
                 if p < nphases//2:
                     p += nphases
                 wrdata += [
-                    dfi_phases_x2[p].wrdata[i+0*databits],
-                    dfi_phases_x2[p].wrdata[i+1*databits],
-                    dfi_phases_x2[p].wrdata[i+2*databits],
-                    dfi_phases_x2[p].wrdata[i+3*databits],
+                    dfi_phases_x3[p].wrdata[i+0*databits],
+                    dfi_phases_x3[p].wrdata[i+1*databits],
+                    dfi_phases_x3[p].wrdata[i+2*databits],
+                    dfi_phases_x3[p].wrdata[i+3*databits],
                 ]
             # Start counting when dq_wr_en turns high (required as we serialize over 2 sys_clk cycles).
             ser = Serializer(getattr(self.sync, "sys4x_ddr"), wrdata, reset=~dq_wr_en)
@@ -450,15 +451,16 @@ class RPCPHY(Module):
             # The 1st 32-bits mask the first data WORD (32 bytes), and
             # the 2nd 32-bits mask the last data WORD. Because we always
             # send 1 WORD of data (BC=1), we don't care for the 2nd mask.
-            #  mask = [
-            #      dfi_phases_x2[nphases + i//8 + 0].wrdata_mask[i%8], # WL-2
-            #      dfi_phases_x2[nphases + i//8 + 2].wrdata_mask[i%8], # WL-2
-            #      Constant(1) # WL-1,
-            #      Constant(1) # WL-1,
-            #  ]
-            # TODO: send actual data mask; this will require reducing write_latency by 1,
-            # storing 1 more clock of DFI history (dfi_phases_x3) and increasing tWR appropriately
-            self.comb += dq_mask.eq(0)
+            # TODO: increase tWR by 1
+            mask = [
+                dfi_phases_x3[2*nphases + i//8 + 0].wrdata_mask[i%8], # WL-2
+                dfi_phases_x3[2*nphases + i//8 + 2].wrdata_mask[i%8], # WL-2
+                Constant(1), # WL-1,
+                Constant(1), # WL-1,
+            ]
+            ser = Serializer(getattr(self.sync, "sys4x_ddr"), mask)
+            self.submodules += ser
+            self.comb += dq_mask.eq(ser.o)
 
             # Data in
             # TODO: synchronize deserializer to rd start
@@ -474,10 +476,10 @@ class RPCPHY(Module):
             for p in range(nphases):
                 domain = self.sync if p < nphases//2 else self.comb
                 domain += [
-                    dfi_phases_x2[nphases+p].rddata[i+0*databits].eq(bitslip.o[p*nphases+0]),
-                    dfi_phases_x2[nphases+p].rddata[i+1*databits].eq(bitslip.o[p*nphases+1]),
-                    dfi_phases_x2[nphases+p].rddata[i+2*databits].eq(bitslip.o[p*nphases+2]),
-                    dfi_phases_x2[nphases+p].rddata[i+3*databits].eq(bitslip.o[p*nphases+3]),
+                    dfi_phases_x3[nphases+p].rddata[i+0*databits].eq(bitslip.o[p*nphases+0]),
+                    dfi_phases_x3[nphases+p].rddata[i+1*databits].eq(bitslip.o[p*nphases+1]),
+                    dfi_phases_x3[nphases+p].rddata[i+2*databits].eq(bitslip.o[p*nphases+2]),
+                    dfi_phases_x3[nphases+p].rddata[i+3*databits].eq(bitslip.o[p*nphases+3]),
                 ]
 
             # Mux cmd/data/data_mask
@@ -512,6 +514,7 @@ class RPCPHY(Module):
 
         for p in range(nphases):
             # strobe starts 1 cycle before command
+            p += nphases
             oe = self.adapters[p + 1].db_valid | self.adapters[p].db_valid
             dqs_cmd_oes += [oe, oe]
 
@@ -545,19 +548,19 @@ class RPCPHY(Module):
         # Write Control Path -----------------------------------------------------------------------
         # Creates a shift register of write commands coming from the DFI interface. This shift register
         # is used to control DQ/DQS tristates.
-        wrdata_en = Signal(write_latency + 2)
+        wrdata_en = Signal(write_latency + 2 + 1)
         wrdata_en_last = Signal.like(wrdata_en)
         self.comb += wrdata_en.eq(Cat(dfi.phases[self.settings.wrphase].wrdata_en, wrdata_en_last))
         self.sync += wrdata_en_last.eq(wrdata_en)
-        self.comb += dq_wr_en.eq(wrdata_en[write_latency] | wrdata_en[write_latency + 1])
-        self.comb += dq_dm_en.eq(wrdata_en[write_latency - 1])
+        self.comb += dq_wr_en.eq(wrdata_en[write_latency + 1] | wrdata_en[write_latency + 2])
+        self.comb += dq_dm_en.eq(wrdata_en[write_latency])
         #  self.comb += If(self._wlevel_en.storage, dqs_oe.eq(1)).Else(dqs_oe.eq(dq_oe))
 
         #  # Write DQS Postamble/Preamble Control Path ------------------------------------------------
         #  # Generates DQS Preamble 1 cycle before the first write and Postamble 1 cycle after the last
         #  # write. During writes, DQS tristate is configured as output for at least 3 sys_clk cycles:
         #  # 1 for Preamble, 1 for the Write and 1 for the Postamble.
-        self.comb += dqs_wr_preamble.eq(wrdata_en[write_latency - 1] & ~wrdata_en[write_latency])
+        self.comb += dqs_wr_preamble.eq(wrdata_en[write_latency] & ~wrdata_en[write_latency + 1])
         #  self.comb += dqs_pattern.postamble.eq(wrdata_en[write_latency + 1] & ~wrdata_en[write_latency])
 
         # # #
