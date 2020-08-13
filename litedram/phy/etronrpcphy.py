@@ -320,7 +320,8 @@ class RPCPHY(Module):
 
         # +1 for both for sending STB before parallel cmd
         # +2 to assemble the data and put on DFI
-        read_latency = cl_sys_latency + 1 + 2
+        # +3 for bitslip
+        read_latency = cl_sys_latency + 1 + 2 + 3
         write_latency = cwl_sys_latency + 1
 
         self.settings = PhySettings(
@@ -466,13 +467,17 @@ class RPCPHY(Module):
                                reset=~rddata_available)
             self.submodules += des
 
+            bitslip = BitSlip(16, cycles=2)
+            self.submodules += bitslip
+            self.comb += bitslip.i.eq(rddata)
+            self.comb += bitslip.i.eq(rddata)
             for p in range(nphases):
                 domain = self.sync if p < nphases//2 else self.comb
                 domain += [
-                    dfi_phases_x2[nphases+p].rddata[i+0*databits].eq(rddata[p*nphases+0]),
-                    dfi_phases_x2[nphases+p].rddata[i+1*databits].eq(rddata[p*nphases+1]),
-                    dfi_phases_x2[nphases+p].rddata[i+2*databits].eq(rddata[p*nphases+2]),
-                    dfi_phases_x2[nphases+p].rddata[i+3*databits].eq(rddata[p*nphases+3]),
+                    dfi_phases_x2[nphases+p].rddata[i+0*databits].eq(bitslip.o[p*nphases+0]),
+                    dfi_phases_x2[nphases+p].rddata[i+1*databits].eq(bitslip.o[p*nphases+1]),
+                    dfi_phases_x2[nphases+p].rddata[i+2*databits].eq(bitslip.o[p*nphases+2]),
+                    dfi_phases_x2[nphases+p].rddata[i+3*databits].eq(bitslip.o[p*nphases+3]),
                 ]
 
             # Mux cmd/data/data_mask
@@ -534,7 +539,7 @@ class RPCPHY(Module):
         rddata_en_last = Signal.like(rddata_en)
         self.comb += rddata_en.eq(Cat(dfi.phases[self.settings.rdphase].rddata_en, rddata_en_last))
         self.sync += rddata_en_last.eq(rddata_en)
-        self.sync += rddata_available.eq(rddata_en[-2] | rddata_en[-3])
+        self.sync += rddata_available.eq(rddata_en[-5] | rddata_en[-6])
         self.sync += [phase.rddata_valid.eq(rddata_en[-1]) for phase in dfi.phases]
 
         # Write Control Path -----------------------------------------------------------------------
