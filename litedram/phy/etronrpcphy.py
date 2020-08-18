@@ -4,6 +4,8 @@
 from migen import *
 from migen.fhdl.specials import Tristate
 
+from litex.soc.interconnect.csr import *
+
 from litedram.common import *
 from litedram.phy.dfi import *
 from litedram.modules import SDRAMModule, _TechnologyTimings, _SpeedgradeTimings
@@ -261,7 +263,7 @@ class DFIAdapter(Module):
 
 # Etron RPC DRAM PHY Base --------------------------------------------------------------------------
 
-class BasePHY(Module):
+class BasePHY(Module, AutoCSR):
     def __init__(self, pads, sys_clk_freq, write_ser_latency, read_des_latency, phytype):
         self.memtype     = memtype = "RPC"
         self.tck         = tck     = 2 / (2*4*sys_clk_freq)
@@ -278,9 +280,12 @@ class BasePHY(Module):
 
         # TODO: verify DDR3 compatibility
         # RPC DRAM is compatible with DDR3 pads, so if stb is not present, use address[0].
-        self.stb = Signal()
-        self.stb_pad = pads.stb if hasattr(pads, "stb") else pads.a[0]
-        self.comb += self.stb_pad.eq(self.stb)
+        self.stb = pads.stb if hasattr(pads, "stb") else pads.a[0]
+
+        # CSRs -------------------------------------------------------------------------------------
+        self._dly_sel             = CSRStorage(databits//8)
+        self._rdly_dq_bitslip_rst = CSR()
+        self._rdly_dq_bitslip     = CSR()
 
         # PHY settings -----------------------------------------------------------------------------
         def get_cl(tck):
@@ -500,7 +505,10 @@ class BasePHY(Module):
                 1: rbits_2ck[n_1ck:].eq(rbits_1ck),
             })
 
-            bs = BitSlip(2*n_1ck, cycles=2)
+            bs = BitSlip(len(rbits_2ck), cycles=2,
+                rst = self._dly_sel.storage[i//8] & self._rdly_dq_bitslip_rst.re,
+                slp = self._dly_sel.storage[i//8] & self._rdly_dq_bitslip.re,
+            )
             self.submodules += bs
             self.comb += bs.i.eq(rbits_2ck)
 

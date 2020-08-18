@@ -580,7 +580,7 @@ def get_sdram_phy_c_header(phy_settings, timing_settings):
         r += "#define SDRAM_PHY_WRITE_LEVELING_CAPABLE\n"
     if phytype in ["USDDRPHY", "USPDDRPHY"]:
         r += "#define SDRAM_PHY_WRITE_LEVELING_REINIT\n"
-    if phytype in ["USDDRPHY", "USPDDRPHY", "A7DDRPHY", "K7DDRPHY", "V7DDRPHY", "ECP5DDRPHY"]:
+    if phytype in ["USDDRPHY", "USPDDRPHY", "A7DDRPHY", "K7DDRPHY", "V7DDRPHY", "ECP5DDRPHY", "A7RPCPHY"]:
         r += "#define SDRAM_PHY_READ_LEVELING_CAPABLE\n"
 
     # Define number of modules/delays/bitslips
@@ -592,6 +592,10 @@ def get_sdram_phy_c_header(phy_settings, timing_settings):
         r += "#define SDRAM_PHY_MODULES DFII_PIX_DATA_BYTES/2\n"
         r += "#define SDRAM_PHY_DELAYS 32\n"
         r += "#define SDRAM_PHY_BITSLIPS 16\n"
+    elif phytype in ["A7RPCPHY"]:
+        r += "#define SDRAM_PHY_MODULES DFII_PIX_DATA_BYTES/4\n"
+        r += "#define SDRAM_PHY_DELAYS 32\n"
+        r += "#define SDRAM_PHY_BITSLIPS 32\n"
     elif phytype in ["ECP5DDRPHY"]:
         r += "#define SDRAM_PHY_MODULES DFII_PIX_DATA_BYTES/4\n"
         r += "#define SDRAM_PHY_DELAYS 8\n"
