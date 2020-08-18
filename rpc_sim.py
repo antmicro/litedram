@@ -286,8 +286,8 @@ def main():
         "sys2x":     dict(freq_hz=2*sys_clk_freq),
         "sys4x":     dict(freq_hz=4*sys_clk_freq),
         "sys4x_90":  dict(freq_hz=4*sys_clk_freq, phase_deg=90),
-        "sys4x_270": dict(freq_hz=4*sys_clk_freq, phase_deg=270),
         "sys4x_ddr": dict(freq_hz=2*4*sys_clk_freq),
+        "sys4x_90_ddr": dict(freq_hz=2*4*sys_clk_freq, phase_deg=180),
     })
 
     clocks.add_io(_io)
