@@ -8,6 +8,11 @@ from litedram.common import *
 from litedram.phy.dfi import *
 from litedram.modules import SDRAMModule, _TechnologyTimings, _SpeedgradeTimings
 
+def bitpattern(s):
+    assert len(s) == 8
+    s = s.translate(s.maketrans("_-", "01"))
+    return int(s[::-1], 2)  # LSB first, so reverse the string
+
 # Etron RPC Module ---------------------------------------------------------------------------------
 
 class EM6GA16L(SDRAMModule):
@@ -254,34 +259,28 @@ class DFIAdapter(Module):
             Case(cmd_sig(dfi), serial_cases),
         ]
 
-# Etron RPC DRAM PHY model -------------------------------------------------------------------------
+# Etron RPC DRAM PHY Base --------------------------------------------------------------------------
 
-def bitpattern(s):
-    assert len(s) == 8
-    s = s.translate(s.maketrans("_-", "01"))
-    return int(s[::-1], 2)  # LSB first, so reverse the string
+class BasePHY(Module):
+    def __init__(self, pads, sys_clk_freq, write_ser_latency, read_des_latency, phytype):
+        self.memtype     = memtype = "RPC"
+        self.tck         = tck     = 2 / (2*4*sys_clk_freq)
+        self.databits    = databits = len(pads.dq)
+        assert databits == 16
+        self.addressbits = addressbits = 14
+        self.bankbits    = bankbits = 2
+        self.nranks      = nranks = 1 if not hasattr(pads, "cs_n") else len(pads.cs_n)
+        self.nphases     = nphases = 4
 
-class RPCPHY(Module):
-    def __init__(self, pads, sys_clk_freq):
         # TODO: pads groups for multiple chips
         #  pads = PHYPadsCombiner(pads)
+        self.pads = pads
 
         # TODO: verify DDR3 compatibility
         # RPC DRAM is compatible with DDR3 pads, so if stb is not present, use address[0].
-        stb = Signal()
-        stb_pad = pads.stb if hasattr(pads, "stb") else pads.a[0]
-        self.comb += stb_pad.eq(stb)
-
-        phytype = self.__class__.__name__
-        memtype = "RPC"
-        tck     = 2 / (2*4*sys_clk_freq)
-
-        databits = len(pads.dq)
-        assert databits == 16
-        addressbits = 14
-        bankbits = 2
-        nranks = 1 if not hasattr(pads, "cs_n") else len(pads.cs_n)
-        nphases = 4
+        self.stb = Signal()
+        self.stb_pad = pads.stb if hasattr(pads, "stb") else pads.a[0]
+        self.comb += self.stb_pad.eq(self.stb)
 
         # PHY settings -----------------------------------------------------------------------------
         def get_cl(tck):
@@ -298,7 +297,7 @@ class RPCPHY(Module):
                     return cl
             raise ValueError(tck)
 
-        # RPC always has AL=1 and both read and write latencies are equal: RL = WL = AL + CL
+        # RPC always has AL=1 and both read and write latencies are equal: RL=WL=AL+CL
         al = 1
         cwl = cl = get_cl(tck) + al
 
@@ -308,15 +307,23 @@ class RPCPHY(Module):
         rdcmdphase, rdphase = get_sys_phases(nphases, cl_sys_latency, cl)
         wrcmdphase, wrphase = get_sys_phases(nphases, cwl_sys_latency, cwl)
 
-        # +1 for both for sending STB before parallel cmd
-        # +2 to assemble the data and put on DFI
-        # +3 for bitslip
-        read_latency = cl_sys_latency + 1 + 2 + 3
-        # This write latency is only for LiteDRAMController.
-        # Actually we must send data mask 1 cycle before sending data, and we must send
-        # a full burst of BL=16, which takes 2 cycles, so we spend 3 cycles on writing,
-        # instead of 1 cycle as for other PHYs. This means that we have to include these
-        # 2 additional cycles while setting tWR for the module.
+        # Read latency
+        db_cmd_dly   = 1  # (need +1 cycle to insert STB preamble)
+        cmd_ser_dly  = write_ser_latency
+        read_mux_dly = 1
+        bitslip_dly  = 3  # ncycles + 1
+        # Time until first data is available on DQ
+        read_dq_dly = db_cmd_dly + cmd_ser_dly + cl_sys_latency
+        # Time until data is set on DFI
+        read_dfi_dly = read_des_latency + read_mux_dly + bitslip_dly
+        # Final latency
+        read_latency = read_dq_dly + read_dfi_dly
+
+        # Write latency for the controller. We must send 1 cycles of data mask before the
+        # data, and we serialize data over 2 sysclk cycles due to minimal BL=16, so we
+        # are writing in the 2 cycles following the cycle when we obtain data on DFI.
+        # Other PHYs can send everything in 1 sysclk. Because of this spcific delay, we
+        # have to increate tWR in the RPC SDRModule definition to meet tWR requirements.
         write_latency = cwl_sys_latency
 
         self.settings = PhySettings(
@@ -351,34 +358,63 @@ class RPCPHY(Module):
 
         # Serialization ----------------------------------------------------------------------------
         # We have the following signals that have to be serialized:
-        # - DB (I/O)  - transmits data in/out, data mask, parallel commands
-        # - STB (O)   - serial commands, serial preamble
-        # - CLK (O)   - full-rate clock
-        # - DQS (I/O) - strobe for commands/data/mask on DB pins
-        # DQS is edge aligned to CLK, while DB and STB are center aligned to CLK (phase = -90)
-        # In this PHY we send the CLK and DQS with
+        # - DB  (IO) - transmits data in/out, data mask, parallel commands
+        # - STB (O)  - serial commands, serial preamble
+        # - CLK (O)  - full-rate clock
+        # - DQS (IO) - strobe for commands/data/mask on DB pins
+        # DQS is edge-aligned to CLK, while DB and STB are center-aligned to CLK (phase = -90).
+        # This PHY sends the CLK and DQS delayed by 90 degrees and all other signals edge-aligned
+        # to sysclk.
+
+        # Signal values (de)serialized during 1 sysclk.
+        # These signals must be populated in specific PHY implementations.
+        self.clk_1ck_out = clk_1ck_out = Signal(2*nphases)
+        self.stb_1ck_out = stb_1ck_out = Signal(2*nphases)
+
+        self.dqs_1ck_out = dqs_1ck_out = Signal(2*nphases)
+        self.dqs_1ck_in  = dqs_1ck_in  = Signal(2*nphases)
+        self.dqs_1ck_oe  = dqs_1ck_oe  = Signal(2*nphases)
+
+        self.db_1ck_out  = db_1ck_out  = [Signal(2*nphases) for _ in range(databits)]
+        self.db_1ck_in   = db_1ck_in   = [Signal(2*nphases) for _ in range(databits)]
+        self.db_oe       = db_oe       = Signal()
 
         # Clocks -----------------------------------------------------------------------------------
-        sd_sys     = getattr(self.sync, "sys")
-        sd_half    = getattr(self.sync, "sys2x")
-        sd_full    = getattr(self.sync, "sys4x")
-        sd_full_90 = getattr(self.sync, "sys4x_90")
+        def _sd(name):
+            return getattr(self.sync, name), ClockSignal(name)
 
-        # For simulation purpose (serializers/deserializers)
-        sd_ddr    = getattr(self.sync, "sys4x_ddr")
-        sd_ddr_90 = getattr(self.sync, "sys4x_90_ddr")
-
-        sd_sys_clk  = ClockSignal("sys")
-        sd_half_clk = ClockSignal("sys2x")
-        sd_full_clk = ClockSignal("sys4x")
+        sd_sys,     sd_sys_clk     = _sd("sys")
+        sd_half,    sd_half_clk    = _sd("sys2x")
+        sd_full,    sd_full_clk    = _sd("sys4x")
+        sd_full_90, sd_full_90_clk = _sd("sys4x_90")
 
         # Serialize clock phase shifted by 90 deg
-        clock_pattern = Signal(8)
-        self.comb += clock_pattern.eq(bitpattern("-_-_-_-_"))
-        ser = Serializer(sd_ddr_90, clock_pattern)
-        self.submodules += ser
-        self.comb += pads.clk_p.eq(ser.o)
-        self.comb += pads.clk_n.eq(~ser.o)
+        self.comb += clk_1ck_out.eq(bitpattern("_-_-_-_-"))
+
+        # DB muxing --------------------------------------------------------------------------------
+        # Muxed cmd/data/mask
+        db_1ck_data = [Signal(2*nphases) for _ in range(databits)]
+        db_1ck_mask = [Signal(2*nphases) for _ in range(databits)]
+        db_1ck_cmd  = [Signal(2*nphases) for _ in range(databits)]
+        dq_data_en  = Signal()
+        dq_mask_en  = Signal()
+        dq_cmd_en   = Signal()
+        dq_read_stb = Signal()
+
+        # Output enable when writing cmd/data/mask
+        # Mask is being send during negative half of sysclk
+        self.comb += db_oe.eq(dq_data_en | dq_mask_en | dq_cmd_en)
+
+        # Mux between cmd/data/mask
+        for i in range(databits):
+            self.comb += \
+                If(dq_data_en,
+                    db_1ck_out[i].eq(db_1ck_data[i])
+                ).Elif(dq_mask_en,
+                    db_1ck_out[i].eq(db_1ck_mask[i])
+                ).Else(
+                    db_1ck_out[i].eq(db_1ck_cmd[i])
+                )
 
         # Parallel commands ------------------------------------------------------------------------
         # We need to insert 2 full-clk cycles of STB=0 before any command, to mark the beginning of
@@ -412,14 +448,14 @@ class RPCPHY(Module):
         # DQS: ....................----____----____........
         # DB:  ..........................PPPPnnnn..........
         # TODO: it must be center-aligned to the full-rate clk
-        dq_cmd = Signal(databits)
         for i in range(databits):
             # Serialize a list of differential DB values using previous DFI coomand:
             # db_p[p][i], db_n[p][i], db_p[p+1][i], db_n[p+1][i], ...
             bits = [db for a in dfi_adapters[:nphases] for db in [a.db_p[i], a.db_n[i]]]
-            ser = Serializer(sd_ddr, bits)
-            self.submodules += ser
-            self.comb += dq_cmd[i].eq(ser.o)
+            self.comb += db_1ck_cmd[i].eq(Cat(*bits))
+
+        # Commands go on the 2nd cycle, so use previous DFI
+        self.comb += dq_cmd_en.eq(reduce(or_, [a.db_valid for a in dfi_adapters[:nphases]]))
 
         # Power Up Reset ---------------------------------------------------------------------------
         # During Power Up, after stabilizing clocks, Power Up Reset must be done. It consists of a
@@ -441,60 +477,47 @@ class RPCPHY(Module):
         # STB --------------------------------------------------------------------------------------
         # Currently not sending any serial commands, but the STB pin must be held low for 2 full
         # rate cycles before writing a parallel command to activate the DRAM.
-        stb_preamble_en = Signal()
-
-        stb_preamble = []
+        stb_bits = []
         for p in range(nphases):
-            # Use cmd from current and prev cycle, depending on which phase the command appears on.
-            en = dfi_adapters[p + 2].db_valid | dfi_adapters[p + 1].db_valid
-            stb_preamble += [en, en]
-        ser = Serializer(sd_ddr, stb_preamble)
-        self.submodules += ser
-        self.comb += stb_preamble_en.eq(ser.o)
-
-        # We only want to use STB to start parallel commands or to send NOPs. NOP is indicated by
-        # the first two bits being high (0b11, and other as "don't care") so we can simply hold STB
-        # high all the time.
-        self.comb += stb.eq(~(stb_preamble_en | stb_reset_seq))
+            # Use cmd from current and prev cycle, depending on which phase the command appears on
+            preamble = dfi_adapters[p + 2].db_valid | dfi_adapters[p + 1].db_valid
+            # We only want to use STB to start parallel commands, serial reset or to send NOPs. NOP
+            # is indicated by the first two bits being high (0b11, and other as "don't care"), so
+            # we can simply hold STB high all the time and reset is zeros for 8 cycles (1 sysclk).
+            stb_bits += 2 * [~(preamble | stb_reset_seq)]
+        self.comb += stb_1ck_out.eq(Cat(*stb_bits))
 
         # Data IN ----------------------------------------------------------------------------------
-        # Dummy read data generator for simulation purpose
-        dq_i_dummy = Signal(databits)
-        gen = DummyReadGenerator(dq_in=pads.dq, dq_out=dq_i_dummy, stb_in=stb_pad, cl=cl)
-        self.submodules += ClockDomainsRenamer({"sys": "sys4x_ddr"})(gen)
-
-        # Synchronize the deserializer as we deserialize more than 1 sysclk
-        rd_strb = Signal()
+        # Synchronize the deserializer as we deserialize over 2 cycles.
         dq_in_cnt = Signal()
-        self.sync += If(rd_strb, dq_in_cnt.eq(~dq_in_cnt)).Else(dq_in_cnt.eq(0))
+        self.sync += If(dq_read_stb, dq_in_cnt.eq(~dq_in_cnt)).Else(dq_in_cnt.eq(0))
 
         # Deserialize read data (TODO: add phase shift)
         # sys_clk:    ------------____________------------____________
         # sysx4_clk:  ---___---___---___---___---___---___---___---___
         # DB num:     <0><1><2><3><4><5><6><7><8><9><a><b><c><d><e><f>
         for i in range(databits):
-            # BL=16
-            rbits = Signal(16)
-            rbits_half = Signal(8)
-            des = Deserializer(sd_ddr_90, dq_i_dummy[i], rbits_half)
-            self.submodules += des
+            # BL=16 -> 2ck
+            n_1ck = 2*nphases
+            rbits_2ck = Signal(2*n_1ck)
+            rbits_1ck = Signal(n_1ck)
 
+            self.comb += rbits_1ck.eq(db_1ck_in[i])
             sd_sys += Case(dq_in_cnt, {
-                0: rbits[:8].eq(rbits_half),
-                1: rbits[8:].eq(rbits_half),
+                0: rbits_2ck[:n_1ck].eq(rbits_1ck),
+                1: rbits_2ck[n_1ck:].eq(rbits_1ck),
             })
 
-            bs = BitSlip(16, cycles=2)
+            bs = BitSlip(2*n_1ck, cycles=2)
             self.submodules += bs
-            self.comb += bs.i.eq(rbits)
-            rbits = bs.o
+            self.comb += bs.i.eq(rbits_2ck)
 
             for p in range(nphases):
                 self.comb += [
-                    dfi.phases[p].rddata[i+0*databits].eq(rbits[p*nphases+0]),
-                    dfi.phases[p].rddata[i+1*databits].eq(rbits[p*nphases+1]),
-                    dfi.phases[p].rddata[i+2*databits].eq(rbits[p*nphases+2]),
-                    dfi.phases[p].rddata[i+3*databits].eq(rbits[p*nphases+3]),
+                    dfi.phases[p].rddata[i+0*databits].eq(bs.o[p*nphases+0]),
+                    dfi.phases[p].rddata[i+1*databits].eq(bs.o[p*nphases+1]),
+                    dfi.phases[p].rddata[i+2*databits].eq(bs.o[p*nphases+2]),
+                    dfi.phases[p].rddata[i+3*databits].eq(bs.o[p*nphases+3]),
                 ]
 
         # Data OUT ---------------------------------------------------------------------------------
@@ -510,10 +533,10 @@ class RPCPHY(Module):
         # sys_clk:    ------____________------------____________------------____________
         # sysx4_clk:  ---___---___---___---___---___---___---___---___---___---___---___
         # DB num:           <M><M><M><M><0><1><2><3><4><5><6><7><8><9><a><b><c><d><e><f>
-        dq_data = Signal(databits)
-        dq_mask = Signal(databits)
 
-        dq_data_stb = Signal()
+        # Synchronize to 2 cycles, reset counting when dq_data_en turns high.
+        cnt = Signal()
+        self.sync += If(dq_data_en, cnt.eq(~cnt)).Else(cnt.eq(0))
 
         for i in range(databits):
             # Write data ---------------------------------------------------------------------------
@@ -527,110 +550,55 @@ class RPCPHY(Module):
                     _dfi.phases[p].wrdata[i+3*databits],
                 ]
 
-            cnt = Signal()
-            # wbits_2clks = [Signal(2*nphases), Signal(2*nphases)]
-            wbits_2clks = [Cat(*wbits[:2*nphases]), Cat(*wbits[2*nphases:])]
-            # self.comb += wbits_2clks[0].eq(Cat(*wbits[:2*nphases]))
-            # self.comb += wbits_2clks[1].eq(Cat(*wbits[2*nphases:]))
-            # Reset counting when dq_data_en turns high as we serialize over 2 sysclk cycles.
-            self.sync += If(dq_data_stb, cnt.eq(~cnt)).Else(cnt.eq(0))
-            wbits_noser = Signal(2*nphases)
-            self.comb += wbits_noser.eq(Array(wbits_2clks)[cnt])
-
-            ser = Serializer(sd_ddr, wbits_noser)
-            self.submodules += ser
-            self.comb += dq_data[i].eq(ser.o)
+            # Mux datas from 2 cycles to always serialize single cycle.
+            wbits_2ck = [Cat(*wbits[:2*nphases]), Cat(*wbits[2*nphases:])]
+            wbits_1ck = Signal(2*nphases)
+            self.comb += wbits_1ck.eq(Array(wbits_2ck)[cnt])
+            self.comb += db_1ck_data[i].eq(Cat(*wbits_1ck))
 
             # Data mask ----------------------------------------------------------------------------
             mask = [
+                Constant(0),                                    # phase 0
+                Constant(0),                                    # phase 0
+                Constant(0),                                    # phase 1
+                Constant(0),                                    # phase 1
                 dfi_hist[0].phases[i//8 + 0].wrdata_mask[i%8],  # WL-2
                 dfi_hist[0].phases[i//8 + 2].wrdata_mask[i%8],  # WL-2
                 Constant(1),                                    # WL-1
                 Constant(1),                                    # WL-1
             ]
-            ser = Serializer(sd_ddr, mask)
-            self.submodules += ser
-            self.comb += dq_mask[i].eq(ser.o)
-
-        # DB tristate and muxing -------------------------------------------------------------------
-        dq_out = Signal(databits)
-        dq_in  = Signal(databits)
-        dq_oe  = Signal()
-
-        dq_data_en = Signal()
-        dq_mask_en = Signal()
-        dq_cmd_en  = Signal()
-
-        # Tristate
-        for i in range(databits):
-            self.specials += Tristate(pads.dq[i], dq_out[i], dq_oe, dq_in[i])
-
-        # Mux cmd/data/data_mask
-        self.comb += \
-            If(dq_data_en,
-                dq_out.eq(dq_data)
-            ).Elif(dq_mask_en,
-                dq_out.eq(dq_mask)
-            ).Else(
-                dq_out.eq(dq_cmd)
-            )
-
-        # Output enable when writing cmd/data/mask
-        self.comb += [
-            dq_data_stb.eq(dq_data_en),
-            # Commands go on the 2nd cycle, so use previous DFI
-            dq_cmd_en.eq(reduce(or_, [a.db_valid for a in dfi_adapters[:nphases]])),
-            # Mask is being send during negative half of sysclk
-            dq_oe.eq(dq_data_en | (dq_mask_en & ~sd_sys_clk) | dq_cmd_en),
-        ]
+            self.comb += db_1ck_mask[i].eq(Cat(*mask))
 
         # DQS --------------------------------------------------------------------------------------
-        dqs_oe      = Signal()
-        dqs_in      = Signal()
-        dqs_out     = Signal()
-        dqs_cmd_oe  = Signal()
-        dqs_wpre_en = Signal()
-
-        # Serialize strobe pattern
-        dqs_pattern = Signal(8)
-        self.comb += Case(dqs_wpre_en, {
+        # Strobe pattern
+        self.comb += Case(dq_mask_en, {
             # shifted by 180 deg
-            1: dqs_pattern.eq(bitpattern("___-_-_-")),
-            0: dqs_pattern.eq(bitpattern("_-_-_-_-")),
+            1: dqs_1ck_out.eq(bitpattern("___-_-_-")),
+            0: dqs_1ck_out.eq(bitpattern("_-_-_-_-")),
         })
-        ser = Serializer(sd_ddr_90, dqs_pattern)
-        self.submodules += ser
-        self.comb += dqs_out.eq(ser.o)
 
         # Serialize output-enable for commands (as commands can go on any phase)
-        # TODO: we know wrphase, so we can generate fixed patter!
-        dqs_cmd_oe_bits = []
+        # TODO: we should be able to use a Case depending on the current command phase
+        dqs_oe_bits = []
         for p in range(nphases):
-            # Strobe starts 1 cycle before the command
-            oe = dfi_adapters[p+1].db_valid | dfi_adapters[p].db_valid
-            dqs_cmd_oe_bits += [oe, oe]
-        ser = Serializer(sd_ddr, dqs_cmd_oe_bits)
-        self.submodules += ser
-        self.comb += dqs_cmd_oe.eq(ser.o)
-
-        # Send strobe before cmd/write and during write
-        self.comb += dqs_oe.eq(dqs_cmd_oe | dq_data_en | dqs_wpre_en)
-
-        # Tristate
-        # RPC DRAM uses only 1 differential line for strobe
-        self.specials += Tristate(pads.dqs_p[0],  dqs_out, dqs_oe, dqs_in)  # TODO: use input strobe
-        self.specials += Tristate(pads.dqs_n[0], ~dqs_out, dqs_oe)
+            # Command strobe starts 1 cycle before the command
+            cmd_oe = dfi_adapters[p+1].db_valid | dfi_adapters[p].db_valid
+            # Send strobe before cmd, before write and during write
+            oe = cmd_oe | dq_mask_en | dq_data_en
+            dqs_oe_bits += [oe, oe]
+        self.comb += dqs_1ck_oe.eq(Cat(*dqs_oe_bits))
 
         # Read Control Path ------------------------------------------------------------------------
         # Creates a shift register of read commands coming from the DFI interface. This shift
         # register is used to indicate to the DFI interface that the read data is valid.
-        rddata_en      = Signal(self.settings.read_latency)
+        rddata_en = Signal(self.settings.read_latency)
         rddata_en_last = Signal.like(rddata_en)
         self.comb += rddata_en.eq(Cat(dfi.phases[self.settings.rdphase].rddata_en, rddata_en_last))
         self.sync += rddata_en_last.eq(rddata_en)
+        # -1 because of syncronious assignment
         self.sync += [phase.rddata_valid.eq(rddata_en[-1]) for phase in dfi.phases]
         # Strobe high when data from DRAM is available, before we can send it to DFI.
-        self.sync += rd_strb.eq(rddata_en[-5] | rddata_en[-6])
+        self.sync += dq_read_stb.eq(rddata_en[read_dq_dly-1] | rddata_en[read_dq_dly-1 + 1])
 
         # Write Control Path -----------------------------------------------------------------------
         # Creates a shift register of write commands coming from the DFI interface. This shift
@@ -639,10 +607,104 @@ class RPCPHY(Module):
         wrdata_en_last = Signal.like(wrdata_en)
         self.comb += wrdata_en.eq(Cat(dfi.phases[self.settings.wrphase].wrdata_en, wrdata_en_last))
         self.sync += wrdata_en_last.eq(wrdata_en)
-        self.comb += dq_data_en.eq(wrdata_en[write_latency + 1] | wrdata_en[write_latency + 2])
-        # DQS Preamble and data mask are transmitted 1 cycle before data
-        self.comb += dqs_wpre_en.eq(wrdata_en[write_latency])
+        # DQS Preamble and data mask are transmitted 1 cycle before data, then 2 cycles of data
         self.comb += dq_mask_en.eq(wrdata_en[write_latency])
+        self.comb += dq_data_en.eq(wrdata_en[write_latency + 1] | wrdata_en[write_latency + 2])
+
+    def do_finalize(self):
+        self.do_clock_serialization(self.clk_1ck_out, self.pads.clk_p, self.pads.clk_n)
+        self.do_stb_serialization(self.stb_1ck_out, self.stb)
+        self.do_dqs_serialization(self.dqs_1ck_out, self.dqs_1ck_in, self.dqs_1ck_oe,
+                                  # RPC DRAM uses 1 differential DQS pair
+                                  self.pads.dqs_p[0], self.pads.dqs_n[0])
+        self.do_db_serialization(self.db_1ck_out, self.db_1ck_in, self.db_oe, self.pads.dq)
+
+    # I/O implementation ---------------------------------------------------------------------------
+
+    def do_clock_serialization(self, clk_1ck_out, clk_p, clk_n):
+        raise NotImplementedError("Serialize the full-rate clock with 90 deg phase delay")
+
+    def do_stb_serialization(self, stb_1ck_out, stb):
+        raise NotImplementedError("Serialize the STB line")
+
+    def do_dqs_serialization(self, dqs_1ck_out, dqs_1ck_in, dqs_1ck_oe, dqs_p, dqs_n):
+        raise NotImplementedError("Tristate and (de)serialize DQS with 90 deg phase delay")
+
+    def do_db_serialization(self, db_1ck_out, db_1ck_in, db_oe, dq):
+        raise NotImplementedError("Tristate and (de)serialize DB")
+
+# Etron RPC Simulation PHY -------------------------------------------------------------------------
+
+class SimulationPHY(BasePHY):
+    def __init__(self, *args, generate_read_data=True, **kwargs):
+        kwargs.update(dict(
+            write_ser_latency = 0,
+            read_des_latency  = 1,
+            phytype           = self.__class__.__name__,
+        ))
+        super().__init__(*args, **kwargs)
+
+        self.generate_read_data = generate_read_data
+
+        # For simulation purpose (serializers/deserializers)
+        self.sd_ddr    = getattr(self.sync, "sys4x_ddr")
+        self.sd_ddr_90 = getattr(self.sync, "sys4x_90_ddr")
+
+    def do_clock_serialization(self, clk_1ck_out, clk_p, clk_n):
+        ser = Serializer(self.sd_ddr_90, clk_1ck_out)
+        self.submodules += ser
+        self.comb += clk_p.eq(ser.o)
+        self.comb += clk_n.eq(~ser.o)
+
+    def do_stb_serialization(self, stb_1ck_out, stb):
+        ser = Serializer(self.sd_ddr, stb_1ck_out)
+        self.submodules += ser
+        self.comb += stb.eq(ser.o)
+
+    def do_dqs_serialization(self, dqs_1ck_out, dqs_1ck_in, dqs_1ck_oe, dqs_p, dqs_n):
+        dqs_oe  = Signal()
+        dqs_out = Signal()
+        dqs_in  = Signal()  # TODO: use it for reading
+
+        ser = Serializer(self.sd_ddr_90, dqs_1ck_out)
+        self.submodules += ser
+        self.comb += dqs_out.eq(ser.o)
+
+        ser = Serializer(self.sd_ddr_90, dqs_1ck_oe)
+        self.submodules += ser
+        self.comb += dqs_oe.eq(ser.o)
+
+        des = Deserializer(self.sd_ddr_90, dqs_in, dqs_1ck_in)
+        self.submodules += des
+
+        self.specials += Tristate(dqs_p,  dqs_out, dqs_oe, dqs_in)
+        self.specials += Tristate(dqs_n, ~dqs_out, dqs_oe)
+
+    def do_db_serialization(self, db_1ck_out, db_1ck_in, db_oe, dq):
+        if self.generate_read_data:
+            # Dummy read data generator for simulation purpose
+            dq_in_dummy = Signal(self.databits)
+            gen = DummyReadGenerator(dq_in=dq, dq_out=dq_in_dummy, stb_in=self.stb_pad,
+                                     cl=self.settings.cl)
+            self.submodules += ClockDomainsRenamer({"sys": "sys4x_ddr"})(gen)
+
+        for i in range(self.databits):
+            # To/from tristate
+            dq_out = Signal()
+            dq_in = Signal()
+
+            ser = Serializer(self.sd_ddr, db_1ck_out[i])
+            self.submodules += ser
+            self.comb += dq_out.eq(ser.o)
+
+            # Use sd_ddr_90 in simulation, in general leveling would be needed.
+            if self.generate_read_data:
+                des = Deserializer(self.sd_ddr_90, dq_in_dummy[i], db_1ck_in[i])
+            else:
+                des = Deserializer(self.sd_ddr_90, dq_in, db_1ck_in[i])
+            self.submodules += des
+
+            self.specials += Tristate(dq[i], dq_out, db_oe, dq_in)
 
 class DummyReadGenerator(Module):
     def __init__(self, stb_in, dq_in, dq_out, cl):
@@ -736,41 +798,6 @@ class DummyReadGenerator(Module):
         )
 
 # I/O Primitives -----------------------------------------------------------------------------------
-
-class DDRClockGen(Module):
-    """Generate sync.ddr_pos and sync.ddr_neg for simulation purpose"""
-    def __init__(self, clk):
-        self.clock_domains.cd_ddr_pos = ClockDomain("ddr_pos", reset_less=True)
-        self.clock_domains.cd_ddr_neg = ClockDomain("ddr_neg", reset_less=True)
-        self.comb += [
-            self.cd_ddr_pos.clk.eq(clk),
-            self.cd_ddr_neg.clk.eq(~clk),
-        ]
-
-class DDROut(Module):
-    """Output on both edges of the clock (1 cycle latency)"""
-    def __init__(self, i1, i2, o):
-        # delay the second input to maintain correct order
-        i2_r = Signal()
-        self.sync.ddr_pos += i2_r.eq(i2)
-        # drive the output pin
-        self.sync.ddr_pos += o.eq(i1)
-        self.sync.ddr_neg += o.eq(i2_r)
-
-class DDRIn(Module):
-    """Read on both edges of the clock (1 cycle latency)"""
-    # TODO: test if it's correct
-    def __init__(self, i, o1, o2):
-        i1 = Signal()
-        i2 = Signal()
-        # register the inputs
-        self.sync.ddr_pos += i1.eq(i)
-        self.sync.ddr_neg += i2.eq(i)
-        # drive outputs on positive edge
-        self.sync.ddr_pos += [
-            o1.eq(i1),
-            o2.eq(i2),
-        ]
 
 class Serializer(Module):
     """Serialize input signals into one output in the `sd` clock domain"""

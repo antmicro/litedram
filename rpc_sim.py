@@ -37,7 +37,7 @@ from liteeth.common import *
 
 from litescope import LiteScopeAnalyzer
 
-from litedram.phy.etronrpcphy import EM6GA16L, DFIAdapter, RPCPHY
+from litedram.phy.etronrpcphy import EM6GA16L, SimulationPHY as RPCPHY
 
 # Platform -----------------------------------------------------------------------------------------
 
