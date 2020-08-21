@@ -348,8 +348,8 @@ class BasePHY(Module):
         dfi_params = dict(addressbits=addressbits, bankbits=bankbits, nranks=nranks,
                           databits=4*databits, nphases=nphases)
 
-        # Register DFI history, as we need to operate on 3 subsequent cycles (write data,
-        # only 2 needed for commands)
+        # Register DFI history, as we need to operate on 3 subsequent cycles (write data, only
+        # 2 needed for commands)
         # hist[0] = dfi[N], hist[1] = dfi[N-1], ...
         self.dfi = dfi = Interface(**dfi_params)
         dfi_hist = [dfi, Interface(**dfi_params), Interface(**dfi_params)]
@@ -363,8 +363,13 @@ class BasePHY(Module):
         # - CLK (O)  - full-rate clock
         # - DQS (IO) - strobe for commands/data/mask on DB pins
         # DQS is edge-aligned to CLK, while DB and STB are center-aligned to CLK (phase = -90).
-        # This PHY sends the CLK and DQS delayed by 90 degrees and all other signals edge-aligned
-        # to sysclk.
+        # Sending a parallel command (on DB pins):
+        #  CLK: ____----____----____----____----____----____
+        #  STB: ----------________________------------------
+        #  DQS: ....................----____----____........
+        #  DB:  ..........................PPPPnnnn..........
+        # This PHY sends DB/STB phase aligned to sysclk and DQS/CLK are assumed to be shifted
+        # back by 90 degrees (serializers clocked with sys4x+90deg).
 
         # Signal values (de)serialized during 1 sysclk.
         # These signals must be populated in specific PHY implementations.
@@ -373,22 +378,14 @@ class BasePHY(Module):
 
         self.dqs_1ck_out = dqs_1ck_out = Signal(2*nphases)
         self.dqs_1ck_in  = dqs_1ck_in  = Signal(2*nphases)
-        self.dqs_1ck_oe  = dqs_1ck_oe  = Signal(2*nphases)
+        self.dqs_oe      = dqs_oe      = Signal()
 
         self.db_1ck_out  = db_1ck_out  = [Signal(2*nphases) for _ in range(databits)]
         self.db_1ck_in   = db_1ck_in   = [Signal(2*nphases) for _ in range(databits)]
         self.db_oe       = db_oe       = Signal()
 
         # Clocks -----------------------------------------------------------------------------------
-        def _sd(name):
-            return getattr(self.sync, name), ClockSignal(name)
-
-        sd_sys,     sd_sys_clk     = _sd("sys")
-        sd_half,    sd_half_clk    = _sd("sys2x")
-        sd_full,    sd_full_clk    = _sd("sys4x")
-        sd_full_90, sd_full_90_clk = _sd("sys4x_90")
-
-        # Serialize clock phase shifted by 90 deg
+        # Serialize clock (pattern will be shifted back 90 degrees!)
         self.comb += clk_1ck_out.eq(bitpattern("_-_-_-_-"))
 
         # DB muxing --------------------------------------------------------------------------------
@@ -442,14 +439,9 @@ class BasePHY(Module):
                 adapter.mr.tm.eq(0),
             ]
 
-        # Serialize commands to DB pins:
-        # CLK: ____----____----____----____----____----____
-        # STB: ----------________________------------------
-        # DQS: ....................----____----____........
-        # DB:  ..........................PPPPnnnn..........
-        # TODO: it must be center-aligned to the full-rate clk
+        # Serialize commands to DB pins
         for i in range(databits):
-            # Serialize a list of differential DB values using previous DFI coomand:
+            # A list of differential DB values using previous DFI coomand:
             # db_p[p][i], db_n[p][i], db_p[p+1][i], db_n[p+1][i], ...
             bits = [db for a in dfi_adapters[:nphases] for db in [a.db_p[i], a.db_n[i]]]
             self.comb += db_1ck_cmd[i].eq(Cat(*bits))
@@ -503,7 +495,7 @@ class BasePHY(Module):
             rbits_1ck = Signal(n_1ck)
 
             self.comb += rbits_1ck.eq(db_1ck_in[i])
-            sd_sys += Case(dq_in_cnt, {
+            self.sync += Case(dq_in_cnt, {
                 0: rbits_2ck[:n_1ck].eq(rbits_1ck),
                 1: rbits_2ck[n_1ck:].eq(rbits_1ck),
             })
@@ -535,8 +527,8 @@ class BasePHY(Module):
         # DB num:           <M><M><M><M><0><1><2><3><4><5><6><7><8><9><a><b><c><d><e><f>
 
         # Synchronize to 2 cycles, reset counting when dq_data_en turns high.
-        cnt = Signal()
-        self.sync += If(dq_data_en, cnt.eq(~cnt)).Else(cnt.eq(0))
+        db_cnt = Signal()
+        self.sync += If(dq_data_en, db_cnt.eq(~db_cnt)).Else(db_cnt.eq(0))
 
         for i in range(databits):
             # Write data ---------------------------------------------------------------------------
@@ -553,7 +545,7 @@ class BasePHY(Module):
             # Mux datas from 2 cycles to always serialize single cycle.
             wbits_2ck = [Cat(*wbits[:2*nphases]), Cat(*wbits[2*nphases:])]
             wbits_1ck = Signal(2*nphases)
-            self.comb += wbits_1ck.eq(Array(wbits_2ck)[cnt])
+            self.comb += wbits_1ck.eq(Array(wbits_2ck)[db_cnt])
             self.comb += db_1ck_data[i].eq(Cat(*wbits_1ck))
 
             # Data mask ----------------------------------------------------------------------------
@@ -570,23 +562,42 @@ class BasePHY(Module):
             self.comb += db_1ck_mask[i].eq(Cat(*mask))
 
         # DQS --------------------------------------------------------------------------------------
-        # Strobe pattern
-        self.comb += Case(dq_mask_en, {
-            # shifted by 180 deg
-            1: dqs_1ck_out.eq(bitpattern("___-_-_-")),
-            0: dqs_1ck_out.eq(bitpattern("_-_-_-_-")),
-        })
+        # Strobe pattern can go over 2 sysclk (do not count while transmitting mask)
+        dqs_cnt = Signal()
+        self.sync += If(dqs_oe & (~dq_mask_en), dqs_cnt.eq(~dqs_cnt)).Else(dqs_cnt.eq(0))
 
-        # Serialize output-enable for commands (as commands can go on any phase)
-        # TODO: we should be able to use a Case depending on the current command phase
-        dqs_oe_bits = []
+        pattern_2ck = [Signal(2*nphases), Signal(2*nphases)]
+        self.comb += dqs_1ck_out.eq(Array(pattern_2ck)[dqs_cnt])
+
+        # To avoid having to serialize dqs_oe, we serialize predefined pattern on dqs_out
+        # All the patterns will be shifted back 90 degrees!
+        data_pattern = [bitpattern("_-_-_-_-")] * 2
+        mask_pattern = [bitpattern("___-_-_-"), bitpattern("_-_-_-_-")]
+        phase_patterns = {
+            0: [bitpattern("_______-"), bitpattern("_-______")],
+            1: [bitpattern("________"), bitpattern("_-_-____")],
+            2: [bitpattern("________"), bitpattern("___-_-__")],
+            3: [bitpattern("________"), bitpattern("_____-_-")],
+        }
+
+        pattern_cases = \
+            If(dq_mask_en,
+                pattern_2ck[0].eq(mask_pattern[0]),
+                pattern_2ck[1].eq(mask_pattern[1]),
+            ).Else(
+                pattern_2ck[0].eq(data_pattern[0]),
+                pattern_2ck[1].eq(data_pattern[1]),
+            )
         for p in range(nphases):
-            # Command strobe starts 1 cycle before the command
-            cmd_oe = dfi_adapters[p+1].db_valid | dfi_adapters[p].db_valid
-            # Send strobe before cmd, before write and during write
-            oe = cmd_oe | dq_mask_en | dq_data_en
-            dqs_oe_bits += [oe, oe]
-        self.comb += dqs_1ck_oe.eq(Cat(*dqs_oe_bits))
+            phase_valid = dfi_adapters[p].db_valid | dfi_adapters[nphases+p].db_valid
+            pattern_cases = \
+                If(phase_valid,
+                    pattern_2ck[0].eq(phase_patterns[p][0]),
+                    pattern_2ck[1].eq(phase_patterns[p][1]),
+                ).Else(pattern_cases)
+
+        self.comb += pattern_cases
+        self.comb += dqs_oe.eq(reduce(or_, phase_valid) | dq_mask_en | dq_data_en)
 
         # Read Control Path ------------------------------------------------------------------------
         # Creates a shift register of read commands coming from the DFI interface. This shift
@@ -614,7 +625,7 @@ class BasePHY(Module):
     def do_finalize(self):
         self.do_clock_serialization(self.clk_1ck_out, self.pads.clk_p, self.pads.clk_n)
         self.do_stb_serialization(self.stb_1ck_out, self.stb)
-        self.do_dqs_serialization(self.dqs_1ck_out, self.dqs_1ck_in, self.dqs_1ck_oe,
+        self.do_dqs_serialization(self.dqs_1ck_out, self.dqs_1ck_in, self.dqs_oe,
                                   # RPC DRAM uses 1 differential DQS pair
                                   self.pads.dqs_p[0], self.pads.dqs_n[0])
         self.do_db_serialization(self.db_1ck_out, self.db_1ck_in, self.db_oe, self.pads.dq)
@@ -627,7 +638,7 @@ class BasePHY(Module):
     def do_stb_serialization(self, stb_1ck_out, stb):
         raise NotImplementedError("Serialize the STB line")
 
-    def do_dqs_serialization(self, dqs_1ck_out, dqs_1ck_in, dqs_1ck_oe, dqs_p, dqs_n):
+    def do_dqs_serialization(self, dqs_1ck_out, dqs_1ck_in, dqs_oe, dqs_p, dqs_n):
         raise NotImplementedError("Tristate and (de)serialize DQS with 90 deg phase delay")
 
     def do_db_serialization(self, db_1ck_out, db_1ck_in, db_oe, dq):
@@ -661,18 +672,13 @@ class SimulationPHY(BasePHY):
         self.submodules += ser
         self.comb += stb.eq(ser.o)
 
-    def do_dqs_serialization(self, dqs_1ck_out, dqs_1ck_in, dqs_1ck_oe, dqs_p, dqs_n):
-        dqs_oe  = Signal()
+    def do_dqs_serialization(self, dqs_1ck_out, dqs_1ck_in, dqs_oe, dqs_p, dqs_n):
         dqs_out = Signal()
         dqs_in  = Signal()  # TODO: use it for reading
 
         ser = Serializer(self.sd_ddr_90, dqs_1ck_out)
         self.submodules += ser
         self.comb += dqs_out.eq(ser.o)
-
-        ser = Serializer(self.sd_ddr_90, dqs_1ck_oe)
-        self.submodules += ser
-        self.comb += dqs_oe.eq(ser.o)
 
         des = Deserializer(self.sd_ddr_90, dqs_in, dqs_1ck_in)
         self.submodules += des
@@ -801,7 +807,7 @@ class DummyReadGenerator(Module):
 
 class Serializer(Module):
     """Serialize input signals into one output in the `sd` clock domain"""
-    def __init__(self, sd, inputs, reset=0):
+    def __init__(self, sd, inputs, reset=0, name=None):
         assert(len(inputs) > 0)
         assert(len(s) == len(inputs[0]) for s in inputs)
 
@@ -812,13 +818,13 @@ class Serializer(Module):
             inputs = Array(inputs)
 
         self.o = Signal(signal_width)
-        data_cntr = Signal(log2_int(data_width))
+        data_cntr = Signal(log2_int(data_width), name=name)
         sd += If(reset, data_cntr.eq(0)).Else(data_cntr.eq(data_cntr+1))
         self.comb += self.o.eq(inputs[data_cntr])
 
 class Deserializer(Module):
     """Deserialize an input signal into outputs in the `sd` clock domain"""
-    def __init__(self, sd, input, outputs, reset=0):
+    def __init__(self, sd, input, outputs, reset=0, name=None):
         assert(len(outputs) > 0)
         assert(len(s) == len(outputs[0]) for s in outputs)
         assert(len(outputs[0]) == len(input))
@@ -829,6 +835,6 @@ class Deserializer(Module):
         if not isinstance(outputs, Array):
             outputs = Array(outputs)
 
-        data_cntr = Signal(log2_int(data_width))
+        data_cntr = Signal(log2_int(data_width), name=name)
         sd += If(reset, data_cntr.eq(0)).Else(data_cntr.eq(data_cntr+1))
         sd += outputs[data_cntr].eq(input)
