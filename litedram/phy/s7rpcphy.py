@@ -18,8 +18,6 @@ class A7RPCPHY(BasePHY):
         self._rdly_dq_rst = CSR()
         self._rdly_dq_inc = CSR()
 
-        self.pads = kwargs["pads"]
-
         kwargs.update(dict(
             write_ser_latency = 4//4,  # OSERDESE2 8:1 DDR (4 full-rate clocks)
             read_des_latency  = 2,  # ISERDESE2 NETWORKING
@@ -99,6 +97,9 @@ class A7RPCPHY(BasePHY):
             io_IO  = dqs_p,
             io_IOB = dqs_n,
         )
+
+    def do_cs_serialization(self, cs_n_1ck_out, cs_n):
+        self.oserdese2_ddr(din=cs_n_1ck_out, dout=cs_n)
 
     def oserdese2_ddr(self, *, din, dout, clk="sys4x", tin=None, tout=None):
         assert self.nphases == 4

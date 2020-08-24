@@ -1,6 +1,8 @@
 # This file is Copyright (c) 2020 Antmicro <www.antmicro.com>
 # Etron RPC DRAM PHY
 
+from operator import and_
+
 from migen import *
 from migen.fhdl.specials import Tristate
 
@@ -284,13 +286,13 @@ class DFIAdapter(Module):
 class BasePHY(Module, AutoCSR):
     def __init__(self, pads, sys_clk_freq, write_ser_latency, read_des_latency, phytype):
         self.memtype     = memtype = "RPC"
-        self.tck         = tck     = 2 / (2*4*sys_clk_freq)
+        self.nranks      = nranks = 1 if not hasattr(pads, "cs_n") else len(pads.cs_n)
         self.databits    = databits = len(pads.dq)
-        assert databits == 16
         self.addressbits = addressbits = 14
         self.bankbits    = bankbits = 2
-        self.nranks      = nranks = 1 if not hasattr(pads, "cs_n") else len(pads.cs_n)
         self.nphases     = nphases = 4
+        self.tck         = tck     = 1 / (nphases*sys_clk_freq)
+        assert databits == 16
 
         # TODO: pads groups for multiple chips
         #  pads = PHYPadsCombiner(pads)
@@ -396,8 +398,9 @@ class BasePHY(Module, AutoCSR):
 
         # Signal values (de)serialized during 1 sysclk.
         # These signals must be populated in specific PHY implementations.
-        self.clk_1ck_out = clk_1ck_out = Signal(2*nphases)
-        self.stb_1ck_out = stb_1ck_out = Signal(2*nphases)
+        self.clk_1ck_out  = clk_1ck_out  = Signal(2*nphases)
+        self.stb_1ck_out  = stb_1ck_out  = Signal(2*nphases)
+        self.cs_n_1ck_out = cs_n_1ck_out = Signal(2*nphases)
 
         self.dqs_1ck_out = dqs_1ck_out = Signal(2*nphases)
         self.dqs_1ck_in  = dqs_1ck_in  = Signal(2*nphases)
@@ -485,6 +488,18 @@ class BasePHY(Module, AutoCSR):
             # we can simply hold STB high all the time and reset is zeros for 8 cycles (1 sysclk).
             stb_bits += 2 * [~(preamble | stb_reset_seq)]
         self.comb += stb_1ck_out.eq(Cat(*stb_bits))
+
+        # Chip Select ------------------------------------------------------------------------------
+        # RPC has quite high required time of CS# low before sending a command (tCSS), this means
+        # that we would need 1 more cmd_latency to support it for all standard frequencies. For now
+        # we hold it low all the time since the moment a first CS# low has been sent on DFI.
+        # TODO: better CS handling (+compare tck with tCSS_min/tCSH_min to check if timings are met)
+        cs       = Signal()
+        # bring CS# low when we see CS#=0 on phase 0 and 1 on all others (done during initialization
+        # sequence, and avoids situatuions when all CS#=0 early on)
+        cs_start_cond = [dfi_hist[0].phases[p].cs_n == (0 if p == 0 else 1) for p in range(nphases)]
+        self.sync += If(reduce(and_, cs_start_cond), cs.eq(1))
+        self.comb += cs_n_1ck_out.eq(Replicate(~cs, len(cs_n_1ck_out)))
 
         # Data IN ----------------------------------------------------------------------------------
         # Synchronize the deserializer as we deserialize over 2 cycles.
@@ -639,6 +654,7 @@ class BasePHY(Module, AutoCSR):
                                   # RPC DRAM uses 1 differential DQS pair
                                   self.pads.dqs_p[0], self.pads.dqs_n[0])
         self.do_db_serialization(self.db_1ck_out, self.db_1ck_in, self.db_oe, self.pads.dq)
+        self.do_cs_serialization(self.cs_n_1ck_out, self.pads.cs_n[0])
 
     # I/O implementation ---------------------------------------------------------------------------
 
@@ -653,6 +669,9 @@ class BasePHY(Module, AutoCSR):
 
     def do_db_serialization(self, db_1ck_out, db_1ck_in, db_oe, dq):
         raise NotImplementedError("Tristate and (de)serialize DB")
+
+    def do_cs_serialization(self, cs_n_1ck_out, cs_n):
+        raise NotImplementedError("Serialize the chip select line (CS#)")
 
 # Etron RPC Simulation PHY -------------------------------------------------------------------------
 
@@ -721,6 +740,11 @@ class SimulationPHY(BasePHY):
             self.submodules += des
 
             self.specials += Tristate(dq[i], dq_out, db_oe, dq_in)
+
+    def do_cs_serialization(self, cs_n_1ck_out, cs_n):
+        ser = Serializer(self.sd_ddr, cs_n_1ck_out)
+        self.submodules += ser
+        self.comb += cs_n.eq(ser.o)
 
 class DummyReadGenerator(Module):
     def __init__(self, stb_in, dq_in, dq_out, cl):

@@ -291,6 +291,8 @@ def get_rpc_phy_init_sequence(phy_settings, timing_settings):
     init_sequence = [
         # Apply power, stabilize clocks for 200us, CS# and STB should be high
         ("Stabilize clocks", 0x0000, 0, cmds["UNRESET"], 50000),
+        # Send CS# low once, to make PHY start holding it all the time
+        ("Hold CS# low", 0x0000, 0, "DFII_COMMAND_CS", 0),
         # Enter PU RESET, by issuing ACT with reset_n=0, PHY will perform the reset sequence
         ("RPC special commands: ON", 0x0000, 0, "DFII_CONTROL_ODT", 0),
         ("PU RESET sequence (ACT)", 0x0000, 0, "DFII_COMMAND_RAS|DFII_COMMAND_CS", 5000),

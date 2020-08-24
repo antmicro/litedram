@@ -61,6 +61,7 @@ _io = [
         Subsignal("ras_n",   Pins(1)),
         Subsignal("cas_n",   Pins(1)),
         Subsignal("we_n",    Pins(1)),
+        Subsignal("cs_n",    Pins(1)),
         Subsignal("dm",      Pins(2)),
         Subsignal("dq",      Pins(16)),
         Subsignal("dqs_p",   Pins(2)),
