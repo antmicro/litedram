@@ -12,6 +12,8 @@
 
 from migen import log2_int
 
+from litedram.phy import etronrpcphy
+
 cmds = {
     "PRECHARGE_ALL": "DFII_COMMAND_RAS|DFII_COMMAND_WE|DFII_COMMAND_CS",
     "MODE_REGISTER": "DFII_COMMAND_RAS|DFII_COMMAND_CAS|DFII_COMMAND_WE|DFII_COMMAND_CS",
@@ -276,36 +278,30 @@ def get_rpc_phy_init_sequence(phy_settings, timing_settings):
         "open": 0b000,
     }
 
-    # Format the command by packing the mode register information in addressbits(14) and bankbits(2):
-    # addressbits (MSB->LSB): CSR_FX, ODT, Zout, nWR, CL
-    # bankbits    (MSB->LSB): ODT_PD, ODT_STB
-    # TM is not being sent.
-    mr_a = 0
-    mr_a |= (cl_to_mr[cl]     & 0b111)  <<  0
-    mr_a |= (nwr_to_mr[nwr]   & 0b111)  <<  3
-    mr_a |= (zout_to_mr[zout] & 0b1111) <<  6
-    mr_a |= (odt_to_mr[odt]   & 0b111)  << 10
-    mr_a |= (csr_fx           & 0b1)    << 13
-
-    mr_ba = 0
-    mr_ba |= (odt_stb & 0b1) << 0
-    mr_ba |= (odt_pd  & 0b1) << 1
+    mr_a, mr_ba = etronrpcphy.ModeRegister.dfi_encode(
+        cl=cl_to_mr[cl],
+        nwr=nwr_to_mr[nwr],
+        zout=zout_to_mr[zout],
+        odt=odt_to_mr[odt],
+        csr_fx=csr_fx,
+        odt_stb=odt_stb,
+        odt_pd=odt_pd,
+    )
 
     init_sequence = [
-        # Apply power
-        ("Release reset", 0x0000, 0, "DFII_CONTROL_RESET_N", 50000),
-        # Stabilize clocks for 200us, CS# and STB should be high
-        # Now we can bring CS# low
-        ("Bring CS# low", 0x0000, 0, "DFII_COMMAND_CS", 10),
-        # Enter PU RESET, which is not a regular DFI command
-        # FIXME: RPC PHY will read ZQCS with an address of 0x123 as RESET sequence
-        # and will perform the require procedure of holding STB low for serial reset
-        ("Enter PU RESET", 0x0123, 0, "DFII_COMMAND_CS|DFII_COMMAND_WE", 5000),
-        ("Precharge ALL", 0x0400, 0, cmds["PRECHARGE_ALL"], 0),
+        # Apply power, stabilize clocks for 200us, CS# and STB should be high
+        ("Stabilize clocks", 0x0000, 0, cmds["UNRESET"], 50000),
+        # Enter PU RESET, by issuing ACT with reset_n=0, PHY will perform the reset sequence
+        ("RPC special commands: ON", 0x0000, 0, "DFII_CONTROL_ODT", 0),
+        ("PU RESET sequence (ACT)", 0x0000, 0, "DFII_COMMAND_RAS|DFII_COMMAND_CS", 5000),
+        ("RPC special commands: OFF", 0x0000, 0, cmds["UNRESET"], 0),
         # Setup mode register
+        ("Precharge ALL", 0x0400, 0, cmds["PRECHARGE_ALL"], 0),
         ("Load Mode Register: CL={}".format(cl), mr_a, mr_ba, cmds["MODE_REGISTER"], 0),
         # ZQ Calibration (ZQ LONG will be translated to RPC ZQ INIT by PHY)
-        ("ZQ Calibration", 0x0400, 0, "DFII_COMMAND_WE|DFII_COMMAND_CS", 1000),
+        ("RPC special commands: ON", 0x0000, 0, "DFII_CONTROL_ODT", 0),
+        ("ZQ Init Calibration", 0x0400, 0, "DFII_COMMAND_WE|DFII_COMMAND_CS", 1000),
+        ("RPC special commands: OFF", 0x0000, 0, cmds["UNRESET"], 0),
     ]
 
     return init_sequence, None

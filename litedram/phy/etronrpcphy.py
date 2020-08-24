@@ -49,6 +49,7 @@ class EM6GA16L(SDRAMModule):
 # RPC Commands -------------------------------------------------------------------------------------
 
 class ModeRegister:
+    """RPC Mode Register encoding (RPC has only 1 mode register)"""
     def __init__(self):
         self.cl      = Signal(3)
         # TODO: in LPDDR3 nWR is the number of clock cycles determining when to start internal
@@ -61,12 +62,56 @@ class ModeRegister:
         self.odt_pd  = Signal(1)
         self.tm      = Signal(1)
 
-class DFIAdapter(Module):
-    # Translate DFI controls to RPC versions
-    # It seems that the encoding is different when we use STB serial pin and CD data pins
-    # For now we want to focus on CD encoding
-    # TODO: STB is currently not used, this has to be rewritten
+    # Encode mode register information in DFI address/bank
+    DFI_ENCODING = {
+        # field: (dfi_signal, width, offset)
+        "cl":      ("address", 3,  0),
+        "nwr":     ("address", 3,  3),
+        "zout":    ("address", 4,  6),
+        "odt":     ("address", 3, 10),
+        "csr_fx":  ("address", 1, 13),
+        "odt_stb": ("bank",    1,  0),
+        "odt_pd":  ("bank",    1,  1),
+        "tm":      None,
+    }
 
+    @classmethod
+    def dfi_encode(cls, **kwargs):
+        address = 0
+        bank = 0
+        for field, encoding in cls.DFI_ENCODING.items():
+            if encoding is None:
+                continue
+            sig, width, offset = encoding
+            value = (kwargs[field] & (2*width - 1)) << offset
+            if sig == "address":
+                address |= value
+            elif sig == "bank":
+                bank |= value
+            else:
+                raise ValueError(sig)
+        return address, bank
+
+    def dfi_decode(self, dfi_phase):
+        r = []
+        for field, encoding in self.DFI_ENCODING.items():
+            if encoding is None:
+                continue
+            sig, width, offset = encoding
+            r += [getattr(self, field).eq(getattr(dfi_phase, sig)[offset:offset+width])]
+        return r
+
+class DFIAdapter(Module):
+    """Translate DFI commands into RPC parallel commands format (Request Packet)
+
+    Maps DFI commands to RPC parallel packet commands (sent over DB lines). Some commands cannot
+    be represented by cas_n/ras_n/we_n combinations, for that reason when reset_n=0, some DFI
+    commands are interpreted specially:
+    - ACT -> perform a RESET sequence
+    - MRS -> write UTR, utr_op and utr_en are encoded in phase.address (see `dfi_utr_encode`)
+    - ZQC -> will perform di_ferent types of ZQ calibration: "init" when auto_precharge=1,
+             "reset" if auto_precharge=0
+    """
     ZQC_OP = {
         "init":  0b00,  # calibration after initialization
         "long":  0b01,
@@ -84,97 +129,106 @@ class DFIAdapter(Module):
         "1010": 0b11,
     }
 
-    # dfi: single DFI phase
-    def __init__(self, dfi):
-        # Request Packet: data for positive and negative edge
-        self.db_p = Signal(16)
-        self.db_n = Signal(16)
-        # Serial Packet
-        self.stb  = Signal(16)
+    @classmethod
+    def dfi_utr_encode(cls, utr_op, utr_en):
+        if isinstance(utr_op, str):
+            utr_op = cls.UTR_OP[utr_op]
+        address = 0
+        address |= (utr_en &  0b1) << 0
+        address |= (utr_op & 0b11) << 1
+        return address
 
-        # 1 when not in NOP
-        self.db_valid = Signal(reset=1)
+    def __init__(self, phase):
+        self.db_p = Signal(16)  # on positive edge
+        self.db_n = Signal(16)  # on negative edge
 
-        # force sending RESET command
-        self.do_reset = Signal()
+        self.cmd_valid = Signal()
+        self.do_reset  = Signal()  # force sending RESET command
+        self.bc        = Signal(6)  # burst count (bs+1 = number of 32-byte words in the transfer)
+        self.ref_op    = Signal(2)
+        self.is_reset  = Signal()
+        self.is_utr    = Signal()
 
-        self.mr = ModeRegister()
+        # # #
 
-        # use it to send PRE on STB
-        auto_precharge = Signal()
-        self.comb += auto_precharge.eq(dfi.address[10])
+        phase_cmd = Signal(3)
+        self.comb += phase_cmd.eq(Cat(phase.cas_n, phase.ras_n, phase.we_n))
 
-        # burst count - specifies the number of 32-byte bursts in the transfer
-        self.bc = Signal(6)
-        # Refresh
-        self.ref_op = Signal(2)
-        # utility register read
-        self.utr_en = Signal()
-        self.utr_op = Signal(2)
-        # ZQ Calibration
-        zqc_op = Signal(2)
-
-        # for WR and RD, it seems to be a banks mask, so PRECHARGE ALL would be 0b1111
-        bk = Signal(4)
-        self.comb += [
-            If(auto_precharge,
-                bk.eq(0b1111),
-                # LiteDRAM will try to perform "long" calibration during init and then
-                # do only "short" ones, so we have to send "init" instead of "long" for RPC
-                zqc_op.eq(self.ZQC_OP["init"]),
-            ).Else(
-                # binary to one-hot encoded
-                Case(dfi.bank[:2], {i: bk.eq(1 << i) for i in range(4)}),
-                zqc_op.eq(self.ZQC_OP["short"]),
-            )
-        ]
-
-        def cmd_sig(dfi):
-            return Cat(dfi.cas_n, dfi.ras_n, dfi.we_n)
-
-        def cmd(cas, ras, we):
+        def _cmd(cas, ras, we):
             assert cas in [0, 1] and ras in [0, 1] and we in [0, 1]
             return ((1 - cas) << 0) | ((1 - ras) << 1) | ((1 - we) << 2)
 
-        dfi_cmd = {
-            "NOP": cmd(cas=0, ras=0, we=0),
-            "ACT": cmd(cas=0, ras=1, we=0),
-            "RD":  cmd(cas=1, ras=0, we=0),
-            "WR":  cmd(cas=1, ras=0, we=1),
-            "PRE": cmd(cas=0, ras=1, we=1),
-            "REF": cmd(cas=1, ras=1, we=0),
-            "ZQC": cmd(cas=0, ras=0, we=1),
-            "MRS": cmd(cas=1, ras=1, we=1),
+        dfi_cmds = {
+            "NOP": _cmd(cas=0, ras=0, we=0),
+            "ACT": _cmd(cas=0, ras=1, we=0),
+            "RD":  _cmd(cas=1, ras=0, we=0),
+            "WR":  _cmd(cas=1, ras=0, we=1),
+            "PRE": _cmd(cas=0, ras=1, we=1),
+            "REF": _cmd(cas=1, ras=1, we=0),
+            "ZQC": _cmd(cas=0, ras=0, we=1),
+            "MRS": _cmd(cas=1, ras=1, we=1),
         }
 
-        # command encoding for CD data lines
-        parallel_cmd = {
+        # precharge/refresh use a bank bitmask, so PRECHARGE ALL uses 0b1111
+        special_cmds   = Signal()
+        bk             = Signal(4)
+        zqc_op         = Signal(2)
+        auto_precharge = Signal()
+        mr             = ModeRegister()
+
+        self.comb += mr.dfi_decode(phase)
+        self.comb += [
+            special_cmds.eq(~phase.reset_n),
+            auto_precharge.eq(phase.address[10]),
+            If(auto_precharge,
+                bk.eq(0b1111),
+            ).Else(  # binary to one-hot encoded
+                Case(phase.bank[:2], {i: bk.eq(1 << i) for i in range(4)}),
+            ),
+            If(special_cmds,
+                If(auto_precharge,
+                    zqc_op.eq(self.ZQC_OP["init"]),
+                ).Else(
+                    zqc_op.eq(self.ZQC_OP["reset"]),
+                )
+            ).Else(
+                If(auto_precharge,
+                    zqc_op.eq(self.ZQC_OP["long"]),
+                ).Else(
+                    zqc_op.eq(self.ZQC_OP["short"]),
+                )
+            ),
+        ]
+
+        utr_en = phase.address[0]
+        utr_op = phase.address[1:3]
+
+        cases = {
             "NOP": [
                 self.db_p.eq(0),
                 self.db_n.eq(0),
-                self.db_valid.eq(0),
             ],
             "ACT": [
                 self.db_p[0:2  +1].eq(0b101),
-                self.db_p[3:4  +1].eq(dfi.bank[:2]),
+                self.db_p[3:4  +1].eq(phase.bank[:2]),
                 self.db_n[0      ].eq(0),
-                self.db_n[1:12 +1].eq(dfi.address[:12]),  # row address
+                self.db_n[1:12 +1].eq(phase.address[:12]),  # row address
             ],
             "RD": [
                 self.db_p[0:2   +1].eq(0b000),
-                self.db_p[3:4   +1].eq(dfi.bank[:2]),
+                self.db_p[3:4   +1].eq(phase.bank[:2]),
                 self.db_p[5:10  +1].eq(self.bc),
-                self.db_p[13:15 +1].eq(dfi.address[4:6 +1]),
+                self.db_p[13:15 +1].eq(phase.address[4:6 +1]),
                 self.db_n[0       ].eq(0),
-                self.db_n[13:15 +1].eq(dfi.address[7:9 +1]),
+                self.db_n[13:15 +1].eq(phase.address[7:9 +1]),
             ],
             "WR": [
                 self.db_p[0:2   +1].eq(0b001),
-                self.db_p[3:4   +1].eq(dfi.bank[:2]),
+                self.db_p[3:4   +1].eq(phase.bank[:2]),
                 self.db_p[5:10  +1].eq(self.bc),
-                self.db_p[13:15 +1].eq(dfi.address[4:6 +1]),
+                self.db_p[13:15 +1].eq(phase.address[4:6 +1]),
                 self.db_n[0       ].eq(0),
-                self.db_n[13:15 +1].eq(dfi.address[7:9 +1]),
+                self.db_n[13:15 +1].eq(phase.address[7:9 +1]),
             ],
             "PRE": [
                 self.db_p[6:9+1].eq(bk),
@@ -194,14 +248,14 @@ class DFIAdapter(Module):
             ],
             "MRS": [
                 self.db_p[0:2  +1].eq(0b010),
-                self.db_p[3:15 +1].eq(Cat(self.mr.cl, self.mr.nwr, self.mr.zout, self.mr.odt)),
+                self.db_p[3:15 +1].eq(Cat(mr.cl, mr.nwr, mr.zout, mr.odt)),
                 self.db_n[0      ].eq(0),
-                self.db_n[12:15+1].eq(Cat(self.mr.odt_stb, self.mr.csr_fx, self.mr.odt_pd, self.mr.tm)),
+                self.db_n[12:15+1].eq(Cat(mr.odt_stb, mr.csr_fx, mr.odt_pd, mr.tm)),
             ],
             "UTR": [
                 self.db_p[0:2  +1].eq(0b111),
-                self.db_p[3      ].eq(self.utr_en),
-                self.db_p[4:5  +1].eq(self.utr_op),
+                self.db_p[3      ].eq(utr_en),
+                self.db_p[4:5  +1].eq(utr_op),
                 self.db_n[0      ].eq(0),
             ],
             "RESET": [
@@ -210,55 +264,19 @@ class DFIAdapter(Module):
             ],
         }
 
-        # command encoding for STB serial line
-        stb_op   = Signal(2)
-        stb_addr = Signal(14)
         self.comb += [
-            self.stb[:2].eq(stb_op),
-            self.stb[2:].eq(stb_addr),
-        ]
-        rd_wr = 0  # TODO: which one is 0 and which is 1
-        serial_cmd = {
-            "NOP": [
-                stb_op.eq(0b11),
-            ],
-            "ACT": [
-                stb_op.eq(0b10),
-                stb_addr.eq(Cat(dfi.bank[:2], dfi.address[:12])),
-            ],
-            "RD": [
-                stb_op.eq(0b01),  # burst, TODO: may require "Toggle RW" before
-                stb_addr.eq(Cat(dfi.bank[:2], rd_wr, dfi.address[4:9+1])),
-            ],
-            "WR": [
-                stb_op.eq(0b01),  # burst, TODO: may require "Toggle RW" before
-                stb_addr.eq(Cat(dfi.bank[:2], rd_wr, dfi.address[4:9+1])),
-            ],
-            "PRE": [
-                stb_op.eq(0b00),  # utility
-            ],
-            # ZQC: not available
-            # MRS: not available
-            # TODO: the rest is a bit more compicated, rework STB encoding
-            "REF": [],
-            "TOGGLE_RW": [
-                stb_op.eq(0b00),
-                stb_addr[0].eq(1),
-            ],
-            # Burst Stop
-        }
-
-        parallel_cases = {dfi_cmd[cmd]: parallel_cmd[cmd] for cmd in dfi_cmd.keys()}
-        parallel_cases["default"] = parallel_cmd["NOP"]
-        serial_cases   = {dfi_cmd[cmd]: serial_cmd["NOP"]   for cmd in dfi_cmd.keys()}
-        #  serial_cases["default"] = serial_cmd["NOP"]
-        self.comb += [
-            If(self.do_reset,
-                parallel_cmd["RESET"]
+            self.is_reset.eq(special_cmds & (phase_cmd == dfi_cmds["ACT"])),
+            self.is_utr.eq  (special_cmds & (phase_cmd == dfi_cmds["MRS"])),
+            If(self.is_reset,
+                cases["RESET"],
+                self.cmd_valid.eq(1),
+            ).Elif(self.is_utr,
+                cases["UTR"],
+                self.cmd_valid.eq(1),
             ).Else(
-                Case(cmd_sig(dfi), parallel_cases),
+                self.cmd_valid.eq(phase_cmd != dfi_cmds["NOP"]),
+                Case(phase_cmd, {dfi_cmds[cmd]: cases[cmd] for cmd in dfi_cmds.keys()}),
             ),
-            Case(cmd_sig(dfi), serial_cases),
         ]
 
 # Etron RPC DRAM PHY Base --------------------------------------------------------------------------
@@ -433,15 +451,6 @@ class BasePHY(Module, AutoCSR):
                 # Always use fast refresh (equivalent to auto refresh) instead of low-power refresh
                 # (equivalent to self refresh).
                 adapter.ref_op.eq(adapter.REF_OP["FST"]),
-                # Format mode register from addressbits and bankbits as defined in litedram/init.py
-                adapter.mr.cl.eq(phase.address[0:3]),
-                adapter.mr.nwr.eq(phase.address[3:6]),
-                adapter.mr.zout.eq(phase.address[6:10]),
-                adapter.mr.odt.eq(phase.address[10:13]),
-                adapter.mr.csr_fx.eq(phase.address[13]),
-                adapter.mr.odt_stb.eq(phase.bank[0]),
-                adapter.mr.odt_pd.eq(phase.bank[1]),
-                adapter.mr.tm.eq(0),
             ]
 
         # Serialize commands to DB pins
@@ -452,23 +461,16 @@ class BasePHY(Module, AutoCSR):
             self.comb += db_1ck_cmd[i].eq(Cat(*bits))
 
         # Commands go on the 2nd cycle, so use previous DFI
-        self.comb += dq_cmd_en.eq(reduce(or_, [a.db_valid for a in dfi_adapters[:nphases]]))
+        self.comb += dq_cmd_en.eq(reduce(or_, [a.cmd_valid for a in dfi_adapters[:nphases]]))
 
         # Power Up Reset ---------------------------------------------------------------------------
         # During Power Up, after stabilizing clocks, Power Up Reset must be done. It consists of a
         # single Parallel Reset followed by two Serial Resets (2x8=16 full-rate cycles).
-        # FIXME: Perform Power Up RESET sequence when controller sends ZQC with address=0x123 as
-        # there is no RESET command. Controller will send it on phase 0.
-        def is_reset(p):
-            return p.cas_n & p.ras_n & ~p.we_n & (p.address == 0x0123)
-
-        # Shift register for reset timing (reset_hist[0] = current)
+        # Use a shift register for reset timing (reset_hist[0] = current)
         reset_hist = Signal(1 + 4)
         reset_hist_last = Signal.like(reset_hist)
-        self.comb += reset_hist.eq(Cat(is_reset(dfi_hist[0].phases[0]), reset_hist_last))
+        self.comb += reset_hist.eq(Cat(dfi_adapters[nphases+0].is_reset, reset_hist_last))
         self.sync += reset_hist_last.eq(reset_hist)
-        # Always send reset on phase 0 to easily track the required 16 cycles of STB reset (stb=0)
-        self.comb += dfi_adapters[0].do_reset.eq(reset_hist[1])
         stb_reset_seq = reduce(or_, reset_hist[1:])
 
         # STB --------------------------------------------------------------------------------------
@@ -477,7 +479,7 @@ class BasePHY(Module, AutoCSR):
         stb_bits = []
         for p in range(nphases):
             # Use cmd from current and prev cycle, depending on which phase the command appears on
-            preamble = dfi_adapters[p + 2].db_valid | dfi_adapters[p + 1].db_valid
+            preamble = dfi_adapters[p + 2].cmd_valid | dfi_adapters[p + 1].cmd_valid
             # We only want to use STB to start parallel commands, serial reset or to send NOPs. NOP
             # is indicated by the first two bits being high (0b11, and other as "don't care"), so
             # we can simply hold STB high all the time and reset is zeros for 8 cycles (1 sysclk).
@@ -597,7 +599,7 @@ class BasePHY(Module, AutoCSR):
                 pattern_2ck[1].eq(data_pattern[1]),
             )
         for p in range(nphases):
-            phase_valid = dfi_adapters[p].db_valid | dfi_adapters[nphases+p].db_valid
+            phase_valid = dfi_adapters[p].cmd_valid | dfi_adapters[nphases+p].cmd_valid
             pattern_cases = \
                 If(phase_valid,
                     pattern_2ck[0].eq(phase_patterns[p][0]),
@@ -698,7 +700,7 @@ class SimulationPHY(BasePHY):
         if self.generate_read_data:
             # Dummy read data generator for simulation purpose
             dq_in_dummy = Signal(self.databits)
-            gen = DummyReadGenerator(dq_in=dq, dq_out=dq_in_dummy, stb_in=self.stb_pad,
+            gen = DummyReadGenerator(dq_in=dq, dq_out=dq_in_dummy, stb_in=self.stb,
                                      cl=self.settings.cl)
             self.submodules += ClockDomainsRenamer({"sys": "sys4x_ddr"})(gen)
 
