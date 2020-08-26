@@ -36,19 +36,29 @@ class A7RPCPHY(BasePHY):
         )
 
     def do_stb_serialization(self, stb_1ck_out, stb):
-        self.oserdese2_ddr(din=stb_1ck_out, dout=stb)
+        # self.oserdese2_ddr(din=stb_1ck_out, dout=stb)
+
+        for i in range(len(self.pads.a)):
+            self.oserdese2_ddr(din=stb_1ck_out, dout=self.pads.a[i])
+        for i in range(len(self.pads.ba)):
+            self.oserdese2_ddr(din=stb_1ck_out, dout=self.pads.ba[i])
+        self.oserdese2_ddr(din=stb_1ck_out, dout=self.pads.cas_n)
+        self.oserdese2_ddr(din=stb_1ck_out, dout=self.pads.ras_n)
+        self.oserdese2_ddr(din=stb_1ck_out, dout=self.pads.we_n)
+        self.oserdese2_ddr(din=stb_1ck_out, dout=self.pads.dm[0])
+        self.oserdese2_ddr(din=stb_1ck_out, dout=self.pads.dm[1])
 
     def do_db_serialization(self, db_1ck_out, db_1ck_in, db_oe, dq):
         for i in range(self.databits):
             db_out        = Signal()
-            db_oe_t       = Signal()
+            db_t          = Signal()
             db_in         = Signal()
             db_in_delayed = Signal()
 
             # Write path
             self.oserdese2_ddr(
                 din=db_1ck_out[i], dout=db_out,
-                tin=db_oe,         tout=db_oe_t,
+                tin=~db_oe,        tout=db_t,
             )
 
             # Read path
@@ -74,29 +84,30 @@ class A7RPCPHY(BasePHY):
             self.specials += Instance("IOBUF",
                 i_I   = db_out,
                 o_O   = db_in,
-                i_T   = db_oe_t,
+                i_T   = db_t,
                 io_IO = dq[i],
             )
 
     def do_dqs_serialization(self, dqs_1ck_out, dqs_1ck_in, dqs_oe, dqs_p, dqs_n):
-        dqs_out  = Signal()
-        dqs_in   = Signal()
-        dqs_oe_t = Signal()
+        for i in range(len(self.pads.dqs_p)):
+            dqs_out  = Signal()
+            dqs_in   = Signal()
+            dqs_t    = Signal()
 
-        self.oserdese2_ddr(
-            clk="sys4x_90",
-            din=dqs_1ck_out, dout=dqs_out,
-            tin=dqs_oe,      tout=dqs_oe_t,
-        )
-        # TODO: deserialization
+            self.oserdese2_ddr(
+                clk="sys4x_90",
+                din=dqs_1ck_out, dout=dqs_out,
+                tin=~dqs_oe,     tout=dqs_t,
+            )
+            # TODO: deserialization
 
-        self.specials += Instance("IOBUFDS",
-            i_T    = dqs_oe_t,
-            i_I    = dqs_out,
-            o_O    = dqs_in,
-            io_IO  = dqs_p,
-            io_IOB = dqs_n,
-        )
+            self.specials += Instance("IOBUFDS",
+                i_T    = dqs_t,
+                i_I    = dqs_out,
+                o_O    = dqs_in,
+                io_IO  = self.pads.dqs_p[i],
+                io_IOB = self.pads.dqs_n[i],
+            )
 
     def do_cs_serialization(self, cs_n_1ck_out, cs_n):
         self.oserdese2_ddr(din=cs_n_1ck_out, dout=cs_n)
@@ -122,13 +133,16 @@ class A7RPCPHY(BasePHY):
             params["i_D{}".format(i+1)] = din[i]
 
         if tin is not None:
-            params["p_DATA_RATE_TQ"] = "SDR"
-            params["i_T1"] = tin
-            params["o_TQ"] = tout
+            # with DATA_RATE_TQ=BUF tristate is asynchronous, so we need to delay it
+            tin_d = Signal()
+            self.sync += tin_d.eq(tin)
+            params.update(dict(i_TCE=1, i_T1=tin_d, o_TQ=tout))
 
         self.specials += Instance("OSERDESE2", **params)
 
     def iserdese2_ddr(self, *, din, dout, clk="sys4x"):
+        assert self.nphases == 4
+
         params = dict(
             p_SERDES_MODE    = "MASTER",
             p_INTERFACE_TYPE = "NETWORKING",  # TODO: try using MEMORY mode?
