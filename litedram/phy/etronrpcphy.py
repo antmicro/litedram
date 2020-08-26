@@ -647,6 +647,12 @@ class BasePHY(Module, AutoCSR):
         self.comb += dq_mask_en.eq(wrdata_en[write_latency])
         self.comb += dq_data_en.eq(wrdata_en[write_latency + 1] | wrdata_en[write_latency + 2])
 
+        # Additional variables for LiteScope -------------------------------------------------------
+        variables = ["dq_data_en", "dq_mask_en", "dq_cmd_en", "dq_read_stb", "dfi_adapters",
+                     "dq_in_cnt", "db_cnt", "dqs_cnt", "rddata_en", "wrdata_en"]
+        for v in variables:
+            setattr(self, v, locals()[v])
+
     def do_finalize(self):
         self.do_clock_serialization(self.clk_1ck_out, self.pads.clk_p, self.pads.clk_n)
         self.do_stb_serialization(self.stb_1ck_out, self.stb)

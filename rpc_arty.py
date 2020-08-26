@@ -22,6 +22,8 @@ from litedram.phy import s7rpcphy
 
 from liteeth.phy.mii import LiteEthPHYMII
 
+from litescope import LiteScopeAnalyzer
+
 # CRG ----------------------------------------------------------------------------------------------
 
 class _CRG(Module):
@@ -114,6 +116,31 @@ class BaseSoC(SoCCore):
             sys_clk_freq = sys_clk_freq)
         self.add_csr("leds")
 
+        # Analyzer ---------------------------------------------------------------------------------
+
+        analyzer_signals = [
+            *[self.ddrphy.dfi.phases[p].cas_n for p in range(self.ddrphy.nphases)],
+            *[self.ddrphy.dfi.phases[p].ras_n for p in range(self.ddrphy.nphases)],
+            *[self.ddrphy.dfi.phases[p].we_n  for p in range(self.ddrphy.nphases)],
+            *self.ddrphy.db_1ck_out,
+            *self.ddrphy.db_1ck_in,
+            self.ddrphy.dq_data_en,
+            self.ddrphy.dq_mask_en,
+            self.ddrphy.dq_cmd_en,
+            self.ddrphy.dq_read_stb,
+            self.ddrphy.dq_in_cnt,
+            self.ddrphy.db_cnt,
+            self.ddrphy.dqs_cnt,
+            self.ddrphy.rddata_en,
+            self.ddrphy.wrdata_en,
+            self.ddrphy.db_oe,
+        ]
+        self.submodules.analyzer = LiteScopeAnalyzer(analyzer_signals,
+            depth        = 4096,
+            clock_domain = "sys",
+            csr_csv      = "analyzer.csv")
+        self.add_csr("analyzer")
+
 # Build --------------------------------------------------------------------------------------------
 
 def main():
@@ -139,7 +166,9 @@ def main():
         soc.add_spi_sdcard()
     if args.with_sdcard:
         soc.add_sdcard()
-    builder = Builder(soc, **builder_argdict(args))
+    builder_kwargs = builder_argdict(args)
+    builder_kwargs["csr_csv"] = "csr.csv"
+    builder = Builder(soc, **builder_kwargs)
     builder_kwargs = vivado_build_argdict(args) if args.toolchain == "vivado" else {}
     builder.build(**builder_kwargs, run=args.build)
 
