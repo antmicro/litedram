@@ -31,20 +31,26 @@ class EM6GA16L(SDRAMModule):
         # Is tREFI in RPC the same as in normal DRAM?
         #   tREFI = 100ns (FST refresh) or 3.2us (LP refresh)
         tREFI=64e6/8192,
-        # It seems that we need to calculate tCCD from tBESL by assuming BC=1, then it is:
-        # RL=WL + burst_time + tBESL
-        tCCD=(13+1 + 8 + 7, None),
-        # CCD enforces tBESL for read commands, we use tWTR to ensure it for writes
-        # 11 for tBESL + 2 for STB low before a command
-        tWTR=(11 + 2, None),
-        tRRD=(None, 7.5),
-        tZQCS=(None, 90)
+        # # It seems that we need to calculate tCCD from tBESL by assuming BC=1, then it is:
+        # # RL=WL + burst_time + tBESL
+        # tCCD=(13+1 + 8 + 7, None),
+        # # CCD enforces tBESL for read commands, we use tWTR to ensure it for writes
+        # # 11 for tBESL + 2 for STB low before a command
+        # tWTR=(11 + 2, None),
+        # tRRD=(None, 7.5),
+        # tZQCS=(None, 90)
+
+        tCCD=(13+1 + 8 + 7 + 10, None),
+        tWTR=(11 + 2 + 10, None),
+        tRRD=(None, 7.5 + 5),
+        tZQCS=(None, 90 + 100)
     )
     speedgrade_timings = {
         # FIXME: we're increasing tWR by 1 sysclk to compensate for long write
         # Should we use tRFQSd for tRFC?
-        "1600": _SpeedgradeTimings(tRP=13.75, tRCD=13.75, tWR=15 + (1/100e6 * 2), tRFC=(3*100, None), tFAW=None, tRAS=35),
-        "1866": _SpeedgradeTimings(tRP=13.91, tRCD=13.91, tWR=15 + (1/100e6 * 2), tRFC=(3*100, None), tFAW=None, tRAS=34),
+        # "1600": _SpeedgradeTimings(tRP=13.75, tRCD=13.75, tWR=15 + (1/50e6 * 2), tRFC=(3*100, None), tFAW=None, tRAS=35),
+        "1600": _SpeedgradeTimings(tRP=20, tRCD=20, tWR=40 + (1/50e6 * 2), tRFC=(5*100, None), tFAW=None, tRAS=50),
+        "1866": _SpeedgradeTimings(tRP=13.91, tRCD=13.91, tWR=15 + (1/50e6 * 2), tRFC=(3*100, None), tFAW=None, tRAS=34),
     }
     speedgrade_timings["default"] = speedgrade_timings["1600"]
 
