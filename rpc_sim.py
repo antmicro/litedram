@@ -176,51 +176,15 @@ class SimSoC(SoCCore):
         platform.add_debug(self)
 
         # RPC DRAM ---------------------------------------------------------------------------------
-        class PhyDuplicator(Module):
-            def __init__(self, main_phy, *phys, **dfi_kwargs):
-                self.submodules += main_phy
-                self.settings = main_phy.settings
-                self.dfi = dfi.Interface(**dfi_kwargs)
-                self.comb += self.dfi.connect(main_phy.dfi)
-                for phy in phys:
-                    self.submodules += phy
-                    omit = {"rddata", "rddata_valid"}
-                    self.comb += self.dfi.connect(phy.dfi, omit=omit)
-
         sdram_module = EM6GA16L(sys_clk_freq, "1:4")
-        rpc_phy = RPCPHY(platform.request("rpcdram"), sys_clk_freq=sys_clk_freq)
-
-        #  phy_settings = get_sdram_phy_settings(
-        #      memtype    = "DDR3",
-        #      data_width = 16,
-        #      clk_freq   = sys_clk_freq)
-        #  phy_settings.dfi_databits = rpc_phy.dfi_databits
-        import copy
-        phy_settings = copy.deepcopy(rpc_phy.settings)
-        phy_settings.memtype = "RPC"
-        phy_settings.phytype = "SDRAMPHYModel"
-
-        model_phy = SDRAMPHYModel(
-            module    = sdram_module,
-            settings  = phy_settings,
-            clk_freq  = sys_clk_freq,
-            verbosity = 0,
-            init      = [])
-
-        self.submodules.sdrphy = PhyDuplicator(
-            model_phy, rpc_phy,
-            addressbits = sdram_module.geom_settings.addressbits,
-            bankbits    = sdram_module.geom_settings.bankbits,
-            nranks      = phy_settings.nranks,
-            databits    = phy_settings.dfi_databits,
-            nphases     = phy_settings.nphases,
-        )
+        self.submodules.ddrphy = RPCPHY(platform.request("rpcdram"), sys_clk_freq=sys_clk_freq)
+        self.add_csr("ddrphy")
 
         controller_settings = ControllerSettings()
         controller_settings.auto_precharge = False
 
         self.add_sdram("sdram",
-            phy                     = self.sdrphy,
+            phy                     = self.ddrphy,
             module                  = sdram_module,
             origin                  = self.mem_map["main_ram"],
             size                    = kwargs.get("max_sdram_size", 0x40000000),
@@ -245,7 +209,7 @@ class SimSoC(SoCCore):
                 print("  {}: {}".format(var, val))
         print("=" * 80)
         dump(clocks)
-        dump(phy_settings)
+        dump(self.ddrphy.settings)
         dump(sdram_module.geom_settings)
         dump(sdram_module.timing_settings)
         print()

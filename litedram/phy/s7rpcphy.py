@@ -7,7 +7,7 @@ from litex.soc.interconnect.csr import *
 
 from litedram.common import *
 from litedram.phy.dfi import *
-from litedram.phy.etronrpcphy import BasePHY, EM6GA16L, bitpattern
+from litedram.phy.etronrpcphy import BasePHY, bitpattern
 
 # Xilinx Artix7 RPC PHY ----------------------------------------------------------------------------
 
