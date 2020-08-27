@@ -294,24 +294,40 @@ class DFIAdapter(Module):
 
 # Etron RPC DRAM PHY Base --------------------------------------------------------------------------
 
+class RPCPads:
+    _layout = [
+        ("clk_p",  1),
+        ("clk_n",  1),
+        ("cs_n",   1),
+        ("dqs_p",  1),
+        ("dqs_n",  1),
+        ("stb",    1),
+        ("db",    16),
+    ]
+
+    def __init__(self, pads):
+        self.map(pads)
+        for pad, width in self._layout:
+            assert len(getattr(self, pad)) == width
+
+    # reimplement if a specific mapping is needed
+    def map(self, pads):
+        for pad, _ in self._layout:
+            setattr(self, pad, getattr(pads, pad))
+
 class BasePHY(Module, AutoCSR):
     def __init__(self, pads, sys_clk_freq, write_ser_latency, read_des_latency, phytype):
-        self.memtype     = memtype = "RPC"
-        self.nranks      = nranks = 1 if not hasattr(pads, "cs_n") else len(pads.cs_n)
-        self.databits    = databits = len(pads.dq)
-        self.addressbits = addressbits = 14
-        self.bankbits    = bankbits = 2
-        self.nphases     = nphases = 4
-        self.tck         = tck     = 1 / (nphases*sys_clk_freq)
-        assert databits == 16
-
         # TODO: pads groups for multiple chips
         #  pads = PHYPadsCombiner(pads)
-        self.pads = pads
+        self.pads = pads = RPCPads(pads)
 
-        # TODO: verify DDR3 compatibility
-        # RPC DRAM is compatible with DDR3 pads, so if stb is not present, use address[0].
-        self.stb = pads.stb if hasattr(pads, "stb") else pads.a[0]
+        self.memtype     = memtype     = "RPC"
+        self.nranks      = nranks      = 1
+        self.databits    = databits    = 16
+        self.addressbits = addressbits = 14
+        self.bankbits    = bankbits    = 2
+        self.nphases     = nphases     = 4
+        self.tck         = tck         = 1 / (nphases*sys_clk_freq)
 
         # CSRs -------------------------------------------------------------------------------------
         self._dly_sel             = CSRStorage(databits//8)
@@ -670,12 +686,11 @@ class BasePHY(Module, AutoCSR):
 
     def do_finalize(self):
         self.do_clock_serialization(self.clk_1ck_out, self.pads.clk_p, self.pads.clk_n)
-        self.do_stb_serialization(self.stb_1ck_out, self.stb)
+        self.do_stb_serialization(self.stb_1ck_out, self.pads.stb)
         self.do_dqs_serialization(self.dqs_1ck_out, self.dqs_1ck_in, self.dqs_oe,
-                                  # RPC DRAM uses 1 differential DQS pair
-                                  self.pads.dqs_p[0], self.pads.dqs_n[0])
-        self.do_db_serialization(self.db_1ck_out, self.db_1ck_in, self.db_oe, self.pads.dq)
-        self.do_cs_serialization(self.cs_n_1ck_out, self.pads.cs_n[0])
+                                  self.pads.dqs_p, self.pads.dqs_n)
+        self.do_db_serialization(self.db_1ck_out, self.db_1ck_in, self.db_oe, self.pads.db)
+        self.do_cs_serialization(self.cs_n_1ck_out, self.pads.cs_n)
 
     # I/O implementation ---------------------------------------------------------------------------
 
@@ -701,7 +716,7 @@ class SimulationPHY(BasePHY):
         kwargs.update(dict(
             write_ser_latency = 0,
             read_des_latency  = 1,
-            phytype           = self.__class__.__name__,
+            phytype           = "RPC" + self.__class__.__name__,
         ))
         super().__init__(*args, **kwargs)
 
@@ -740,7 +755,7 @@ class SimulationPHY(BasePHY):
         if self.generate_read_data:
             # Dummy read data generator for simulation purpose
             dq_in_dummy = Signal(self.databits)
-            gen = DummyReadGenerator(dq_in=dq, dq_out=dq_in_dummy, stb_in=self.stb,
+            gen = DummyReadGenerator(dq_in=dq, dq_out=dq_in_dummy, stb_in=self.pads.stb,
                                      cl=self.settings.cl)
             self.submodules += ClockDomainsRenamer({"sys": "sys4x_ddr"})(gen)
 

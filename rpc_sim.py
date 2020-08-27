@@ -54,23 +54,15 @@ _io = [
         Subsignal("sink_data",    Pins(8)),
     ),
 
-    # DDR3 pads
-    ("ddram", 0,
-        Subsignal("a",       Pins(14)),
-        Subsignal("ba",      Pins(3)),
-        Subsignal("ras_n",   Pins(1)),
-        Subsignal("cas_n",   Pins(1)),
-        Subsignal("we_n",    Pins(1)),
-        Subsignal("cs_n",    Pins(1)),
-        Subsignal("dm",      Pins(2)),
-        Subsignal("dq",      Pins(16)),
-        Subsignal("dqs_p",   Pins(2)),
-        Subsignal("dqs_n",   Pins(2)),
-        Subsignal("clk_p",   Pins(1)),
-        Subsignal("clk_n",   Pins(1)),
-        Subsignal("cke",     Pins(1)),
-        Subsignal("odt",     Pins(1)),
-        Subsignal("reset_n", Pins(1)),
+    # RPC pads
+    ("rpcdram", 0,
+        Subsignal("clk_p", Pins(1)),
+        Subsignal("clk_n", Pins(1)),
+        Subsignal("cs_n",  Pins(1)),
+        Subsignal("dqs_p", Pins(1)),
+        Subsignal("dqs_n", Pins(1)),
+        Subsignal("stb",   Pins(1)),
+        Subsignal("db",    Pins(16)),
     ),
 ]
 
@@ -196,7 +188,7 @@ class SimSoC(SoCCore):
                     self.comb += self.dfi.connect(phy.dfi, omit=omit)
 
         sdram_module = EM6GA16L(sys_clk_freq, "1:4")
-        rpc_phy = RPCPHY(platform.request("ddram"), sys_clk_freq=sys_clk_freq)
+        rpc_phy = RPCPHY(platform.request("rpcdram"), sys_clk_freq=sys_clk_freq)
 
         #  phy_settings = get_sdram_phy_settings(
         #      memtype    = "DDR3",
