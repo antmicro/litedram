@@ -146,7 +146,7 @@ class DFIAdapter(Module):
         address |= (utr_op & 0b11) << 1
         return address
 
-    def __init__(self, phase):
+    def __init__(self, phase, utr_mode):
         self.db_p = Signal(16)  # on positive edge
         self.db_n = Signal(16)  # on negative edge
 
@@ -272,8 +272,9 @@ class DFIAdapter(Module):
             ],
         }
 
+        self.sync += If(self.is_utr, utr_mode.eq(utr_en))
         self.comb += [
-            self.is_reset.eq(special_cmds & (phase_cmd == dfi_cmds["ACT"])),
+            self.is_reset.eq(special_cmds & (phase_cmd == dfi_cmds["ACT"]) & ~utr_mode),
             self.is_utr.eq  (special_cmds & (phase_cmd == dfi_cmds["MRS"])),
             If(self.is_reset,
                 cases["RESET"],
@@ -282,7 +283,11 @@ class DFIAdapter(Module):
                 cases["UTR"],
                 self.cmd_valid.eq(1),
             ).Else(
-                self.cmd_valid.eq(phase_cmd != dfi_cmds["NOP"]),
+                If(utr_mode,
+                    self.cmd_valid.eq(phase_cmd == dfi_cmds["RD"]),
+                ).Else(
+                    self.cmd_valid.eq(phase_cmd != dfi_cmds["NOP"]),
+                ),
                 Case(phase_cmd, {dfi_cmds[cmd]: cases[cmd] for cmd in dfi_cmds.keys()}),
             ),
         ]
@@ -449,9 +454,10 @@ class BasePHY(Module, AutoCSR):
         # We need to insert 2 full-clk cycles of STB=0 before any command, to mark the beginning of
         # Request Packet. For that reason we use the previous values of DFI commands.
         # list: dfi[N-1][p0], dfi[N-1][p1], ..., dfi[N][p0], dfi[N][p1], ...
+        utr_mode = Signal()
         dfi_adapters = []
         for phase in dfi_hist[1].phases + dfi_hist[0].phases:
-            adapter = DFIAdapter(phase)
+            adapter = DFIAdapter(phase, utr_mode)
             self.submodules += adapter
             dfi_adapters.append(adapter)
             self.comb += [
@@ -647,7 +653,8 @@ class BasePHY(Module, AutoCSR):
         # register is used to control DQ/DQS tristates.
         wrdata_en = Signal(write_latency + 2 + 1)
         wrdata_en_last = Signal.like(wrdata_en)
-        self.comb += wrdata_en.eq(Cat(dfi.phases[self.settings.wrphase].wrdata_en, wrdata_en_last))
+        wrdata_en_new = dfi.phases[self.settings.wrphase].wrdata_en & (~utr_mode)
+        self.comb += wrdata_en.eq(Cat(wrdata_en_new, wrdata_en_last))
         self.sync += wrdata_en_last.eq(wrdata_en)
         # DQS Preamble and data mask are transmitted 1 cycle before data, then 2 cycles of data
         self.comb += dq_mask_en.eq(wrdata_en[write_latency])
