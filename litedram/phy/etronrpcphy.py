@@ -625,6 +625,7 @@ class BasePHY(Module, AutoCSR):
                 pattern_2ck[0].eq(data_pattern[0]),
                 pattern_2ck[1].eq(data_pattern[1]),
             )
+        any_phase_valid = 0
         for p in range(nphases):
             phase_valid = dfi_adapters[p].cmd_valid | dfi_adapters[nphases+p].cmd_valid
             pattern_cases = \
@@ -632,9 +633,10 @@ class BasePHY(Module, AutoCSR):
                     pattern_2ck[0].eq(phase_patterns[p][0]),
                     pattern_2ck[1].eq(phase_patterns[p][1]),
                 ).Else(pattern_cases)
+            any_phase_valid = any_phase_valid | phase_valid
 
         self.comb += pattern_cases
-        self.comb += dqs_oe.eq(reduce(or_, phase_valid) | dq_mask_en | dq_data_en)
+        self.comb += dqs_oe.eq(any_phase_valid | dq_mask_en | dq_data_en)
 
         # Read Control Path ------------------------------------------------------------------------
         # Creates a shift register of read commands coming from the DFI interface. This shift
