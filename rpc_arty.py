@@ -19,6 +19,7 @@ from litex.soc.integration.builder import *
 from litex.soc.cores.led import LedChaser
 
 from litedram.phy import s7rpcphy
+from litedram.core.controller import ControllerSettings
 
 from liteeth.phy.mii import LiteEthPHYMII
 
@@ -88,6 +89,10 @@ class BaseSoC(SoCCore):
         self.submodules.ddrphy = s7rpcphy.A7RPCPHY(pads=platform.request("ddram"),
                                                    sys_clk_freq=sys_clk_freq,
                                                    iodelay_clk_freq=200e6)
+
+        controller_settings = ControllerSettings()
+        controller_settings.auto_precharge = False
+
         self.add_csr("ddrphy")
         self.add_sdram("sdram",
             phy                     = self.ddrphy,
@@ -96,7 +101,8 @@ class BaseSoC(SoCCore):
             size                    = kwargs.get("max_sdram_size", 0x40000000),
             l2_cache_size           = kwargs.get("l2_size", 8192),
             l2_cache_min_data_width = kwargs.get("min_l2_data_width", 256),
-            l2_cache_reverse        = True
+            l2_cache_reverse        = True,
+            controller_settings     = controller_settings,
         )
 
         # Ethernet / Etherbone ---------------------------------------------------------------------
@@ -124,6 +130,8 @@ class BaseSoC(SoCCore):
             *[self.ddrphy.dfi.phases[p].we_n  for p in range(self.ddrphy.nphases)],
             *self.ddrphy.db_1ck_out,
             *self.ddrphy.db_1ck_in,
+            self.ddrphy.dqs_1ck_out,
+            self.ddrphy.dqs_1ck_in,
             self.ddrphy.dq_data_en,
             self.ddrphy.dq_mask_en,
             self.ddrphy.dq_cmd_en,
@@ -136,7 +144,7 @@ class BaseSoC(SoCCore):
             self.ddrphy.db_oe,
         ]
         self.submodules.analyzer = LiteScopeAnalyzer(analyzer_signals,
-            depth        = 4096,
+            depth        = 2048,
             clock_domain = "sys",
             csr_csv      = "analyzer.csv")
         self.add_csr("analyzer")
