@@ -703,7 +703,7 @@ class BasePHY(Module, AutoCSR):
     def do_dqs_serialization(self, dqs_1ck_out, dqs_1ck_in, dqs_oe, dqs_p, dqs_n):
         raise NotImplementedError("Tristate and (de)serialize DQS with 90 deg phase delay")
 
-    def do_db_serialization(self, db_1ck_out, db_1ck_in, db_oe, dq):
+    def do_db_serialization(self, db_1ck_out, db_1ck_in, db_oe, db):
         raise NotImplementedError("Tristate and (de)serialize DB")
 
     def do_cs_serialization(self, cs_n_1ck_out, cs_n):
@@ -751,11 +751,11 @@ class SimulationPHY(BasePHY):
         self.specials += Tristate(dqs_p,  dqs_out, dqs_oe, dqs_in)
         self.specials += Tristate(dqs_n, ~dqs_out, dqs_oe)
 
-    def do_db_serialization(self, db_1ck_out, db_1ck_in, db_oe, dq):
+    def do_db_serialization(self, db_1ck_out, db_1ck_in, db_oe, db):
         if self.generate_read_data:
             # Dummy read data generator for simulation purpose
             dq_in_dummy = Signal(self.databits)
-            gen = DummyReadGenerator(dq_in=dq, dq_out=dq_in_dummy, stb_in=self.pads.stb,
+            gen = DummyReadGenerator(dq_in=db, dq_out=dq_in_dummy, stb_in=self.pads.stb,
                                      cl=self.settings.cl)
             self.submodules += ClockDomainsRenamer({"sys": "sys4x_ddr"})(gen)
 
@@ -775,7 +775,7 @@ class SimulationPHY(BasePHY):
                 des = Deserializer(self.sd_ddr_90, dq_in, db_1ck_in[i])
             self.submodules += des
 
-            self.specials += Tristate(dq[i], dq_out, db_oe, dq_in)
+            self.specials += Tristate(db[i], dq_out, db_oe, dq_in)
 
     def do_cs_serialization(self, cs_n_1ck_out, cs_n):
         ser = Serializer(self.sd_ddr, cs_n_1ck_out)

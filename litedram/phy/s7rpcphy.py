@@ -36,19 +36,9 @@ class A7RPCPHY(BasePHY):
         )
 
     def do_stb_serialization(self, stb_1ck_out, stb):
-        # self.oserdese2_ddr(din=stb_1ck_out, dout=stb)
+        self.oserdese2_ddr(din=stb_1ck_out, dout=stb)
 
-        for i in range(len(self.pads.a)):
-            self.oserdese2_ddr(din=stb_1ck_out, dout=self.pads.a[i])
-        for i in range(len(self.pads.ba)):
-            self.oserdese2_ddr(din=stb_1ck_out, dout=self.pads.ba[i])
-        self.oserdese2_ddr(din=stb_1ck_out, dout=self.pads.cas_n)
-        self.oserdese2_ddr(din=stb_1ck_out, dout=self.pads.ras_n)
-        self.oserdese2_ddr(din=stb_1ck_out, dout=self.pads.we_n)
-        self.oserdese2_ddr(din=stb_1ck_out, dout=self.pads.dm[0])
-        self.oserdese2_ddr(din=stb_1ck_out, dout=self.pads.dm[1])
-
-    def do_db_serialization(self, db_1ck_out, db_1ck_in, db_oe, dq):
+    def do_db_serialization(self, db_1ck_out, db_1ck_in, db_oe, db):
         for i in range(self.databits):
             db_out        = Signal()
             db_t          = Signal()
@@ -85,29 +75,29 @@ class A7RPCPHY(BasePHY):
                 i_I   = db_out,
                 o_O   = db_in,
                 i_T   = db_t,
-                io_IO = dq[i],
+                io_IO = db[i],
             )
 
     def do_dqs_serialization(self, dqs_1ck_out, dqs_1ck_in, dqs_oe, dqs_p, dqs_n):
-        for i in range(len(self.pads.dqs_p)):
-            dqs_out  = Signal()
-            dqs_in   = Signal()
-            dqs_t    = Signal()
+        dqs_out  = Signal()
+        dqs_in   = Signal()
+        dqs_t    = Signal()
 
-            self.oserdese2_ddr(
-                clk="sys4x_90",
-                din=dqs_1ck_out, dout=dqs_out,
-                tin=~dqs_oe,     tout=dqs_t,
-            )
-            # TODO: deserialization
+        self.oserdese2_ddr(
+            clk="sys4x_90",
+            din=dqs_1ck_out, dout=dqs_out,
+            tin=~dqs_oe,     tout=dqs_t,
+        )
+        # TODO: proper deserialization
+        self.iserdese2_ddr(din=dqs_in, dout=dqs_1ck_in)
 
-            self.specials += Instance("IOBUFDS",
-                i_T    = dqs_t,
-                i_I    = dqs_out,
-                o_O    = dqs_in,
-                io_IO  = self.pads.dqs_p[i],
-                io_IOB = self.pads.dqs_n[i],
-            )
+        self.specials += Instance("IOBUFDS",
+            i_T    = dqs_t,
+            i_I    = dqs_out,
+            o_O    = dqs_in,
+            io_IO  = dqs_p,
+            io_IOB = dqs_n,
+        )
 
     def do_cs_serialization(self, cs_n_1ck_out, cs_n):
         self.oserdese2_ddr(din=cs_n_1ck_out, dout=cs_n)
