@@ -829,6 +829,7 @@ class DummyReadGenerator(Module):
 
         self.submodules.fsm = fsm = FSM()
         fsm.act("IDLE",
+            NextValue(data_counter, 0),
             If(stb_zero_counter == 4 - 1,
                 If(pos,
                     Display("ERROR: end of STB preable on positive edge!")
