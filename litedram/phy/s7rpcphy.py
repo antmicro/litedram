@@ -62,9 +62,9 @@ class A7RPCPHY(BasePHY):
                 p_IDELAY_TYPE           = "VARIABLE",
                 p_IDELAY_VALUE          = 0,
                 i_C        = ClockSignal(),
-                i_LD       = self._dly_sel.storage[i//8] & self._rdly_dq_rst.re,
+                i_LD       = self.dly_sel_for_bit(i) & self._rdly_dq_rst.re,
                 i_LDPIPEEN = 0,
-                i_CE       = self._dly_sel.storage[i//8] & self._rdly_dq_inc.re,
+                i_CE       = self.dly_sel_for_bit(i) & self._rdly_dq_inc.re,
                 i_INC      = 1,
                 i_IDATAIN  = db_in,
                 o_DATAOUT  = db_in_delayed
@@ -79,25 +79,27 @@ class A7RPCPHY(BasePHY):
             )
 
     def do_dqs_serialization(self, dqs_1ck_out, dqs_1ck_in, dqs_oe, dqs_p, dqs_n):
-        dqs_out  = Signal()
-        dqs_in   = Signal()
-        dqs_t    = Signal()
+        for i in range(len(dqs_p)):
+            dqs_out  = Signal()
+            dqs_in   = Signal()
+            dqs_t    = Signal()
 
-        self.oserdese2_ddr(
-            clk="sys4x_90",
-            din=dqs_1ck_out, dout=dqs_out,
-            tin=~dqs_oe,     tout=dqs_t,
-        )
-        # TODO: proper deserialization
-        self.iserdese2_ddr(din=dqs_in, dout=dqs_1ck_in)
+            self.oserdese2_ddr(
+                clk="sys4x_90",
+                din=dqs_1ck_out, dout=dqs_out,
+                tin=~dqs_oe,     tout=dqs_t,
+            )
+            # TODO: proper deserialization
+            if i == 0:
+                self.iserdese2_ddr(din=dqs_in, dout=dqs_1ck_in)
 
-        self.specials += Instance("IOBUFDS",
-            i_T    = dqs_t,
-            i_I    = dqs_out,
-            o_O    = dqs_in,
-            io_IO  = dqs_p,
-            io_IOB = dqs_n,
-        )
+            self.specials += Instance("IOBUFDS",
+                i_T    = dqs_t,
+                i_I    = dqs_out,
+                o_O    = dqs_in,
+                io_IO  = dqs_p[i],
+                io_IOB = dqs_n[i],
+            )
 
     def do_cs_serialization(self, cs_n_1ck_out, cs_n):
         self.oserdese2_ddr(din=cs_n_1ck_out, dout=cs_n)

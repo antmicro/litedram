@@ -274,9 +274,9 @@ class DFIAdapter(Module):
 
         self.sync += If(self.is_utr, utr_mode.eq(utr_en))
         self.comb += [
-            self.is_reset.eq(special_cmds & (phase_cmd == dfi_cmds["ACT"]) & ~utr_mode),
+            self.is_reset.eq(special_cmds & (phase_cmd == dfi_cmds["ACT"])),
             self.is_utr.eq  (special_cmds & (phase_cmd == dfi_cmds["MRS"])),
-            If(self.is_reset,
+            If(self.is_reset & ~utr_mode,
                 cases["RESET"],
                 self.cmd_valid.eq(1),
             ).Elif(self.is_utr,
@@ -299,8 +299,8 @@ class RPCPads:
         ("clk_p",  1),
         ("clk_n",  1),
         ("cs_n",   1),
-        ("dqs_p",  1),
-        ("dqs_n",  1),
+        ("dqs_p",  1),  # may be 2 (hardware option; 2-bit DQS strobes DB by bytes: [0:7], [8:15])
+        ("dqs_n",  1),  # may be 2
         ("stb",    1),
         ("db",    16),
     ]
@@ -308,7 +308,7 @@ class RPCPads:
     def __init__(self, pads):
         self.map(pads)
         for pad, width in self._layout:
-            assert len(getattr(self, pad)) == width
+            assert len(getattr(self, pad)) >= width
 
     # reimplement if a specific mapping is needed
     def map(self, pads):
@@ -319,7 +319,9 @@ class BasePHY(Module, AutoCSR):
     def __init__(self, pads, sys_clk_freq, write_ser_latency, read_des_latency, phytype):
         # TODO: pads groups for multiple chips
         #  pads = PHYPadsCombiner(pads)
-        self.pads = pads = RPCPads(pads)
+        if not isinstance(pads, RPCPads):
+            pads = RPCPads(pads)
+        self.pads = pads
 
         self.memtype     = memtype     = "RPC"
         self.nranks      = nranks      = 1
@@ -330,7 +332,7 @@ class BasePHY(Module, AutoCSR):
         self.tck         = tck         = 1 / (nphases*sys_clk_freq)
 
         # CSRs -------------------------------------------------------------------------------------
-        self._dly_sel             = CSRStorage(databits//8)
+        self._dly_sel             = CSRStorage(len(self.pads.dqs_p))
         self._rdly_dq_bitslip_rst = CSR()
         self._rdly_dq_bitslip     = CSR()
 
@@ -364,12 +366,12 @@ class BasePHY(Module, AutoCSR):
         cmd_ser_dly  = write_ser_latency
         read_mux_dly = 1
         bitslip_dly  = 3  # ncycles + 1
-        # Time until first data is available on DQ
-        read_dq_dly = db_cmd_dly + cmd_ser_dly + cl_sys_latency
+        # Time until first data is available on DB
+        read_db_dly = db_cmd_dly + cmd_ser_dly + cl_sys_latency
         # Time until data is set on DFI
         read_dfi_dly = read_des_latency + read_mux_dly + bitslip_dly
         # Final latency
-        read_latency = read_dq_dly + read_dfi_dly
+        read_latency = read_db_dly + read_dfi_dly
 
         # Write latency for the controller. We must send 1 cycles of data mask before the
         # data, and we serialize data over 2 sysclk cycles due to minimal BL=16, so we
@@ -551,8 +553,8 @@ class BasePHY(Module, AutoCSR):
             })
 
             bs = BitSlip(len(rbits_2ck), cycles=2,
-                rst = self._dly_sel.storage[i//8] & self._rdly_dq_bitslip_rst.re,
-                slp = self._dly_sel.storage[i//8] & self._rdly_dq_bitslip.re,
+                rst = self.dly_sel_for_bit(i) & self._rdly_dq_bitslip_rst.re,
+                slp = self.dly_sel_for_bit(i) & self._rdly_dq_bitslip.re,
             )
             self.submodules += bs
             self.comb += bs.i.eq(rbits_2ck)
@@ -664,7 +666,7 @@ class BasePHY(Module, AutoCSR):
         # -1 because of syncronious assignment
         self.sync += [phase.rddata_valid.eq(rddata_en[-1]) for phase in dfi.phases]
         # Strobe high when data from DRAM is available, before we can send it to DFI.
-        self.sync += dq_read_stb.eq(rddata_en[read_dq_dly-1] | rddata_en[read_dq_dly-1 + 1])
+        self.sync += dq_read_stb.eq(rddata_en[read_db_dly-1] | rddata_en[read_db_dly-1 + 1])
 
         # Write Control Path -----------------------------------------------------------------------
         # Creates a shift register of write commands coming from the DFI interface. This shift
@@ -683,6 +685,9 @@ class BasePHY(Module, AutoCSR):
                      "dq_in_cnt", "db_cnt", "dqs_cnt", "rddata_en", "wrdata_en"]
         for v in variables:
             setattr(self, v, locals()[v])
+
+    def dly_sel_for_bit(self, i):
+        return self._dly_sel.storage[i // (self.databits//len(self.pads.dqs_p))]
 
     def do_finalize(self):
         self.do_clock_serialization(self.clk_1ck_out, self.pads.clk_p, self.pads.clk_n)
@@ -738,18 +743,20 @@ class SimulationPHY(BasePHY):
         self.comb += stb.eq(ser.o)
 
     def do_dqs_serialization(self, dqs_1ck_out, dqs_1ck_in, dqs_oe, dqs_p, dqs_n):
-        dqs_out = Signal()
-        dqs_in  = Signal()  # TODO: use it for reading
+        for i in range(len(dqs_p)):
+            dqs_out = Signal()
+            dqs_in  = Signal()  # TODO: use it for reading
 
-        ser = Serializer(self.sd_ddr_90, dqs_1ck_out)
-        self.submodules += ser
-        self.comb += dqs_out.eq(ser.o)
+            ser = Serializer(self.sd_ddr_90, dqs_1ck_out)
+            self.submodules += ser
+            self.comb += dqs_out.eq(ser.o)
 
-        des = Deserializer(self.sd_ddr_90, dqs_in, dqs_1ck_in)
-        self.submodules += des
+            if i == 0:
+                des = Deserializer(self.sd_ddr_90, dqs_in, dqs_1ck_in)
+                self.submodules += des
 
-        self.specials += Tristate(dqs_p,  dqs_out, dqs_oe, dqs_in)
-        self.specials += Tristate(dqs_n, ~dqs_out, dqs_oe)
+            self.specials += Tristate(dqs_p[i],  dqs_out, dqs_oe, dqs_in)
+            self.specials += Tristate(dqs_n[i], ~dqs_out, dqs_oe)
 
     def do_db_serialization(self, db_1ck_out, db_1ck_in, db_oe, db):
         if self.generate_read_data:

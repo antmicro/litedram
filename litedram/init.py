@@ -591,6 +591,7 @@ def get_sdram_phy_c_header(phy_settings, timing_settings):
         r += "#define SDRAM_PHY_DELAYS 32\n"
         r += "#define SDRAM_PHY_BITSLIPS 16\n"
     elif phytype in ["A7RPCPHY"]:
+        # FIXME: should be /4 or /8 depending on DQS width
         r += "#define SDRAM_PHY_MODULES DFII_PIX_DATA_BYTES/4\n"
         r += "#define SDRAM_PHY_DELAYS 32\n"
         r += "#define SDRAM_PHY_BITSLIPS 32\n"
