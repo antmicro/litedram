@@ -86,6 +86,7 @@ sdram_module_nphases = {
     "LPDDR": 2,
     "DDR2":  2,
     "DDR3":  4,
+    "RPC":   4,
     "DDR4":  4,
 }
 
@@ -203,7 +204,7 @@ class SimSoC(SoCCore):
         #  phy_settings.dfi_databits = rpc_phy.dfi_databits
         import copy
         phy_settings = copy.deepcopy(rpc_phy.settings)
-        phy_settings.memtype = "DDR3"
+        phy_settings.memtype = "RPC"
         phy_settings.phytype = "SDRAMPHYModel"
 
         model_phy = SDRAMPHYModel(

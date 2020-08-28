@@ -7,6 +7,7 @@
 # Copyright (c) 2014 Yann Sionneau <ys@m-labs.hk>
 # Copyright (c) 2018 bunnie <bunnie@kosagi.com>
 # Copyright (c) 2019 Gabriel L. Somlo <gsomlo@gmail.com>
+# Copyright (c) 2020 Antmicro <www.antmicro.com>
 # SPDX-License-Identifier: BSD-2-Clause
 
 from migen import log2_int
@@ -221,6 +222,93 @@ def get_ddr3_phy_init_sequence(phy_settings, timing_settings):
     ]
 
     return init_sequence, mr1
+
+# RPC ----------------------------------------------------------------------------------------------
+
+def get_rpc_phy_init_sequence(phy_settings, timing_settings):
+    assert phy_settings.cl == phy_settings.cwl
+    # subtract that +1 always added for AL
+    cl  = phy_settings.cl - 1
+
+    nwr = 8
+    zout = 60
+    odt = 30
+    odt_stb = 0  # disable ODT on STB
+    csr_fx = 0  # do not use loop refresh mode
+    odt_pd = 0  # ODT during PD disabled by DRAM
+
+    cl_to_mr = {
+        8:  0b000,  # default
+        10: 0b001,
+        11: 0b010,
+        13: 0b011,
+        3:  0b110,
+    }
+    nwr_to_mr = {
+        4:  0b000,
+        6:  0b001,
+        7:  0b010,
+        8:  0b011,  # default
+        10: 0b100,
+        12: 0b101,
+        14: 0b110,
+        16: 0b111,
+    }
+    zout_to_mr = {  # resistance in Ohms
+        120:     0b0010,
+        90:      0b0100,
+        51.4:    0b0110,
+        60:      0b1000,
+        40:      0b1010,
+        36:      0b1100,
+        27.7:    0b1110,
+        "short": 0b0001,  # 0bxxx1
+        "open":  0b0000,  # output disabled, default
+    }
+    odt_to_mr = {
+        60:     0b001,
+        45:     0b010,
+        25.7:   0b011,
+        30:     0b100,
+        20:     0b101,
+        18:     0b110,
+        13.85:  0b111,
+        "open": 0b000,
+    }
+
+    # Format the command by packing the mode register information in addressbits(14) and bankbits(2):
+    # addressbits (MSB->LSB): CSR_FX, ODT, Zout, nWR, CL
+    # bankbits    (MSB->LSB): ODT_PD, ODT_STB
+    # TM is not being sent.
+    mr_a = 0
+    mr_a |= (cl_to_mr[cl]     & 0b111)  <<  0
+    mr_a |= (nwr_to_mr[nwr]   & 0b111)  <<  3
+    mr_a |= (zout_to_mr[zout] & 0b1111) <<  6
+    mr_a |= (odt_to_mr[odt]   & 0b111)  << 10
+    mr_a |= (csr_fx           & 0b1)    << 13
+
+    mr_ba = 0
+    mr_ba |= (odt_stb & 0b1) << 0
+    mr_ba |= (odt_pd  & 0b1) << 1
+
+    init_sequence = [
+        # Apply power
+        ("Release reset", 0x0000, 0, "DFII_CONTROL_RESET_N", 50000),
+        # Stabilize clocks for 200us, CS# and STB should be high
+        # Now we can bring CS# low
+        ("Bring CS# low", 0x0000, 0, "DFII_COMMAND_CS", 10),
+        # Enter PU RESET, which is not a regular DFI command
+        # FIXME: RPC PHY will read ZQCS with an address of 0x123 as RESET sequence
+        # and will perform the require procedure of holding STB low for serial reset
+        ("Enter PU RESET", 0x0123, 0, "DFII_COMMAND_CS|DFII_COMMAND_WE", 5000),
+        ("Precharge ALL", 0x0400, 0, cmds["PRECHARGE_ALL"], 0),
+        # Setup mode register
+        ("Load Mode Register: CL={}".format(cl), mr_a, mr_ba, cmds["MODE_REGISTER"], 0),
+        # ZQ Calibration (ZQ LONG will be translated to RPC ZQ INIT by PHY)
+        ("ZQ Calibration", 0x0400, 0, "DFII_COMMAND_WE|DFII_COMMAND_CS", 1000),
+    ]
+
+    return init_sequence, None
 
 # DDR4 ---------------------------------------------------------------------------------------------
 
@@ -452,6 +540,7 @@ def get_sdram_phy_init_sequence(phy_settings, timing_settings):
         "LPDDR": get_lpddr_phy_init_sequence,
         "DDR2" : get_ddr2_phy_init_sequence,
         "DDR3" : get_ddr3_phy_init_sequence,
+        "RPC"  : get_rpc_phy_init_sequence,
         "DDR4" : get_ddr4_phy_init_sequence,
     }[phy_settings.memtype](phy_settings, timing_settings)
 

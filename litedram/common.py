@@ -4,6 +4,7 @@
 # Copyright (c) 2016-2019 Florent Kermarrec <florent@enjoy-digital.fr>
 # Copyright (c) 2018 John Sully <john@csquare.ca>
 # Copyright (c) 2018 bunnie <bunnie@kosagi.com>
+# Copyright (c) 2020 Antmicro <www.antmicro.com>
 # SPDX-License-Identifier: BSD-2-Clause
 
 import math
@@ -23,6 +24,7 @@ burst_lengths = {
     "LPDDR": 4,
     "DDR2":  4,
     "DDR3":  8,
+    "RPC":  16,
     "DDR4":  8
 }
 

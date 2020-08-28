@@ -42,61 +42,15 @@ class EM6GA16L(SDRAMModule):
 # RPC Commands -------------------------------------------------------------------------------------
 
 class ModeRegister:
-    CL = {
-        8:  0b000,  # default
-        10: 0b001,
-        11: 0b010,
-        13: 0b011,
-        3:  0b110,
-    }
-    nWR = {
-        4:  0b000,
-        6:  0b001,
-        7:  0b010,
-        8:  0b011,  # default
-        10: 0b100,
-        12: 0b101,
-        14: 0b110,
-        16: 0b111,
-    }
-    # resistance in Ohms
-    Zout = {
-        120:     0b0010,
-        90:      0b0100,
-        51.4:    0b0110,
-        60:      0b1000,
-        40:      0b1010,
-        36:      0b1100,
-        27.7:    0b1110,
-        "short": 0b0001,  # 0bxxx1
-        "open":  0b0000,  # output disabled, default
-    }
-    ODT = {
-        60:     0b001,
-        45:     0b010,
-        25.7:   0b011,
-        30:     0b100,
-        20:     0b101,
-        18:     0b110,
-        13.85:  0b111,
-        "open": 0b000,
-    }
-
     def __init__(self):
-        # CAS latency, what is the encoding?
         self.cl      = Signal(3)
-        # in LPDDR3 nWR is the number of clock cycles determining when to start internal precharge
-        # for a write burst when auto-precharge is enabled (ceil(tRW/tCK) ?)
-        # but in RPC we don't seem to b able to specify auto-precharge in any way, right?
+        # TODO: in LPDDR3 nWR is the number of clock cycles determining when to start internal
+        # precharge for a write burst when auto-precharge is enabled (ceil(tRW/tCK) ?)
         self.nwr     = Signal(3)
         self.zout    = Signal(4)
-        # on-die-termination resistance configuration
         self.odt     = Signal(3)
-        # as we have no ODT pin, these is probably used to enable/disable ODT
         self.odt_stb = Signal(1)
-        # ??
         self.csr_fx  = Signal(1)
-        # probably like odt_stb
         self.odt_pd  = Signal(1)
         self.tm      = Signal(1)
 
@@ -104,6 +58,7 @@ class DFIAdapter(Module):
     # Translate DFI controls to RPC versions
     # It seems that the encoding is different when we use STB serial pin and CD data pins
     # For now we want to focus on CD encoding
+    # TODO: STB is currently not used, this has to be rewritten
 
     ZQC_OP = {
         "init":  0b00,  # calibration after initialization
@@ -133,6 +88,9 @@ class DFIAdapter(Module):
         # 1 when not in NOP
         self.db_valid = Signal(reset=1)
 
+        # force sending RESET command
+        self.do_reset = Signal()
+
         self.mr = ModeRegister()
 
         # use it to send PRE on STB
@@ -143,20 +101,24 @@ class DFIAdapter(Module):
         self.bc = Signal(6)
         # Refresh
         self.ref_op = Signal(2)
-        # ZQ Calibration
-        self.zqc_op = Signal(2)
         # utility register read
         self.utr_en = Signal()
         self.utr_op = Signal(2)
+        # ZQ Calibration
+        zqc_op = Signal(2)
 
         # for WR and RD, it seems to be a banks mask, so PRECHARGE ALL would be 0b1111
         bk = Signal(4)
         self.comb += [
             If(auto_precharge,
-                bk.eq(0b1111)
+                bk.eq(0b1111),
+                # LiteDRAM will try to perform "long" calibration during init and then
+                # do only "short" ones, so we have to send "init" instead of "long" for RPC
+                zqc_op.eq(self.ZQC_OP["init"]),
             ).Else(
                 # binary to one-hot encoded
-                Case(dfi.bank[:2], {i: bk.eq(1 << i) for i in range(4)})
+                Case(dfi.bank[:2], {i: bk.eq(1 << i) for i in range(4)}),
+                zqc_op.eq(self.ZQC_OP["short"]),
             )
         ]
 
@@ -220,7 +182,7 @@ class DFIAdapter(Module):
             ],
             "ZQC": [
                 self.db_p[0:2  +1].eq(0b001),
-                self.db_p[14:15+1].eq(self.zqc_op),
+                self.db_p[14:15+1].eq(zqc_op),
                 self.db_n[0      ].eq(1),
             ],
             "MRS": [
@@ -235,9 +197,12 @@ class DFIAdapter(Module):
                 self.db_p[4:5  +1].eq(self.utr_op),
                 self.db_n[0      ].eq(0),
             ],
+            "RESET": [
+                self.db_p.eq(0),
+                self.db_n.eq(1),
+            ],
         }
 
-        # TODO: STB is currently not used, this has to be rewritten
         # command encoding for STB serial line
         stb_op   = Signal(2)
         stb_addr = Signal(14)
@@ -281,7 +246,11 @@ class DFIAdapter(Module):
         serial_cases   = {dfi_cmd[cmd]: serial_cmd["NOP"]   for cmd in dfi_cmd.keys()}
         #  serial_cases["default"] = serial_cmd["NOP"]
         self.comb += [
-            Case(cmd_sig(dfi), parallel_cases),
+            If(self.do_reset,
+                parallel_cmd["RESET"]
+            ).Else(
+                Case(cmd_sig(dfi), parallel_cases),
+            ),
             Case(cmd_sig(dfi), serial_cases),
         ]
 
@@ -396,11 +365,22 @@ class RPCPHY(Module):
             adapter = DFIAdapter(phase)
             self.submodules += adapter
             dfi_adapters.append(adapter)
-            # We always send one WORD, which consists of 32 bytes.
-            self.comb += adapter.bc.eq(0)
-            # Always use fast refresh (equivalent to auto refresh),
-            # 0b01 is for low-power refresh (equivalent to self refresh).
-            self.comb += adapter.ref_op.eq(0b00)
+            self.comb += [
+                # We always send one WORD, which consists of 32 bytes.
+                adapter.bc.eq(0),
+                # Always use fast refresh (equivalent to auto refresh) instead of low-power refresh
+                # (equivalent to self refresh).
+                adapter.ref_op.eq(adapter.REF_OP["FST"]),
+                # Format mode register from addressbits and bankbits as defined in litedram/init.py
+                adapter.mr.cl.eq(phase.address[0:3]),
+                adapter.mr.nwr.eq(phase.address[3:6]),
+                adapter.mr.zout.eq(phase.address[6:10]),
+                adapter.mr.odt.eq(phase.address[10:13]),
+                adapter.mr.csr_fx.eq(phase.address[13]),
+                adapter.mr.odt_stb.eq(phase.bank[0]),
+                adapter.mr.odt_pd.eq(phase.bank[1]),
+                adapter.mr.tm.eq(0),
+            ]
 
         # Serialize commands to DB pins:
         # CLK: ____----____----____----____----____----____
@@ -416,6 +396,23 @@ class RPCPHY(Module):
             ser = Serializer(sd_ddr, bits)
             self.submodules += ser
             self.comb += dq_cmd[i].eq(ser.o)
+
+        # Power Up Reset ---------------------------------------------------------------------------
+        # During Power Up, after stabilizing clocks, Power Up Reset must be done. It consists of a
+        # single Parallel Reset followed by two Serial Resets (2x8=16 full-rate cycles).
+        # FIXME: Perform Power Up RESET sequence when controller sends ZQC with address=0x123 as
+        # there is no RESET command. Controller will send it on phase 0.
+        def is_reset(p):
+            return p.cas_n & p.ras_n & ~p.we_n & (p.address == 0x0123)
+
+        # Shift register for reset timing (reset_hist[0] = current)
+        reset_hist = Signal(1 + 4)
+        reset_hist_last = Signal.like(reset_hist)
+        self.comb += reset_hist.eq(Cat(is_reset(dfi_hist[0].phases[0]), reset_hist_last))
+        self.sync += reset_hist_last.eq(reset_hist)
+        # Always send reset on phase 0 to easily track the required 16 cycles of STB reset (stb=0)
+        self.comb += dfi_adapters[0].do_reset.eq(reset_hist[1])
+        stb_reset_seq = reduce(or_, reset_hist[1:])
 
         # STB --------------------------------------------------------------------------------------
         # Currently not sending any serial commands, but the STB pin must be held low for 2 full
@@ -434,7 +431,7 @@ class RPCPHY(Module):
         # We only want to use STB to start parallel commands or to send NOPs. NOP is indicated by
         # the first two bits being high (0b11, and other as "don't care") so we can simply hold STB
         # high all the time.
-        self.comb += stb.eq(~stb_preamble_en)
+        self.comb += stb.eq(~(stb_preamble_en | stb_reset_seq))
 
         # Data IN ----------------------------------------------------------------------------------
         # Dummy read data generator for simulation purpose
