@@ -70,6 +70,45 @@ class ModeRegister:
         self.odt_pd  = Signal(1)
         self.tm      = Signal(1)
 
+    CL = {
+        8:  0b000,  # default
+        10: 0b001,
+        11: 0b010,
+        13: 0b011,
+        3:  0b110,
+    }
+    NWR = {
+        4:  0b000,
+        6:  0b001,
+        7:  0b010,
+        8:  0b011,  # default
+        10: 0b100,
+        12: 0b101,
+        14: 0b110,
+        16: 0b111,
+    }
+    ZOUT = {  # resistance in Ohms
+        120:     0b0010,
+        90:      0b0100,
+        51.4:    0b0110,
+        60:      0b1000,
+        40:      0b1010,
+        36:      0b1100,
+        27.7:    0b1110,
+        "short": 0b0001,  # 0bxxx1
+        "open":  0b0000,  # output disabled, default
+    }
+    ODT = {
+        60:     0b001,
+        45:     0b010,
+        25.7:   0b011,
+        30:     0b100,
+        20:     0b101,
+        18:     0b110,
+        13.85:  0b111,
+        "open": 0b000,
+    }
+
     # Encode mode register information in DFI address/bank
     DFI_ENCODING = {
         # field: (dfi_signal, width, offset)

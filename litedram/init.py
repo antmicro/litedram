@@ -239,50 +239,11 @@ def get_rpc_phy_init_sequence(phy_settings, timing_settings):
     csr_fx = 0  # do not use loop refresh mode
     odt_pd = 0  # ODT during PD disabled by DRAM
 
-    cl_to_mr = {
-        8:  0b000,  # default
-        10: 0b001,
-        11: 0b010,
-        13: 0b011,
-        3:  0b110,
-    }
-    nwr_to_mr = {
-        4:  0b000,
-        6:  0b001,
-        7:  0b010,
-        8:  0b011,  # default
-        10: 0b100,
-        12: 0b101,
-        14: 0b110,
-        16: 0b111,
-    }
-    zout_to_mr = {  # resistance in Ohms
-        120:     0b0010,
-        90:      0b0100,
-        51.4:    0b0110,
-        60:      0b1000,
-        40:      0b1010,
-        36:      0b1100,
-        27.7:    0b1110,
-        "short": 0b0001,  # 0bxxx1
-        "open":  0b0000,  # output disabled, default
-    }
-    odt_to_mr = {
-        60:     0b001,
-        45:     0b010,
-        25.7:   0b011,
-        30:     0b100,
-        20:     0b101,
-        18:     0b110,
-        13.85:  0b111,
-        "open": 0b000,
-    }
-
     mr_a, mr_ba = etronrpcphy.ModeRegister.dfi_encode(
-        cl=cl_to_mr[cl],
-        nwr=nwr_to_mr[nwr],
-        zout=zout_to_mr[zout],
-        odt=odt_to_mr[odt],
+        cl=etronrpcphy.ModeRegister.CL[cl],
+        nwr=etronrpcphy.ModeRegister.NWR[nwr],
+        zout=etronrpcphy.ModeRegister.ZOUT[zout],
+        odt=etronrpcphy.ModeRegister.ODT[odt],
         csr_fx=csr_fx,
         odt_stb=odt_stb,
         odt_pd=odt_pd,
