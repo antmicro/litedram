@@ -130,7 +130,7 @@ class ModeRegister:
             if encoding is None:
                 continue
             sig, width, offset = encoding
-            value = (kwargs[field] & (2*width - 1)) << offset
+            value = (kwargs[field] & (2**width - 1)) << offset
             if sig == "address":
                 address |= value
             elif sig == "bank":
