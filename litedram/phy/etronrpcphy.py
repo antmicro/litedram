@@ -49,7 +49,7 @@ class EM6GA16L(SDRAMModule):
         # FIXME: we're increasing tWR by 1 sysclk to compensate for long write
         # Should we use tRFQSd for tRFC?
         # "1600": _SpeedgradeTimings(tRP=13.75, tRCD=13.75, tWR=15 + (1/50e6 * 2), tRFC=(3*100, None), tFAW=None, tRAS=35),
-        "1600": _SpeedgradeTimings(tRP=20, tRCD=20, tWR=40 + (1/50e6 * 2), tRFC=(5*100, None), tFAW=None, tRAS=50),
+        "1600": _SpeedgradeTimings(tRP=20, tRCD=20, tWR=40 + (1/100e6 * 8), tRFC=(5*100, None), tFAW=None, tRAS=50),
         "1866": _SpeedgradeTimings(tRP=13.91, tRCD=13.91, tWR=15 + (1/50e6 * 2), tRFC=(3*100, None), tFAW=None, tRAS=34),
     }
     speedgrade_timings["default"] = speedgrade_timings["1600"]
@@ -336,6 +336,13 @@ class BasePHY(Module, AutoCSR):
         self._rdly_dq_bitslip_rst = CSR()
         self._rdly_dq_bitslip     = CSR()
 
+        self._phase90 = CSRStorage()
+        def set_bitpattern(lhs, s):
+            return Case(self._phase90.storage, {
+                0: lhs.eq(bitpattern(s)),
+                1: lhs.eq(bitpattern(s[1:] + s[0])),
+            })
+
         # PHY settings -----------------------------------------------------------------------------
         def get_cl(tck):
             # tck is for DDR frequency
@@ -441,7 +448,7 @@ class BasePHY(Module, AutoCSR):
 
         # Clocks -----------------------------------------------------------------------------------
         # Serialize clock (pattern will be shifted back 90 degrees!)
-        self.comb += clk_1ck_out.eq(bitpattern("_-_-_-_-"))
+        self.comb += set_bitpattern(clk_1ck_out, "_-_-_-_-")
 
         # DB muxing --------------------------------------------------------------------------------
         # Muxed cmd/data/mask
@@ -626,30 +633,30 @@ class BasePHY(Module, AutoCSR):
 
         # To avoid having to serialize dqs_oe, we serialize predefined pattern on dqs_out
         # All the patterns will be shifted back 90 degrees!
-        data_pattern = [bitpattern("_-_-_-_-")] * 2
-        mask_pattern = [bitpattern("___-_-_-"), bitpattern("_-_-_-_-")]
+        data_pattern = ["_-_-_-_-"] * 2
+        mask_pattern = ["___-_-_-", "_-_-_-_-"]
         phase_patterns = {
-            0: [bitpattern("_______-"), bitpattern("_-______")],
-            1: [bitpattern("________"), bitpattern("_-_-____")],
-            2: [bitpattern("________"), bitpattern("___-_-__")],
-            3: [bitpattern("________"), bitpattern("_____-_-")],
+            0: ["_______-", "_-______"],
+            1: ["________", "_-_-____"],
+            2: ["________", "___-_-__"],
+            3: ["________", "_____-_-"],
         }
 
         pattern_cases = \
             If(dq_mask_en,
-                pattern_2ck[0].eq(mask_pattern[0]),
-                pattern_2ck[1].eq(mask_pattern[1]),
+                set_bitpattern(pattern_2ck[0], mask_pattern[0]),
+                set_bitpattern(pattern_2ck[1], mask_pattern[1]),
             ).Else(
-                pattern_2ck[0].eq(data_pattern[0]),
-                pattern_2ck[1].eq(data_pattern[1]),
+                set_bitpattern(pattern_2ck[0], data_pattern[0]),
+                set_bitpattern(pattern_2ck[1], data_pattern[1]),
             )
         any_phase_valid = 0
         for p in range(nphases):
             phase_valid = dfi_adapters[p].cmd_valid | dfi_adapters[nphases+p].cmd_valid
             pattern_cases = \
                 If(phase_valid,
-                    pattern_2ck[0].eq(phase_patterns[p][0]),
-                    pattern_2ck[1].eq(phase_patterns[p][1]),
+                    set_bitpattern(pattern_2ck[0], phase_patterns[p][0]),
+                    set_bitpattern(pattern_2ck[1], phase_patterns[p][1]),
                 ).Else(pattern_cases)
             any_phase_valid = any_phase_valid | phase_valid
 
@@ -682,7 +689,7 @@ class BasePHY(Module, AutoCSR):
 
         # Additional variables for LiteScope -------------------------------------------------------
         variables = ["dq_data_en", "dq_mask_en", "dq_cmd_en", "dq_read_stb", "dfi_adapters",
-                     "dq_in_cnt", "db_cnt", "dqs_cnt", "rddata_en", "wrdata_en"]
+                     "dq_in_cnt", "db_cnt", "dqs_cnt", "rddata_en", "wrdata_en", "utr_mode"]
         for v in variables:
             setattr(self, v, locals()[v])
 
