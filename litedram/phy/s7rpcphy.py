@@ -16,7 +16,6 @@ class A7RPCPHY(BasePHY):
         self._rdly_dq_rst = CSR()
         self._rdly_dq_inc = CSR()
 
-
         self._db_delay = CSRStorage(3)
         self._dqs_delay = CSRStorage(3)
         self._db_enabled = CSRStorage()
@@ -34,9 +33,9 @@ class A7RPCPHY(BasePHY):
         iodelay_tap_average = {
             200e6: 78e-12,
             300e6: 52e-12,
-            400e6: 39e-12, # Only valid for -3 and -2/2E speed grades
+            400e6: 39e-12,  # Only valid for -3 and -2/2E speed grades
         }
-        half_sys8x_taps = math.floor(self.tck/(4*iodelay_tap_average[iodelay_clk_freq]))
+        self.half_sys8x_taps = math.floor(self.tck/(4*iodelay_tap_average[iodelay_clk_freq]))
 
     def do_clock_serialization(self, clk_1ck_out, clk_p, clk_n):
         clk = Signal()
@@ -65,26 +64,12 @@ class A7RPCPHY(BasePHY):
             )
 
             # Read path
-            # self.specials += Instance("IDELAYE2",
-            #     p_SIGNAL_PATTERN        = "DATA",
-            #     p_DELAY_SRC             = "IDATAIN",
-            #     p_CINVCTRL_SEL          = "FALSE",
-            #     p_HIGH_PERFORMANCE_MODE = "TRUE",
-            #     p_REFCLK_FREQUENCY      = self.iodelay_clk_freq/1e6,
-            #     p_PIPE_SEL              = "FALSE",
-            #     p_IDELAY_TYPE           = "VARIABLE",
-            #     p_IDELAY_VALUE          = 0,
-            #     i_C        = ClockSignal(),
-            #     i_LD       = self.dly_sel_for_bit(i) & self._rdly_dq_rst.re,
-            #     i_LDPIPEEN = 0,
-            #     i_CE       = self.dly_sel_for_bit(i) & self._rdly_dq_inc.re,
-            #     i_INC      = 1,
-            #     i_IDATAIN  = db_in,
-            #     o_DATAOUT  = db_in_delayed
-            # )
-            # self.iserdese2_ddr(din=db_in_delayed, dout=db_1ck_in[i])
-
-            self.iserdese2_ddr(din=db_in, dout=db_1ck_in[i])
+            self.idelaye2(
+                din=db_in, dout=db_in_delayed,
+                rst=self.dly_sel_for_bit(i) & self._rdly_dq_rst.re,
+                inc=self.dly_sel_for_bit(i) & self._rdly_dq_inc.re,
+            )
+            self.iserdese2_ddr(din=db_in_delayed, dout=db_1ck_in[i])
 
             self.specials += Instance("IOBUF",
                 i_I   = db_out,
@@ -98,6 +83,7 @@ class A7RPCPHY(BasePHY):
             dqs_out  = Signal()
             dqs_in   = Signal()
             dqs_t    = Signal()
+            dqs_in_delayed  = Signal()
 
             self.oserdese2_ddr(
                 clk="sys4x_90",
@@ -105,9 +91,17 @@ class A7RPCPHY(BasePHY):
                 tin=~(dqs_oe & self._dqs_enabled.storage),     tout=dqs_t,
                 dly=self._dqs_delay.storage,
             )
+
             # TODO: proper deserialization
             if i == 0:
-                self.iserdese2_ddr(din=dqs_in, dout=dqs_1ck_in)
+                self.idelaye2(
+                    din=dqs_in, dout=dqs_in_delayed,
+                    rst=self.dly_sel_for_bit(i) & self._rdly_dq_rst.re,
+                    inc=self.dly_sel_for_bit(i) & self._rdly_dq_inc.re,
+                )
+                self.iserdese2_ddr(
+                    clk="sys4x_90",
+                    din=dqs_in_delayed, dout=dqs_1ck_in)
 
             self.specials += Instance("IOBUFDS",
                 i_T    = dqs_t,
@@ -119,6 +113,64 @@ class A7RPCPHY(BasePHY):
 
     def do_cs_serialization(self, cs_n_1ck_out, cs_n):
         self.oserdese2_ddr(din=cs_n_1ck_out, dout=cs_n)
+
+    def idelaye2(self, *, din, dout, init=0, rst=None, inc=None):
+        assert not ((rst is None) ^ (inc is None))
+        fixed = rst is not None
+
+        params = dict(
+            p_SIGNAL_PATTERN        = "DATA",
+            p_DELAY_SRC             = "IDATAIN",
+            p_CINVCTRL_SEL          = "FALSE",
+            p_HIGH_PERFORMANCE_MODE = "TRUE",
+            p_REFCLK_FREQUENCY      = self.iodelay_clk_freq/1e6,
+            p_PIPE_SEL              = "FALSE",
+            p_IDELAY_VALUE          = init,
+            p_IDELAY_TYPE           = "FIXED",
+            i_IDATAIN  = din,
+            o_DATAOUT  = dout,
+        )
+
+        if not fixed:
+            params.update(dict(
+                p_IDELAY_TYPE  = "VARIABLE",
+                i_C        = ClockSignal(),
+                i_LD       = rst,
+                i_CE       = inc,
+                i_LDPIPEEN = 0,
+                i_INC      = 1,
+            ))
+
+        self.specials += Instance("IDELAYE2", **params)
+
+    def odelaye2(self, *, din, dout, init=0, rst=None, inc=None):  # Not available for Artix7
+        assert not ((rst is None) ^ (inc is None))
+        fixed = rst is not None
+
+        params = dict(
+            p_SIGNAL_PATTERN        = "DATA",
+            p_DELAY_SRC             = "ODATAIN",
+            p_CINVCTRL_SEL          = "FALSE",
+            p_HIGH_PERFORMANCE_MODE = "TRUE",
+            p_REFCLK_FREQUENCY      = self.iodelay_clk_freq/1e6,
+            p_PIPE_SEL              = "FALSE",
+            p_ODELAY_VALUE          = init,
+            p_ODELAY_TYPE           = "FIXED",
+            i_ODATAIN  = din,
+            o_DATAOUT  = dout,
+        )
+
+        if not fixed:
+            params.update(dict(
+                p_ODELAY_TYPE  = "VARIABLE",
+                i_C        = ClockSignal(),
+                i_LD       = rst,
+                i_CE       = inc,
+                i_LDPIPEEN = 0,
+                i_INC      = 1,
+            ))
+
+        self.specials += Instance("ODELAYE2", **params)
 
     def oserdese2_ddr(self, *, din, dout, clk="sys4x", tin=None, tout=None, dly=None):
         assert self.nphases == 4
