@@ -408,7 +408,7 @@ class BasePHY(Module, AutoCSR):
         wrcmdphase, wrphase = get_sys_phases(nphases, cwl_sys_latency, cwl)
 
         # Read latency
-        db_cmd_dly   = 1  # (need +1 cycle to insert STB preamble)
+        db_cmd_dly   = 2  # (need 1 cycle to insert STB preamble + 1 more to always meet tCSS)
         cmd_ser_dly  = write_ser_latency
         read_mux_dly = 1
         bitslip_dly  = 3  # ncycles + 1
@@ -424,7 +424,8 @@ class BasePHY(Module, AutoCSR):
         # are writing in the 2 cycles following the cycle when we obtain data on DFI.
         # Other PHYs can send everything in 1 sysclk. Because of this spcific delay, we
         # have to increate tWR in the RPC SDRModule definition to meet tWR requirements.
-        write_latency = cwl_sys_latency
+        # +1 cycle needed to insert CS before command
+        write_latency = cwl_sys_latency + 1
 
         self.settings = PhySettings(
             phytype       = phytype,
@@ -448,8 +449,7 @@ class BasePHY(Module, AutoCSR):
         dfi_params = dict(addressbits=addressbits, bankbits=bankbits, nranks=nranks,
                           databits=4*databits, nphases=nphases)
 
-        # Register DFI history, as we need to operate on 3 subsequent cycles (write data, only
-        # 2 needed for commands)
+        # Register DFI history (from newest to oldest), as we need to operate on 3 subsequent cycles
         # hist[0] = dfi[N], hist[1] = dfi[N-1], ...
         self.dfi = dfi = Interface(**dfi_params)
         dfi_hist = [dfi, Interface(**dfi_params), Interface(**dfi_params)]
@@ -516,11 +516,12 @@ class BasePHY(Module, AutoCSR):
 
         # Parallel commands ------------------------------------------------------------------------
         # We need to insert 2 full-clk cycles of STB=0 before any command, to mark the beginning of
-        # Request Packet. For that reason we use the previous values of DFI commands.
-        # list: dfi[N-1][p0], dfi[N-1][p1], ..., dfi[N][p0], dfi[N][p1], ...
+        # Request Packet. For that reason we use the previous values of DFI commands. To always be
+        # able to meet tCSS, we have to add a delay of 1 more sysclk.
+        # list from oldest to newest: dfi[N-1][p0], dfi[N-1][p1], ..., dfi[N][p0], dfi[N][p1], ...
         utr_mode = Signal()
         dfi_adapters = []
-        for phase in dfi_hist[1].phases + dfi_hist[0].phases:
+        for phase in dfi_hist[2].phases + dfi_hist[1].phases + dfi_hist[0].phases:
             adapter = DFIAdapter(phase, utr_mode)
             self.submodules += adapter
             dfi_adapters.append(adapter)
@@ -567,15 +568,17 @@ class BasePHY(Module, AutoCSR):
 
         # Chip Select ------------------------------------------------------------------------------
         # RPC has quite high required time of CS# low before sending a command (tCSS), this means
-        # that we would need 1 more cmd_latency to support it for all standard frequencies. For now
-        # we hold it low all the time since the moment a first CS# low has been sent on DFI.
-        # TODO: better CS handling (+compare tck with tCSS_min/tCSH_min to check if timings are met)
-        cs       = Signal()
-        # bring CS# low when we see CS#=0 on phase 0 and 1 on all others (done during initialization
-        # sequence, and avoids situatuions when all CS#=0 early on)
-        cs_start_cond = [dfi_hist[0].phases[p].cs_n == (0 if p == 0 else 1) for p in range(nphases)]
-        self.sync += If(reduce(and_, cs_start_cond), cs.eq(1))
-        self.comb += cs_n_1ck_out.eq(Replicate(~cs, len(cs_n_1ck_out)))
+        # that we would need 1 more cmd_latency to support it for all standard frequencies.
+        tCSS = 10e-9
+        tCSH =  5e-9
+        # CS# is held for 2 sysclks before any command, and 1 sysclk after any command
+        assert 2 * 1/sys_clk_freq >= tCSS, "tCSS not met for commands on phase 0"
+        assert 1 * 1/sys_clk_freq >= tCSH, "tCSH not met for commands on phase 3"
+        cs = Signal()
+        cs_d = Signal()
+        self.comb += cs.eq(reduce(or_, (a.cmd_valid for a in dfi_adapters)))
+        self.sync += cs_d.eq(cs)
+        self.comb += cs_n_1ck_out.eq(Replicate(~(cs | cs_d), len(cs_n_1ck_out)))
 
         # Data IN ----------------------------------------------------------------------------------
         # Synchronize the deserializer as we deserialize over 2 cycles.
