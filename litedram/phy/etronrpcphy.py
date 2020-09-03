@@ -1,10 +1,12 @@
 # This file is Copyright (c) 2020 Antmicro <www.antmicro.com>
 # Etron RPC DRAM PHY
 
+from math import ceil
 from operator import and_
 
 from migen import *
 from migen.fhdl.specials import Tristate
+from migen.genlib.misc import WaitTimer
 
 from litex.soc.interconnect.csr import *
 
@@ -176,6 +178,12 @@ class DFIAdapter(Module):
         "1010": 0b11,
     }
 
+    SPECIAL_CMDS = {
+        "RESET":    "ACT",
+        "UTR":      "MRS",
+        "ZQC_INIT": "ZQC",
+    }
+
     @classmethod
     def dfi_utr_encode(cls, utr_op, utr_en):
         if isinstance(utr_op, str):
@@ -193,19 +201,17 @@ class DFIAdapter(Module):
         self.do_reset  = Signal()  # force sending RESET command
         self.bc        = Signal(6)  # burst count (bs+1 = number of 32-byte words in the transfer)
         self.ref_op    = Signal(2)
-        self.is_reset  = Signal()
-        self.is_utr    = Signal()
 
         # # #
 
-        phase_cmd = Signal(3)
+        self.phase_cmd = phase_cmd = Signal(3)
         self.comb += phase_cmd.eq(Cat(phase.cas_n, phase.ras_n, phase.we_n))
 
         def _cmd(cas, ras, we):
             assert cas in [0, 1] and ras in [0, 1] and we in [0, 1]
             return ((1 - cas) << 0) | ((1 - ras) << 1) | ((1 - we) << 2)
 
-        dfi_cmds = {
+        self.dfi_cmds = dfi_cmds = {
             "NOP": _cmd(cas=0, ras=0, we=0),
             "ACT": _cmd(cas=0, ras=1, we=0),
             "RD":  _cmd(cas=1, ras=0, we=0),
@@ -217,7 +223,7 @@ class DFIAdapter(Module):
         }
 
         # precharge/refresh use a bank bitmask, so PRECHARGE ALL uses 0b1111
-        special_cmds   = Signal()
+        self.special_cmds = special_cmds = Signal()
         bk             = Signal(4)
         zqc_op         = Signal(2)
         auto_precharge = Signal()
@@ -311,25 +317,30 @@ class DFIAdapter(Module):
             ],
         }
 
-        self.sync += If(self.is_utr, utr_mode.eq(utr_en))
+        self.sync += If(self.is_cmd("UTR"), utr_mode.eq(utr_en))
         self.comb += [
-            self.is_reset.eq(special_cmds & (phase_cmd == dfi_cmds["ACT"])),
-            self.is_utr.eq  (special_cmds & (phase_cmd == dfi_cmds["MRS"])),
-            If(self.is_reset & ~utr_mode,
+            If(self.is_cmd("RESET") & ~utr_mode,
                 cases["RESET"],
                 self.cmd_valid.eq(1),
-            ).Elif(self.is_utr,
+            ).Elif(self.is_cmd("UTR"),
                 cases["UTR"],
                 self.cmd_valid.eq(1),
             ).Else(
-                If(utr_mode,
-                    self.cmd_valid.eq(phase_cmd == dfi_cmds["RD"]),
+                If(utr_mode,  # only reads are allowed when UTR mode is enabled
+                    self.cmd_valid.eq(self.is_cmd("RD")),
                 ).Else(
-                    self.cmd_valid.eq(phase_cmd != dfi_cmds["NOP"]),
+                    self.cmd_valid.eq(~self.is_cmd("NOP")),
                 ),
                 Case(phase_cmd, {dfi_cmds[cmd]: cases[cmd] for cmd in dfi_cmds.keys()}),
             ),
         ]
+
+    def is_cmd(self, cmd):
+        if isinstance(cmd, list):
+            return reduce(or_, (self.is_cmd(c) for c in cmd))
+        if cmd in ["RESET", "UTR", "ZQC_INIT"]:
+            return self.special_cmds & (self.phase_cmd == self.dfi_cmds[self.SPECIAL_CMDS[cmd]])
+        return self.phase_cmd == self.dfi_cmds[cmd]
 
 # Etron RPC DRAM PHY Base --------------------------------------------------------------------------
 
@@ -374,6 +385,17 @@ class BasePHY(Module, AutoCSR):
         self._dly_sel             = CSRStorage(len(self.pads.dqs_p))
         self._rdly_dq_bitslip_rst = CSR()
         self._rdly_dq_bitslip     = CSR()
+
+        self._init       = CSR()
+        self._reset_done = CSRStatus()
+        init_request     = Signal()
+        _init_started     = Signal()
+        init_started     = Signal()
+        reset_done       = Signal()
+        init_done        = Signal()
+        self.sync += If(init_request, _init_started.eq(1))
+        self.comb += init_started.eq(_init_started | init_request)
+        self.comb += self._reset_done.status.eq(reset_done)
 
         self._phase90 = CSRStorage()
         def set_bitpattern(lhs, s):
@@ -549,9 +571,50 @@ class BasePHY(Module, AutoCSR):
         # Use a shift register for reset timing (reset_hist[0] = current)
         reset_hist = Signal(1 + 4)
         reset_hist_last = Signal.like(reset_hist)
-        self.comb += reset_hist.eq(Cat(dfi_adapters[nphases+0].is_reset, reset_hist_last))
+        def is_reset(phase):
+            return dfi_adapters[phase].cmd_valid & dfi_adapters[phase].is_cmd("RESET")
+
+        self.comb += init_request.eq(is_reset(2*nphases+0))
+        # self.comb += init_request.eq(self._init.re)
+
+        # self.comb += reset_hist.eq(Cat(is_reset & init_started, reset_hist_last))
+        self.comb += reset_hist.eq(Cat(is_reset(nphases+0), reset_hist_last))
         self.sync += reset_hist_last.eq(reset_hist)
         stb_reset_seq = reduce(or_, reset_hist[1:])
+
+        t_reset = 5e-6
+        self.submodules.reset_timer = WaitTimer(ceil(t_reset * sys_clk_freq))
+        self.sync += If(init_request, self.reset_timer.wait.eq(1))
+        self.sync += If(self.reset_timer.done, reset_done.eq(1))
+
+        # Mask all REF commands (and others that are not expected during power up initialization).
+        # Also, mask eveything but reset before reset finishes.
+        def cmd_valid_on(adapters):
+            pre_init_allowed = ["RESET", "PRE", "MRS", "ZQC_INIT"]
+            cmd_valid = Signal()
+            self.comb += \
+                If(~init_started,  # nothing
+                    cmd_valid.eq(0)
+                ).Elif(~reset_done,  # only RESET
+                    cmd_valid.eq(reduce(or_, (a.cmd_valid & a.is_cmd("RESET") for a in adapters)))
+                ).Elif(~init_done,  # only pre-init allowed
+                    cmd_valid.eq(reduce(or_, (a.cmd_valid & a.is_cmd(pre_init_allowed) for a in adapters)))
+                ).Else(  # all
+                    cmd_valid.eq(reduce(or_, (a.cmd_valid for a in adapters)))
+                )
+            return cmd_valid
+
+        t_zqcinit = 1e-6
+        self.submodules.zqcinit_timer = WaitTimer(ceil(t_zqcinit * sys_clk_freq))
+        zqcinit = Signal()
+        self.sync += [
+            If(self._reset_done.status & dfi_adapters[0].cmd_valid & dfi_adapters[0].is_cmd("ZQC_INIT"),
+                self.zqcinit_timer.wait.eq(1)
+            ),
+            If(self.zqcinit_timer.done,
+                init_done.eq(1)
+            )
+        ]
 
         # STB --------------------------------------------------------------------------------------
         # Currently not sending any serial commands, but the STB pin must be held low for 2 full
@@ -559,7 +622,7 @@ class BasePHY(Module, AutoCSR):
         stb_bits = []
         for p in range(nphases):
             # Use cmd from current and prev cycle, depending on which phase the command appears on
-            preamble = dfi_adapters[p + 2].cmd_valid | dfi_adapters[p + 1].cmd_valid
+            preamble = cmd_valid_on([dfi_adapters[p + 2], dfi_adapters[p + 1]])
             # We only want to use STB to start parallel commands, serial reset or to send NOPs. NOP
             # is indicated by the first two bits being high (0b11, and other as "don't care"), so
             # we can simply hold STB high all the time and reset is zeros for 8 cycles (1 sysclk).
@@ -574,11 +637,16 @@ class BasePHY(Module, AutoCSR):
         # CS# is held for 2 sysclks before any command, and 1 sysclk after any command
         assert 2 * 1/sys_clk_freq >= tCSS, "tCSS not met for commands on phase 0"
         assert 1 * 1/sys_clk_freq >= tCSH, "tCSH not met for commands on phase 3"
-        cs = Signal()
-        cs_d = Signal()
-        self.comb += cs.eq(reduce(or_, (a.cmd_valid for a in dfi_adapters)))
-        self.sync += cs_d.eq(cs)
-        self.comb += cs_n_1ck_out.eq(Replicate(~(cs | cs_d), len(cs_n_1ck_out)))
+
+        cs        = Signal()
+        cs_cond   = Signal()
+        cs_cond_d = Signal()
+        self.sync += cs_cond_d.eq(cs_cond)
+        self.comb += [
+            cs_cond.eq(cmd_valid_on(dfi_adapters)),
+            cs.eq(cs_cond | cs_cond_d),
+            cs_n_1ck_out.eq(Replicate(~cs, len(cs_n_1ck_out))),
+        ]
 
         # Data IN ----------------------------------------------------------------------------------
         # Synchronize the deserializer as we deserialize over 2 cycles.
