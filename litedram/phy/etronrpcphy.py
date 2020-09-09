@@ -783,9 +783,12 @@ class BasePHY(Module, AutoCSR):
             If(dq_mask_en,
                 set_bitpattern(pattern_2ck[0], mask_pattern[0]),
                 set_bitpattern(pattern_2ck[1], mask_pattern[1]),
-            ).Else(
+            ).Elif(dq_data_en,
                 set_bitpattern(pattern_2ck[0], data_pattern[0]),
                 set_bitpattern(pattern_2ck[1], data_pattern[1]),
+            ).Else(
+                pattern_2ck[0].eq(0),
+                pattern_2ck[1].eq(0),
             )
         any_phase_valid = 0
         for p in range(nphases):
