@@ -27,7 +27,7 @@ class A7RPCPHY(BasePHY):
         self._dqs_latency1 = CSRStorage()
 
         kwargs.update(dict(
-            write_ser_latency = 2,  # OSERDESE2 8:1 DDR (4 full-rate clocks)
+            write_ser_latency = 1,  # OSERDESE2 8:1 DDR (4 full-rate clocks)
             read_des_latency  = 2,  # ISERDESE2 NETWORKING
             phytype           = self.__class__.__name__,
         ))
