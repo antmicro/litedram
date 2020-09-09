@@ -61,14 +61,15 @@ class EM6GA16L(SDRAMModule):
         tCCD=(13+1 + 8 + 7 + 10, None),
         tWTR=(11 + 2 + 10, None),
         tRRD=(None, 7.5 + 5),
-        tZQCS=(None, 90 + 100)
+        # tZQCS=(None, 90 + 100)
+        tZQCS=None
     )
     speedgrade_timings = {
         # FIXME: we're increasing tWR by 1 sysclk to compensate for long write
         # Should we use tRFQSd for tRFC?
         # "1600": _SpeedgradeTimings(tRP=13.75, tRCD=13.75, tWR=15 + (1/50e6 * 2), tRFC=(3*100, None), tFAW=None, tRAS=35),
-        "1600": _SpeedgradeTimings(tRP=20, tRCD=20, tWR=40 + (1/100e6 * 8), tRFC=(5*100, None), tFAW=None, tRAS=50),
-        "1866": _SpeedgradeTimings(tRP=13.91, tRCD=13.91, tWR=15 + (1/50e6 * 2), tRFC=(3*100, None), tFAW=None, tRAS=34),
+        "1600": _SpeedgradeTimings(tRP=20, tRCD=20, tWR=40 + (1/10e6 * 8), tRFC=(5*100, None), tFAW=None, tRAS=50),
+        "1866": _SpeedgradeTimings(tRP=13.91, tRCD=13.91, tWR=15 + (1/10e6 * 2), tRFC=(3*100, None), tFAW=None, tRAS=34),
     }
     speedgrade_timings["default"] = speedgrade_timings["1600"]
 
@@ -412,6 +413,7 @@ class BasePHY(Module, AutoCSR):
 
         # PHY settings -----------------------------------------------------------------------------
         def get_cl(tck):
+            return 8
             # tck is for DDR frequency
             f_to_cl = OrderedDict()
             f_to_cl[533e6]  =  3
