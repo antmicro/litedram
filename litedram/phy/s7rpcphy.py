@@ -12,7 +12,9 @@ from litedram.phy.etronrpcphy import BasePHY, bitpattern
 # Xilinx Artix7 RPC PHY ----------------------------------------------------------------------------
 
 class A7RPCPHY(BasePHY):
-    def __init__(self, iodelay_clk_freq, **kwargs):
+    def __init__(self, iodelay_clk_freq, no_differential=False, **kwargs):
+        self.no_differential = no_differential
+
         self._rdly_dq_rst = CSR()
         self._rdly_dq_inc = CSR()
 
@@ -38,13 +40,17 @@ class A7RPCPHY(BasePHY):
         self.half_sys8x_taps = math.floor(self.tck/(4*iodelay_tap_average[iodelay_clk_freq]))
 
     def do_clock_serialization(self, clk_1ck_out, clk_p, clk_n):
-        clk = Signal()
-        self.oserdese2_ddr(din=clk_1ck_out, dout=clk, clk="sys4x_90")
-        self.specials += Instance("OBUFDS",
-            i_I  = clk,
-            o_O  = clk_p,
-            o_OB = clk_n,
-        )
+        if self.no_differential:
+            self.oserdese2_ddr(din=clk_1ck_out, dout=clk_p, clk="sys4x_90")
+            self.oserdese2_ddr(din=~clk_1ck_out, dout=clk_n, clk="sys4x_90")
+        else:
+            clk = Signal()
+            self.oserdese2_ddr(din=clk_1ck_out, dout=clk, clk="sys4x_90")
+            self.specials += Instance("OBUFDS",
+                i_I  = clk,
+                o_O  = clk_p,
+                o_OB = clk_n,
+            )
 
     def do_stb_serialization(self, stb_1ck_out, stb):
         self.oserdese2_ddr(din=stb_1ck_out, dout=stb)
@@ -103,13 +109,21 @@ class A7RPCPHY(BasePHY):
                     clk="sys4x_90",
                     din=dqs_in_delayed, dout=dqs_1ck_in)
 
-            self.specials += Instance("IOBUFDS",
-                i_T    = dqs_t,
-                i_I    = dqs_out,
-                o_O    = dqs_in,
-                io_IO  = dqs_p[i],
-                io_IOB = dqs_n[i],
-            )
+            if self.no_differential:
+                self.specials += Instance("IOBUF",
+                    i_T    = dqs_t,
+                    i_I    = dqs_out,
+                    o_O    = dqs_in,
+                    io_IO  = dqs_p[i],
+                )
+            else:
+                self.specials += Instance("IOBUFDS",
+                    i_T    = dqs_t,
+                    i_I    = dqs_out,
+                    o_O    = dqs_in,
+                    io_IO  = dqs_p[i],
+                    io_IOB = dqs_n[i],
+                )
 
     def do_cs_serialization(self, cs_n_1ck_out, cs_n):
         self.oserdese2_ddr(din=cs_n_1ck_out, dout=cs_n)
