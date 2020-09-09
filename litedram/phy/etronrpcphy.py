@@ -371,7 +371,8 @@ class RPCPads:
     def __init__(self, pads):
         self.map(pads)
         for pad, width in self._layout:
-            assert len(getattr(self, pad)) >= width
+            assert len(getattr(self, pad)) >= width, \
+                "Pad {} has width {} < {}".format(pad, len(getattr(self, pad)), width)
 
     # reimplement if a specific mapping is needed
     def map(self, pads):
