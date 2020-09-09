@@ -404,7 +404,7 @@ class BasePHY(Module, AutoCSR):
         self._reset_done = CSRStatus()
         self._init_done  = CSRStatus()
 
-        self._phase90 = CSRStorage()
+        self._phase90 = CSRStorage(reset=1)
         def set_bitpattern(lhs, s):
             return Case(self._phase90.storage, {
                 0: lhs.eq(bitpattern(s)),

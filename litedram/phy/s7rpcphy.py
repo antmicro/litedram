@@ -18,10 +18,10 @@ class A7RPCPHY(BasePHY):
         self._rdly_dq_rst = CSR()
         self._rdly_dq_inc = CSR()
 
-        self._db_delay = CSRStorage(3)
-        self._dqs_delay = CSRStorage(3)
-        self._db_enabled = CSRStorage()
-        self._dqs_enabled = CSRStorage()
+        self._db_delay = CSRStorage(3, reset=2)
+        self._dqs_delay = CSRStorage(3, reset=2)
+        self._db_enabled = CSRStorage(reset=1)
+        self._dqs_enabled = CSRStorage(reset=1)
 
         kwargs.update(dict(
             write_ser_latency = 2,  # OSERDESE2 8:1 DDR (4 full-rate clocks)
@@ -91,9 +91,12 @@ class A7RPCPHY(BasePHY):
             dqs_t    = Signal()
             dqs_in_delayed  = Signal()
 
+            dqs_1ck_out_d = Signal.like(dqs_1ck_out)
+            self.sync += dqs_1ck_out_d.eq(dqs_1ck_out)
+
             self.oserdese2_ddr(
                 clk="sys4x_90",
-                din=dqs_1ck_out, dout=dqs_out,
+                din=dqs_1ck_out_d, dout=dqs_out,
                 tin=~(dqs_oe & self._dqs_enabled.storage),     tout=dqs_t,
                 dly=self._dqs_delay.storage,
             )
