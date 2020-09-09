@@ -18,10 +18,13 @@ class A7RPCPHY(BasePHY):
         self._rdly_dq_rst = CSR()
         self._rdly_dq_inc = CSR()
 
-        self._db_delay = CSRStorage(3, reset=2)
-        self._dqs_delay = CSRStorage(3, reset=2)
+        self._db_delay = CSRStorage(3, reset=1)
+        self._dqs_delay = CSRStorage(3, reset=1)
         self._db_enabled = CSRStorage(reset=1)
         self._dqs_enabled = CSRStorage(reset=1)
+        self._dqs_extend = CSRStorage()
+        self._force_dqs_oe = CSRStorage()
+        self._dqs_latency1 = CSRStorage()
 
         kwargs.update(dict(
             write_ser_latency = 2,  # OSERDESE2 8:1 DDR (4 full-rate clocks)
@@ -41,11 +44,11 @@ class A7RPCPHY(BasePHY):
 
     def do_clock_serialization(self, clk_1ck_out, clk_p, clk_n):
         if self.no_differential:
-            self.oserdese2_ddr(din=clk_1ck_out, dout=clk_p, clk="sys4x_90")
-            self.oserdese2_ddr(din=~clk_1ck_out, dout=clk_n, clk="sys4x_90")
+            self.oserdese2_ddr(din=clk_1ck_out, dout=clk_p, clk="sys4x_180")
+            self.oserdese2_ddr(din=~clk_1ck_out, dout=clk_n, clk="sys4x_180")
         else:
             clk = Signal()
-            self.oserdese2_ddr(din=clk_1ck_out, dout=clk, clk="sys4x_90")
+            self.oserdese2_ddr(din=clk_1ck_out, dout=clk, clk="sys4x_180")
             self.specials += Instance("OBUFDS",
                 i_I  = clk,
                 o_O  = clk_p,
@@ -91,13 +94,23 @@ class A7RPCPHY(BasePHY):
             dqs_t    = Signal()
             dqs_in_delayed  = Signal()
 
+            dqs_oe_d = Signal()
+            self.sync += dqs_oe_d.eq(dqs_oe)
+
             dqs_1ck_out_d = Signal.like(dqs_1ck_out)
+            dqs_1ck_out_f = Signal.like(dqs_1ck_out)
             self.sync += dqs_1ck_out_d.eq(dqs_1ck_out)
+            self.comb += \
+                If(self._dqs_latency1.storage,
+                    dqs_1ck_out_f.eq(dqs_1ck_out_d)
+                ).Else(
+                    dqs_1ck_out_f.eq(dqs_1ck_out)
+                )
 
             self.oserdese2_ddr(
-                clk="sys4x_90",
-                din=dqs_1ck_out_d, dout=dqs_out,
-                tin=~(dqs_oe & self._dqs_enabled.storage),     tout=dqs_t,
+                clk="sys4x_180",
+                din=dqs_1ck_out_f, dout=dqs_out,
+                tin=~(((dqs_oe | (dqs_oe_d & self._dqs_extend.storage)) | self._force_dqs_oe.storage) & self._dqs_enabled.storage),     tout=dqs_t,
                 dly=self._dqs_delay.storage,
             )
 
@@ -189,7 +202,7 @@ class A7RPCPHY(BasePHY):
 
         self.specials += Instance("ODELAYE2", **params)
 
-    def oserdese2_ddr(self, *, din, dout, clk="sys4x", tin=None, tout=None, dly=None):
+    def oserdese2_ddr(self, *, din, dout, clk="sys4x_90", tin=None, tout=None, dly=None):
         assert self.nphases == 4
         assert not ((tin is None) ^ (tout is None))
 
@@ -232,7 +245,7 @@ class A7RPCPHY(BasePHY):
 
         self.specials += Instance("OSERDESE2", **params)
 
-    def iserdese2_ddr(self, *, din, dout, clk="sys4x"):
+    def iserdese2_ddr(self, *, din, dout, clk="sys4x_90"):
         assert self.nphases == 4
 
         params = dict(
