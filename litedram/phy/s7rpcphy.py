@@ -13,18 +13,14 @@ from litedram.phy.etronrpcphy import BasePHY, bitpattern
 
 class A7RPCPHY(BasePHY):
     def __init__(self, iodelay_clk_freq, no_differential=False, **kwargs):
+        # used to debug output signals on PMODs
         self.no_differential = no_differential
 
         self._rdly_dq_rst = CSR()
         self._rdly_dq_inc = CSR()
 
-        self._db_delay = CSRStorage(3, reset=1)
-        self._dqs_delay = CSRStorage(3, reset=1)
         self._db_enabled = CSRStorage(reset=1)
         self._dqs_enabled = CSRStorage(reset=1)
-        self._dqs_extend = CSRStorage()
-        self._force_dqs_oe = CSRStorage()
-        self._dqs_latency1 = CSRStorage()
 
         kwargs.update(dict(
             write_ser_latency = 1,  # OSERDESE2 8:1 DDR (4 full-rate clocks)
@@ -43,10 +39,7 @@ class A7RPCPHY(BasePHY):
         self.half_sys8x_taps = math.floor(self.tck/(4*iodelay_tap_average[iodelay_clk_freq]))
 
     def do_clock_serialization(self, clk_1ck_out, clk_p, clk_n):
-        if self.no_differential:
-            self.oserdese2_ddr(din=clk_1ck_out, dout=clk_p, clk="sys4x_180")
-            self.oserdese2_ddr(din=~clk_1ck_out, dout=clk_n, clk="sys4x_180")
-        else:
+        if not self.no_differential:
             clk = Signal()
             self.oserdese2_ddr(din=clk_1ck_out, dout=clk, clk="sys4x_180")
             self.specials += Instance("OBUFDS",
@@ -54,9 +47,12 @@ class A7RPCPHY(BasePHY):
                 o_O  = clk_p,
                 o_OB = clk_n,
             )
+        else:
+            self.oserdese2_ddr(din=clk_1ck_out,  dout=clk_p, clk="sys4x_180")
+            self.oserdese2_ddr(din=~clk_1ck_out, dout=clk_n, clk="sys4x_180")
 
     def do_stb_serialization(self, stb_1ck_out, stb):
-        self.oserdese2_ddr(din=stb_1ck_out, dout=stb)
+        self.oserdese2_ddr(din=stb_1ck_out, dout=stb, clk="sys4x_90")
 
     def do_db_serialization(self, db_1ck_out, db_1ck_in, db_oe, db):
         for i in range(self.databits):
@@ -68,8 +64,8 @@ class A7RPCPHY(BasePHY):
             # Write path
             self.oserdese2_ddr(
                 din=db_1ck_out[i], dout=db_out,
-                tin=~(db_oe & self._db_enabled.storage),        tout=db_t,
-                dly=self._db_delay.storage,
+                tin=~(db_oe & self._db_enabled.storage), tout=db_t,
+                clk="sys4x_90",
             )
 
             # Read path
@@ -78,7 +74,7 @@ class A7RPCPHY(BasePHY):
                 rst=self.dly_sel_for_bit(i) & self._rdly_dq_rst.re,
                 inc=self.dly_sel_for_bit(i) & self._rdly_dq_inc.re,
             )
-            self.iserdese2_ddr(din=db_in_delayed, dout=db_1ck_in[i])
+            self.iserdese2_ddr(din=db_in_delayed, dout=db_1ck_in[i], clk="sys4x_180")
 
             self.specials += Instance("IOBUF",
                 i_I   = db_out,
@@ -94,24 +90,10 @@ class A7RPCPHY(BasePHY):
             dqs_t    = Signal()
             dqs_in_delayed  = Signal()
 
-            dqs_oe_d = Signal()
-            self.sync += dqs_oe_d.eq(dqs_oe)
-
-            dqs_1ck_out_d = Signal.like(dqs_1ck_out)
-            dqs_1ck_out_f = Signal.like(dqs_1ck_out)
-            self.sync += dqs_1ck_out_d.eq(dqs_1ck_out)
-            self.comb += \
-                If(self._dqs_latency1.storage,
-                    dqs_1ck_out_f.eq(dqs_1ck_out_d)
-                ).Else(
-                    dqs_1ck_out_f.eq(dqs_1ck_out)
-                )
-
             self.oserdese2_ddr(
                 clk="sys4x_180",
-                din=dqs_1ck_out_f, dout=dqs_out,
-                tin=~(((dqs_oe | (dqs_oe_d & self._dqs_extend.storage)) | self._force_dqs_oe.storage) & self._dqs_enabled.storage),     tout=dqs_t,
-                dly=self._dqs_delay.storage,
+                din=dqs_1ck_out, dout=dqs_out,
+                tin=~(dqs_oe & self._dqs_enabled.storage), tout=dqs_t,
             )
 
             # TODO: proper deserialization
@@ -125,14 +107,7 @@ class A7RPCPHY(BasePHY):
                     clk="sys4x_90",
                     din=dqs_in_delayed, dout=dqs_1ck_in)
 
-            if self.no_differential:
-                self.specials += Instance("IOBUF",
-                    i_T    = dqs_t,
-                    i_I    = dqs_out,
-                    o_O    = dqs_in,
-                    io_IO  = dqs_p[i],
-                )
-            else:
+            if not self.no_differential:
                 self.specials += Instance("IOBUFDS",
                     i_T    = dqs_t,
                     i_I    = dqs_out,
@@ -140,9 +115,16 @@ class A7RPCPHY(BasePHY):
                     io_IO  = dqs_p[i],
                     io_IOB = dqs_n[i],
                 )
+            else:
+                self.specials += Instance("IOBUF",
+                    i_T    = dqs_t,
+                    i_I    = dqs_out,
+                    o_O    = dqs_in,
+                    io_IO  = dqs_p[i],
+                )
 
     def do_cs_serialization(self, cs_n_1ck_out, cs_n):
-        self.oserdese2_ddr(din=cs_n_1ck_out, dout=cs_n)
+        self.oserdese2_ddr(din=cs_n_1ck_out, dout=cs_n, clk="sys4x_90")
 
     def idelaye2(self, *, din, dout, init=0, rst=None, inc=None):
         assert not ((rst is None) ^ (inc is None))
@@ -202,7 +184,7 @@ class A7RPCPHY(BasePHY):
 
         self.specials += Instance("ODELAYE2", **params)
 
-    def oserdese2_ddr(self, *, din, dout, clk="sys4x_90", tin=None, tout=None, dly=None):
+    def oserdese2_ddr(self, *, din, dout, clk, tin=None, tout=None):
         assert self.nphases == 4
         assert not ((tin is None) ^ (tout is None))
 
@@ -223,29 +205,20 @@ class A7RPCPHY(BasePHY):
             params["i_D{}".format(i+1)] = din[i]
 
         if tin is not None:
-            tristate = Signal(2**len(dly))
-            tristate_last = Signal.like(tristate)
-            self.comb += tristate.eq(Cat(tin, tristate_last))
-            self.sync += tristate_last.eq(tristate)
-
+            # with DATA_RATE_TQ=BUF tristate is asynchronous, so we need to delay it
             tin_d = Signal()
-            self.comb += tin_d.eq(Array(tristate)[dly])
-            params.update(dict(i_TCE=1, i_T1=tin_d, o_TQ=tout))
+            self.sync += tin_d.eq(tin)
 
-            # # with DATA_RATE_TQ=BUF tristate is asynchronous, so we need to delay it
-            # tin_d = Signal()
-            # tin_d2 = Signal()
-            # tin_final = Signal()
-            # self.sync += tin_d.eq(tin)
-            # self.sync += tin_d2.eq(tin_d)
-            # self.comb += tin_final.eq(tin_d & tin_d2)
-            # params.update(dict(i_TCE=1, i_T1=tin_final, o_TQ=tout))
+            # register it on the CLKDIV (as it would be too short for 180 deg shifted clk)
+            tin_cdc = Signal()
+            sd_clkdiv = getattr(self.sync, clk)
+            sd_clkdiv += tin_cdc.eq(tin_d)
 
-            # params.update(dict(i_TCE=1, i_T1=tin, o_TQ=tout))
+            params.update(dict(i_TCE=1, i_T1=tin_cdc, o_TQ=tout))
 
         self.specials += Instance("OSERDESE2", **params)
 
-    def iserdese2_ddr(self, *, din, dout, clk="sys4x_90"):
+    def iserdese2_ddr(self, *, din, dout, clk):
         assert self.nphases == 4
 
         params = dict(
