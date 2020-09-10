@@ -14,7 +14,13 @@ from litedram.common import *
 from litedram.phy.dfi import *
 from litedram.modules import SDRAMModule, _TechnologyTimings, _SpeedgradeTimings
 
+def _chunks(lst, n):
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
 def bitpattern(s):
+    if len(s) > 8:
+        return [bitpattern(si) for si in _chunks(s, 8)]
     assert len(s) == 8
     s = s.translate(s.maketrans("_-", "01"))
     return int(s[::-1], 2)  # LSB first, so reverse the string
@@ -404,13 +410,6 @@ class BasePHY(Module, AutoCSR):
         self._reset_done = CSRStatus()
         self._init_done  = CSRStatus()
 
-        self._phase90 = CSRStorage(reset=1)
-        def set_bitpattern(lhs, s):
-            return Case(self._phase90.storage, {
-                0: lhs.eq(bitpattern(s)),
-                1: lhs.eq(bitpattern(s[1:] + s[0])),
-            })
-
         # PHY settings -----------------------------------------------------------------------------
         def get_cl(tck):
             return 8
@@ -517,7 +516,7 @@ class BasePHY(Module, AutoCSR):
 
         # Clocks -----------------------------------------------------------------------------------
         # Serialize clock (pattern will be shifted back 90 degrees!)
-        self.comb += set_bitpattern(clk_1ck_out, "_-_-_-_-")
+        self.comb += clk_1ck_out.eq(bitpattern("_-_-_-_-"))
 
         # DB muxing --------------------------------------------------------------------------------
         # Muxed cmd/data/mask
@@ -770,22 +769,22 @@ class BasePHY(Module, AutoCSR):
 
         # To avoid having to serialize dqs_oe, we serialize predefined pattern on dqs_out
         # All the patterns will be shifted back 90 degrees!
-        data_pattern = ["_-_-_-_-"] * 2
-        mask_pattern = ["___-_-_-", "_-_-_-_-"]
+        data_pattern = bitpattern("-_-_-_-_-_-_-_-_")
+        mask_pattern = bitpattern("__-_-_-_-_-_-_-_")
         phase_patterns = {
-            0: ["_______-", "_-______"],
-            1: ["________", "_-_-____"],
-            2: ["________", "___-_-__"],
-            3: ["________", "_____-_-"],
+            0: bitpattern("______-_-_______"),
+            1: bitpattern("________-_-_____"),
+            2: bitpattern("__________-_-___"),
+            3: bitpattern("____________-_-_"),
         }
 
         pattern_cases = \
             If(dq_mask_en,
-                set_bitpattern(pattern_2ck[0], mask_pattern[0]),
-                set_bitpattern(pattern_2ck[1], mask_pattern[1]),
+                pattern_2ck[0].eq(mask_pattern[0]),
+                pattern_2ck[1].eq(mask_pattern[1]),
             ).Elif(dq_data_en,
-                set_bitpattern(pattern_2ck[0], data_pattern[0]),
-                set_bitpattern(pattern_2ck[1], data_pattern[1]),
+                pattern_2ck[0].eq(data_pattern[0]),
+                pattern_2ck[1].eq(data_pattern[1]),
             ).Else(
                 pattern_2ck[0].eq(0),
                 pattern_2ck[1].eq(0),
@@ -795,8 +794,8 @@ class BasePHY(Module, AutoCSR):
             phase_valid = dfi_adapters[p].cmd_valid | dfi_adapters[nphases+p].cmd_valid
             pattern_cases = \
                 If(phase_valid,
-                    set_bitpattern(pattern_2ck[0], phase_patterns[p][0]),
-                    set_bitpattern(pattern_2ck[1], phase_patterns[p][1]),
+                    pattern_2ck[0].eq(phase_patterns[p][0]),
+                    pattern_2ck[1].eq(phase_patterns[p][1]),
                 ).Else(pattern_cases)
             any_phase_valid = any_phase_valid | phase_valid
 
