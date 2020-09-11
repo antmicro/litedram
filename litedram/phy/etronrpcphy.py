@@ -64,18 +64,19 @@ class EM6GA16L(SDRAMModule):
         # tRRD=(None, 7.5),
         # tZQCS=(None, 90)
 
+        # longer timings for testing to make sure the timings are not the problem
         tCCD=(13+1 + 8 + 7 + 10, None),
         tWTR=(11 + 2 + 10, None),
         tRRD=(None, 7.5 + 5),
-        # tZQCS=(None, 90 + 100)
-        tZQCS=None
+        tZQCS=None  # disable ZQCS
     )
     speedgrade_timings = {
         # FIXME: we're increasing tWR by 1 sysclk to compensate for long write
         # Should we use tRFQSd for tRFC?
         # "1600": _SpeedgradeTimings(tRP=13.75, tRCD=13.75, tWR=15 + (1/50e6 * 2), tRFC=(3*100, None), tFAW=None, tRAS=35),
-        "1600": _SpeedgradeTimings(tRP=20, tRCD=20, tWR=40 + (1/10e6 * 8), tRFC=(5*100, None), tFAW=None, tRAS=50),
         "1866": _SpeedgradeTimings(tRP=13.91, tRCD=13.91, tWR=15 + (1/10e6 * 2), tRFC=(3*100, None), tFAW=None, tRAS=34),
+        # longer timings for testing to make sure the timings are not the problem
+        "1600": _SpeedgradeTimings(tRP=20, tRCD=20, tWR=40 + (1/10e6 * 8), tRFC=(5*100, None), tFAW=None, tRAS=50),
     }
     speedgrade_timings["default"] = speedgrade_timings["1600"]
 
@@ -412,6 +413,8 @@ class BasePHY(Module, AutoCSR):
 
         # PHY settings -----------------------------------------------------------------------------
         def get_cl(tck):
+            # FIXME: for testing it's easier to use CL=8; read/write will be on phase 3; max sys_clk_freq=100e6
+            assert tck >= 2/800e6
             return 8
             # tck is for DDR frequency
             f_to_cl = OrderedDict()
@@ -487,9 +490,10 @@ class BasePHY(Module, AutoCSR):
 
         # Serialization ----------------------------------------------------------------------------
         # We have the following signals that have to be serialized:
-        # - DB  (IO) - transmits data in/out, data mask, parallel commands
-        # - STB (O)  - serial commands, serial preamble
         # - CLK (O)  - full-rate clock
+        # - CS  (O)  - chip select
+        # - STB (O)  - serial commands, serial preamble
+        # - DB  (IO) - transmits data in/out, data mask, parallel commands
         # - DQS (IO) - strobe for commands/data/mask on DB pins
         # DQS is edge-aligned to CLK, while DB and STB are center-aligned to CLK (phase = -90).
         # Sending a parallel command (on DB pins):
@@ -497,8 +501,8 @@ class BasePHY(Module, AutoCSR):
         #  STB: ----------________________------------------
         #  DQS: ....................----____----____........
         #  DB:  ..........................PPPPnnnn..........
-        # This PHY sends DB/STB phase aligned to sysclk and DQS/CLK are assumed to be shifted
-        # back by 90 degrees (serializers clocked with sys4x+90deg).
+        # The signals prepared by BasePHY will all be phase-aligned. The concrete PHY should shift
+        # them so that DB/STB/CS are delayed by 90 degrees in relation to CLK/DQS.
 
         # Signal values (de)serialized during 1 sysclk.
         # These signals must be populated in specific PHY implementations.
@@ -515,7 +519,6 @@ class BasePHY(Module, AutoCSR):
         self.db_oe       = db_oe       = Signal()
 
         # Clocks -----------------------------------------------------------------------------------
-        # Serialize clock (pattern will be shifted back 90 degrees!)
         self.comb += clk_1ck_out.eq(bitpattern("-_-_-_-_"))
 
         # DB muxing --------------------------------------------------------------------------------
@@ -675,11 +678,11 @@ class BasePHY(Module, AutoCSR):
         ]
 
         # Data IN ----------------------------------------------------------------------------------
-        # Synchronize the deserializer as we deserialize over 2 cycles.
+        # Synchronize the deserializer because we deserialize over 2 cycles.
         dq_in_cnt = Signal()
         self.sync += If(dq_read_stb, dq_in_cnt.eq(~dq_in_cnt)).Else(dq_in_cnt.eq(0))
 
-        # Deserialize read data (TODO: add phase shift)
+        # Deserialize read data
         # sys_clk:    ------------____________------------____________
         # sysx4_clk:  ---___---___---___---___---___---___---___---___
         # DB num:     <0><1><2><3><4><5><6><7><8><9><a><b><c><d><e><f>
@@ -716,9 +719,9 @@ class BasePHY(Module, AutoCSR):
         # Before sending the actual data we have to send 2 32-bit data masks (4 DDR cycles). In the
         # mask each 0 bit means "write byte" and 1 means "mask byte". The 1st 32-bits mask the first
         # data WORD (32 bytes), and the 2nd 32-bits mask the last data WORD. Because we always send
-        # 1 WORD of data (BC=1), we don't care about the 2nd mask (can send 1).
+        # 1 WORD of data (BC=0), we don't care about the 2nd mask (can send 1).
         #
-        # Write data (TODO: add phase shift):
+        # Write data
         # DFI valid:  xxxxxxxxxxxxxxxxxx
         # sys_clk:    ------____________------------____________------------____________
         # sysx4_clk:  ---___---___---___---___---___---___---___---___---___---___---___
