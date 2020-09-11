@@ -516,7 +516,7 @@ class BasePHY(Module, AutoCSR):
 
         # Clocks -----------------------------------------------------------------------------------
         # Serialize clock (pattern will be shifted back 90 degrees!)
-        self.comb += clk_1ck_out.eq(bitpattern("_-_-_-_-"))
+        self.comb += clk_1ck_out.eq(bitpattern("-_-_-_-_"))
 
         # DB muxing --------------------------------------------------------------------------------
         # Muxed cmd/data/mask
