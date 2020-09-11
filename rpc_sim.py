@@ -239,12 +239,13 @@ def main():
 
     sys_clk_freq = int(float(args.sys_clk_freq))
     clocks = Clocks({
-        "sys":       dict(freq_hz=sys_clk_freq),
-        "sys2x":     dict(freq_hz=2*sys_clk_freq),
-        "sys4x":     dict(freq_hz=4*sys_clk_freq),
-        "sys4x_90":  dict(freq_hz=4*sys_clk_freq, phase_deg=90),
-        "sys4x_ddr": dict(freq_hz=2*4*sys_clk_freq),
-        "sys4x_90_ddr": dict(freq_hz=2*4*sys_clk_freq, phase_deg=180),
+        "sys":           dict(freq_hz=sys_clk_freq),
+        "sys2x":         dict(freq_hz=2*sys_clk_freq),
+        "sys4x":         dict(freq_hz=4*sys_clk_freq),
+        "sys4x_90":      dict(freq_hz=4*sys_clk_freq, phase_deg=90),
+        "sys4x_180":     dict(freq_hz=4*sys_clk_freq, phase_deg=180),
+        "sys4x_90_ddr":  dict(freq_hz=2*4*sys_clk_freq, phase_deg=2*90),
+        "sys4x_180_ddr": dict(freq_hz=2*4*sys_clk_freq, phase_deg=(2*180)%360),
     })
 
     clocks.add_io(_io)

@@ -860,7 +860,7 @@ class BasePHY(Module, AutoCSR):
 class SimulationPHY(BasePHY):
     def __init__(self, *args, generate_read_data=True, **kwargs):
         kwargs.update(dict(
-            write_ser_latency = 0,
+            write_ser_latency = 1,
             read_des_latency  = 1,
             phytype           = "RPC" + self.__class__.__name__,
         ))
@@ -869,35 +869,41 @@ class SimulationPHY(BasePHY):
         self.generate_read_data = generate_read_data
 
         # For simulation purpose (serializers/deserializers)
-        self.sd_ddr    = getattr(self.sync, "sys4x_ddr")
-        self.sd_ddr_90 = getattr(self.sync, "sys4x_90_ddr")
+        self.sd_ddr_90  = getattr(self.sync, "sys4x_90_ddr")
+        self.sd_ddr_180 = getattr(self.sync, "sys4x_180_ddr")
 
     def do_clock_serialization(self, clk_1ck_out, clk_p, clk_n):
-        ser = Serializer(self.sd_ddr_90, clk_1ck_out)
+        ser = Serializer(self.sync, self.sd_ddr_180, clk_1ck_out, delay=1)
         self.submodules += ser
         self.comb += clk_p.eq(ser.o)
         self.comb += clk_n.eq(~ser.o)
 
     def do_stb_serialization(self, stb_1ck_out, stb):
-        ser = Serializer(self.sd_ddr, stb_1ck_out)
+        ser = Serializer(self.sync, self.sd_ddr_90, stb_1ck_out, delay=1)
         self.submodules += ser
         self.comb += stb.eq(ser.o)
 
     def do_dqs_serialization(self, dqs_1ck_out, dqs_1ck_in, dqs_oe, dqs_p, dqs_n):
+        # Delay dqs_oe by 1 cycle (Serializer latency) and register it on output domain
+        dqs_oe_d   = Signal()
+        dqs_oe_cdc = Signal()
+        self.sync += dqs_oe_d.eq(dqs_oe)
+        self.sync.sys4x_180 += dqs_oe_cdc.eq(dqs_oe_d)
+
         for i in range(len(dqs_p)):
             dqs_out = Signal()
             dqs_in  = Signal()  # TODO: use it for reading
 
-            ser = Serializer(self.sd_ddr_90, dqs_1ck_out)
+            ser = Serializer(self.sync, self.sd_ddr_180, dqs_1ck_out, delay=1)
             self.submodules += ser
             self.comb += dqs_out.eq(ser.o)
 
             if i == 0:
-                des = Deserializer(self.sd_ddr_90, dqs_in, dqs_1ck_in)
+                des = Deserializer(self.sd_ddr_180, dqs_in, dqs_1ck_in)
                 self.submodules += des
 
-            self.specials += Tristate(dqs_p[i],  dqs_out, dqs_oe, dqs_in)
-            self.specials += Tristate(dqs_n[i], ~dqs_out, dqs_oe)
+            self.specials += Tristate(dqs_p[i],  dqs_out, dqs_oe_cdc, dqs_in)
+            self.specials += Tristate(dqs_n[i], ~dqs_out, dqs_oe_cdc)
 
     def do_db_serialization(self, db_1ck_out, db_1ck_in, db_oe, db):
         if self.generate_read_data:
@@ -905,14 +911,20 @@ class SimulationPHY(BasePHY):
             dq_in_dummy = Signal(self.databits)
             gen = DummyReadGenerator(dq_in=db, dq_out=dq_in_dummy, stb_in=self.pads.stb,
                                      cl=self.settings.cl)
-            self.submodules += ClockDomainsRenamer({"sys": "sys4x_ddr"})(gen)
+            self.submodules += ClockDomainsRenamer({"sys": "sys4x_180_ddr"})(gen)
+
+        # Delay db_oe by 1 cycle (Serializer latency) and register it on output domain
+        db_oe_d   = Signal()
+        db_oe_cdc = Signal()
+        self.sync += db_oe_d.eq(db_oe)
+        self.sync.sys4x_90 += db_oe_cdc.eq(db_oe_d)
 
         for i in range(self.databits):
             # To/from tristate
             dq_out = Signal()
             dq_in = Signal()
 
-            ser = Serializer(self.sd_ddr, db_1ck_out[i])
+            ser = Serializer(self.sync, self.sd_ddr_90, db_1ck_out[i], delay=1)
             self.submodules += ser
             self.comb += dq_out.eq(ser.o)
 
@@ -923,34 +935,36 @@ class SimulationPHY(BasePHY):
                 des = Deserializer(self.sd_ddr_90, dq_in, db_1ck_in[i])
             self.submodules += des
 
-            self.specials += Tristate(db[i], dq_out, db_oe, dq_in)
+            self.specials += Tristate(db[i], dq_out, db_oe_cdc, dq_in)
 
     def do_cs_serialization(self, cs_n_1ck_out, cs_n):
-        ser = Serializer(self.sd_ddr, cs_n_1ck_out)
+        ser = Serializer(self.sync, self.sd_ddr_90, cs_n_1ck_out, delay=1)
         self.submodules += ser
         self.comb += cs_n.eq(ser.o)
 
 class DummyReadGenerator(Module):
     def __init__(self, stb_in, dq_in, dq_out, cl):
-        # self.sync should be sys4x_ddr
-        # sys4x:     ----____----____
-        # sys4x_ddr: --__--__--__--__
-        # pos:       1 0 1 0 1 0 1 0
-        pos = Signal(reset=1)
-        self.sync += pos.eq(~pos)
+        # self.sync should be a 4x DDR clock phase-aligned with CLK
 
         data_counter = Signal(max=16)
         cmd_counter = Signal(max=16)
         # count STB zeros, 2 full-rate cycles (4 DDR) mean STB preamble, but more mean RESET
-        stb_zero_counter = Signal(max=4 + 1)
+        stb_zero_counter = Signal(max=4 + 2)
         self.sync += \
             If(stb_in == 0,
-                If(stb_zero_counter != 4,
+                If(stb_zero_counter != 2**len(stb_zero_counter) - 1,
                     stb_zero_counter.eq(stb_zero_counter + 1)
                 )
             ).Else(
                 stb_zero_counter.eq(0)
             )
+
+        # Because the generator clock domain is phase shifted in relation to DB, we have to
+        # register the value to hold it until the end of our clock, so that we get correct FSM
+        # transitions
+        # FIXME: would cause problems if clocks were aligned
+        dq_in_r = Signal.like(dq_in)
+        self.sync += dq_in_r.eq(dq_in)
 
         # generate DQS just for viewing signal dump
         dqs_out = Signal()
@@ -978,22 +992,19 @@ class DummyReadGenerator(Module):
         self.submodules.fsm = fsm = FSM()
         fsm.act("IDLE",
             NextValue(data_counter, 0),
-            If(stb_zero_counter == 4 - 1,
-                If(pos,
-                    Display("ERROR: end of STB preable on positive edge!")
-                ),
+            If(stb_zero_counter == 4,
                 NextState("CHECK_CMD_P")
             )
         )
         fsm.act("CHECK_CMD_P",
-            If(dq_in[:3] == 0,
+            If(dq_in_r[:3] == 0,
                 NextState("CHECK_CMD_N")
             ).Else(
                 NextState("IDLE")
             )
         )
         fsm.act("CHECK_CMD_N",
-            If(dq_in[0] == 0,
+            If(dq_in_r[0] == 0,
                 NextState("CL_WAIT")
             ).Else(
                 NextState("IDLE")
@@ -1025,21 +1036,41 @@ class DummyReadGenerator(Module):
 # I/O Primitives -----------------------------------------------------------------------------------
 
 class Serializer(Module):
-    """Serialize input signals into one output in the `sd` clock domain"""
-    def __init__(self, sd, inputs, reset=0, name=None):
+    """Serialize input signals into one output with 1 sd_clk clock latency"""
+    def __init__(self, sd_clk, sd_clkdiv, inputs, reset=0, name=None, delay=0):
+        # `delay` must be used to get correct data_cntr=0 for phase delayed signals
         assert(len(inputs) > 0)
         assert(len(s) == len(inputs[0]) for s in inputs)
 
         data_width = len(inputs)
         signal_width = len(inputs[0])
+        cntr_max = 2 * data_width
 
         if not isinstance(inputs, Array):
             inputs = Array(inputs)
 
         self.o = Signal(signal_width)
-        data_cntr = Signal(log2_int(data_width), name=name)
-        sd += If(reset, data_cntr.eq(0)).Else(data_cntr.eq(data_cntr+1))
-        self.comb += self.o.eq(inputs[data_cntr])
+        data_cntr = Signal(max=cntr_max, name=name, reset=(0 - delay) % cntr_max)
+        sd_clkdiv += If(reset, data_cntr.eq(0)).Else(data_cntr.eq(data_cntr+1))
+
+        # If we used inputs combinatorically, then we will have a problem when the serialization
+        # clock is not phase-aligned with the `inputs` clock, e.g.
+        #  inputs clk 1:      | 0 : 1 : 2 : 3 | 4 : 5 : 6 : 7 |
+        #  serialized 90 deg:   | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+        # Here input 3 becomes invalid before serialized output moves to 4, so it would actually
+        # send 3 for the 1st half and 7 for the 2nd half. To avoid this we introduce 1 clock
+        # latency of the inputs and use 2 registers to hold the values of subsequent inputs.
+        inputs_cnt = Signal()
+        inputs_d   = Array([Signal.like(i) for i in [*inputs, *inputs]])
+        sd_clk += [
+            inputs_cnt.eq(inputs_cnt + 1),
+            Case(inputs_cnt, {
+                0: [i_d.eq(i) for i_d, i in zip(inputs_d[data_width:], inputs)],
+                1: [i_d.eq(i) for i_d, i in zip(inputs_d[:data_width], inputs)],
+            })
+        ]
+
+        self.comb += self.o.eq(inputs_d[data_cntr])
 
 class Deserializer(Module):
     """Deserialize an input signal into outputs in the `sd` clock domain"""
