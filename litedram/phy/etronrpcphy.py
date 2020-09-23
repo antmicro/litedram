@@ -485,8 +485,8 @@ class BasePHY(Module, AutoCSR):
         # hist[0] = dfi[N], hist[1] = dfi[N-1], ...
         self.dfi = dfi = Interface(**dfi_params)
         dfi_hist = [dfi, Interface(**dfi_params), Interface(**dfi_params)]
-        self.sync += dfi_hist[0].connect(dfi_hist[1])
-        self.sync += dfi_hist[1].connect(dfi_hist[2])
+        self.sync += dfi_hist[0].connect(dfi_hist[1], omit={"rddata", "rddata_valid"})
+        self.sync += dfi_hist[1].connect(dfi_hist[2], omit={"rddata", "rddata_valid"})
 
         # Serialization ----------------------------------------------------------------------------
         # We have the following signals that have to be serialized:
