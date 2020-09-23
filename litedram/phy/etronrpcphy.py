@@ -48,7 +48,7 @@ class EM6GA16L(SDRAMModule):
     # geometry
     nbanks = 4     # 64MBits per bank => 256Mb
     ncols = 1024   # most probably? and we have 10-bit column address, so no more than that
-    nrows = 65536  # 64M / 1024 = 64k
+    nrows = 4096  # 64M / 1024 / 16 = 4k
     # timings TODO: real timings
     technology_timings = _TechnologyTimings(
         # Refresh: needs to refresh every row once per 64ms
