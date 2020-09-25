@@ -152,7 +152,7 @@ class A7RPCPHY(BasePHY):
 
     def idelaye2(self, *, din, dout, init=0, rst=None, inc=None):
         assert not ((rst is None) ^ (inc is None))
-        fixed = rst is not None
+        fixed = rst is None
 
         params = dict(
             p_SIGNAL_PATTERN        = "DATA",
