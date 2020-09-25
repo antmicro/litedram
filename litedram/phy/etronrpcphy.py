@@ -410,6 +410,7 @@ class BasePHY(Module, AutoCSR):
 
         self._reset_done = CSRStatus()
         self._init_done  = CSRStatus()
+        self._reset_fsm  = CSR()
 
         # PHY settings -----------------------------------------------------------------------------
         def get_cl(tck):
@@ -634,6 +635,9 @@ class BasePHY(Module, AutoCSR):
             self.cmd_valid_sr.i.eq(1),
             If(dfi_adapters[2*nphases+0].is_cmd("UTR") & (dfi_adapters[2*nphases+0].utr_en == 1),
                 NextState("UTR_MODE")
+            ),
+            If(self._reset_fsm.re,
+                NextState("IDLE")
             )
         )
         fsm.act("UTR_MODE",
