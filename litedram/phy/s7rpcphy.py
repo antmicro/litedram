@@ -52,7 +52,31 @@ class A7RPCPHY(BasePHY):
             self.oserdese2_ddr(din=~clk_1ck_out, dout=clk_n, clk="sys4x_180")
 
     def do_stb_serialization(self, stb_1ck_out, stb):
-        self.oserdese2_ddr(din=stb_1ck_out, dout=stb, clk="sys4x_90")
+        stb_out        = Signal()
+        stb_in         = Signal()
+        stb_in_delayed = Signal()
+        stb_t          = Signal()
+
+        self.stb_1ck_in = stb_1ck_in = Signal.like(stb_1ck_out)
+
+        self.oserdese2_ddr(din=stb_1ck_out, dout=stb_out,
+                           tin=Constant(0), tout=stb_t,
+                           clk="sys4x_90")
+
+        # Read path
+        self.idelaye2(
+            din=stb_in, dout=stb_in_delayed,
+            rst=self.dly_sel_for_bit(0) & self._rdly_dq_rst.re,
+            inc=self.dly_sel_for_bit(0) & self._rdly_dq_inc.re,
+        )
+        self.iserdese2_ddr(din=stb_in_delayed, dout=stb_1ck_in, clk="sys4x_180")
+
+        self.specials += Instance("IOBUF",
+            i_I   = stb_out,
+            o_O   = stb_in,
+            i_T   = stb_t,
+            io_IO = stb,
+        )
 
     def do_db_serialization(self, db_1ck_out, db_1ck_in, db_oe, db):
         for i in range(self.databits):
