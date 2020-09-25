@@ -412,6 +412,8 @@ class BasePHY(Module, AutoCSR):
         self._init_done  = CSRStatus()
         self._reset_fsm  = CSR()
 
+        self._burst_stop = CSRStorage()
+
         # PHY settings -----------------------------------------------------------------------------
         def get_cl(tck):
             # FIXME: for testing it's easier to use CL=8; read/write will be on phase 3; max sys_clk_freq=100e6
@@ -653,13 +655,37 @@ class BasePHY(Module, AutoCSR):
         # Currently not sending any serial commands, but the STB pin must be held low for 2 full
         # rate cycles before writing a parallel command to activate the DRAM.
         stb_bits = []
+
+        assert self.settings.rdphase == 3
+        read_sent = [Signal(), Signal()]
+        self.comb += read_sent[0].eq(dfi_adapters[3].cmd_valid & (dfi_adapters[3].is_cmd("RD") | dfi_adapters[3].is_cmd("WR")))
+        self.sync += read_sent[1].eq(read_sent[0])
+
         for p in range(nphases):
             # Use cmd from current and prev cycle, depending on which phase the command appears on
             preamble = (dfi_adapters[p+2].cmd_valid | dfi_adapters[p+1].cmd_valid) & cmd_valid
+
+            # force 000100xxxxxxxxxx after preamble to generate Burst Stop
+            assert self.settings.rdphase == 3
+            burst_stop = {
+                0: [0, 0],
+                1: [0, 1],
+                2: [0, 0],
+                3: [1, 1],
+            }[(p+1)%4]
+            read = read_sent[0] if p == 3 else read_sent[1]
+            burst_stop_zero = [cmd_valid & read & (bs == 0) & self._burst_stop.storage
+                               for bs in burst_stop]
+
             # We only want to use STB to start parallel commands, serial reset or to send NOPs. NOP
             # is indicated by the first two bits being high (0b11, and other as "don't care"), so
             # we can simply hold STB high all the time and reset is zeros for 8 cycles (1 sysclk).
-            stb_bits += 2 * [~(preamble | stb_reset_seq)]
+            # stb_bits += 2 * [~(preamble | stb_reset_seq)]
+            stb_bits += [
+                ~(preamble | stb_reset_seq | burst_stop_zero[0]),
+                ~(preamble | stb_reset_seq | burst_stop_zero[1]),
+            ]
+
         self.comb += stb_1ck_out.eq(Cat(*stb_bits))
 
         # Chip Select ------------------------------------------------------------------------------
