@@ -790,7 +790,6 @@ class BasePHY(Module, AutoCSR):
                 Constant(1),                                    # WL-1
                 Constant(1),                                    # WL-1
             ]
-            mask = [Constant(0)] * len(mask)
             self.comb += db_1ck_mask[i].eq(Cat(*mask))
 
         # DQS --------------------------------------------------------------------------------------
