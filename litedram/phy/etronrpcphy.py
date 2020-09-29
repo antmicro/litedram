@@ -449,10 +449,12 @@ class BasePHY(Module, AutoCSR):
         bitslip_dly  = 3  # ncycles + 1
         # Time until first data is available on DB
         read_db_dly = db_cmd_dly + cmd_ser_dly + cl_sys_latency
-        # Time until data is set on DFI
-        read_dfi_dly = read_des_latency + read_mux_dly + bitslip_dly
+        # Time until data is deserialized (data present on 1ck signal)
+        read_db_des_dly = read_db_dly + read_des_latency
+        # Time until data is set on DFI (+1 because all data is present only on 2nd cycle)
+        read_dfi_dly = read_mux_dly + bitslip_dly + 1
         # Final latency
-        read_latency = read_db_dly + read_dfi_dly
+        read_latency = read_db_des_dly + read_dfi_dly
 
         # Write latency for the controller. We must send 1 cycles of data mask before the
         # data, and we serialize data over 2 sysclk cycles due to minimal BL=16, so we
@@ -843,7 +845,7 @@ class BasePHY(Module, AutoCSR):
         # -1 because of syncronious assignment
         self.sync += [phase.rddata_valid.eq(rddata_en[-1]) for phase in dfi.phases]
         # Strobe high when data from DRAM is available, before we can send it to DFI.
-        self.sync += dq_read_stb.eq(rddata_en[read_db_dly-1] | rddata_en[read_db_dly-1 + 1])
+        self.sync += dq_read_stb.eq(rddata_en[read_db_des_dly-1] | rddata_en[read_db_des_dly-1 + 1])
 
         # Write Control Path -----------------------------------------------------------------------
         # Creates a shift register of write commands coming from the DFI interface. This shift
@@ -894,7 +896,7 @@ class SimulationPHY(BasePHY):
     def __init__(self, *args, generate_read_data=True, **kwargs):
         kwargs.update(dict(
             write_ser_latency = 1,
-            read_des_latency  = 1,
+            read_des_latency  = 0,
             phytype           = "RPC" + self.__class__.__name__,
         ))
         super().__init__(*args, **kwargs)
