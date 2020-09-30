@@ -37,7 +37,7 @@ from liteeth.common import *
 
 from litescope import LiteScopeAnalyzer
 
-from litedram.phy.etronrpcphy import EM6GA16L, SimulationPHY as RPCPHY
+from litedram.phy.etronrpcphy import EM6GA16L, RPCPads, SimulationPHY as RPCPHY
 
 # Platform -----------------------------------------------------------------------------------------
 
@@ -157,8 +157,34 @@ class _CRG(Module):
 
 # Simulation SoC -----------------------------------------------------------------------------------
 
+class RPCVerilogModel(Module):
+    def __init__(self, platform, verilog_path):
+        platform.add_source(verilog_path)
+
+        self.clk_p  = Signal()
+        self.clk_n  = Signal()
+        self.cs_n   = Signal()
+        self.dqs_p  = Signal(2)
+        self.dqs_n  = Signal(2)
+        self.stb    = Signal()
+        self.db     = Signal(16)
+
+        params = dict(
+            i_clk     = self.clk_p,
+            i_clk_n   = self.clk_n,
+            i_cs_n    = self.cs_n,
+            io_db     = self.db,
+            io_dqs0   = self.dqs_p[0],
+            io_dqs0_n = self.dqs_n[0],
+            io_dqs1   = self.dqs_p[1],
+            io_dqs1_n = self.dqs_n[1],
+            i_stb     = self.stb,
+        )
+
+        self.specials += Instance("etron_lpc_dram", **params)
+
 class SimSoC(SoCCore):
-    def __init__(self, clocks, **kwargs):
+    def __init__(self, clocks, verilog_model=None, **kwargs):
         platform     = Platform()
         sys_clk_freq = clocks["sys"]["freq_hz"]
 
@@ -177,11 +203,18 @@ class SimSoC(SoCCore):
 
         # RPC DRAM ---------------------------------------------------------------------------------
         sdram_module = EM6GA16L(sys_clk_freq, "1:4")
-        self.submodules.ddrphy = RPCPHY(platform.request("rpcdram"), sys_clk_freq=sys_clk_freq)
+        if verilog_model is not None:
+            self.submodules.rpc_model = RPCVerilogModel(platform, verilog_model)
+            pads = self.rpc_model
+        else:
+            pads = platform.request("rpcdram")
+        self.submodules.ddrphy = RPCPHY(pads, sys_clk_freq=sys_clk_freq,
+                                        generate_read_data=verilog_model is None)
         self.add_csr("ddrphy")
 
         controller_settings = ControllerSettings()
         controller_settings.auto_precharge = False
+        controller_settings.with_refresh = verilog_model is not None
 
         self.add_sdram("sdram",
             phy                     = self.ddrphy,
@@ -232,6 +265,7 @@ def main():
     parser.add_argument("--trace-end",            default=-1,              help="Cycle to end tracing")
     parser.add_argument("--opt-level",            default="O3",            help="Compilation optimization level")
     parser.add_argument("--sys-clk-freq",         default="100e6",         help="Core clock frequency")
+    parser.add_argument("--verilog-model",        default=None,            help="Path to the RPC DRAM verilog model file")
     args = parser.parse_args()
 
     soc_kwargs     = soc_sdram_argdict(args)
@@ -269,6 +303,7 @@ def main():
     soc = SimSoC(
         with_analyzer = args.with_analyzer,
         clocks        = clocks,
+        verilog_model = args.verilog_model,
         sdram_init    = [] if args.sdram_init is None else get_mem_data(args.sdram_init, cpu.endianness),
         **soc_kwargs)
 
