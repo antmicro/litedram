@@ -699,13 +699,11 @@ class BasePHY(Module, AutoCSR):
         assert 2 * 1/sys_clk_freq >= tCSS, "tCSS not met for commands on phase 0"
         assert 1 * 1/sys_clk_freq >= tCSH, "tCSH not met for commands on phase 3"
 
-        cs        = Signal()
-        cs_cond   = Signal()
-        cs_cond_d = Signal()
-        self.sync += cs_cond_d.eq(cs_cond)
+        cs = Signal()
+        self.submodules.cs_cond = ShiftRegister(8)
         self.comb += [
-            cs_cond.eq(cmd_valid & reduce(or_, (a.cmd_valid for a in dfi_adapters))),
-            cs.eq(cs_cond | cs_cond_d),
+            self.cs_cond.i.eq(cmd_valid & reduce(or_, (a.cmd_valid for a in dfi_adapters))),
+            cs.eq(reduce(or_, self.cs_cond.sr)),
             cs_n_1ck_out.eq(Replicate(~cs, len(cs_n_1ck_out))),
         ]
 
