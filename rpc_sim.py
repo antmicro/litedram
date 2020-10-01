@@ -184,7 +184,7 @@ class RPCVerilogModel(Module):
         self.specials += Instance("etron_lpc_dram", **params)
 
 class SimSoC(SoCCore):
-    def __init__(self, clocks, verilog_model=None, **kwargs):
+    def __init__(self, clocks, verilog_model=None, auto_precharge=False, with_refresh=True, **kwargs):
         platform     = Platform()
         sys_clk_freq = clocks["sys"]["freq_hz"]
 
@@ -213,8 +213,8 @@ class SimSoC(SoCCore):
         self.add_csr("ddrphy")
 
         controller_settings = ControllerSettings()
-        controller_settings.auto_precharge = False
-        controller_settings.with_refresh = verilog_model is not None
+        controller_settings.auto_precharge = auto_precharge
+        controller_settings.with_refresh = with_refresh
 
         self.add_sdram("sdram",
             phy                     = self.ddrphy,
@@ -266,6 +266,8 @@ def main():
     parser.add_argument("--opt-level",            default="O3",            help="Compilation optimization level")
     parser.add_argument("--sys-clk-freq",         default="100e6",         help="Core clock frequency")
     parser.add_argument("--verilog-model",        default=None,            help="Path to the RPC DRAM verilog model file")
+    parser.add_argument("--auto-precharge",       action="store_true",     help="Use DRAM auto precharge")
+    parser.add_argument("--no-refresh",           action="store_true",     help="Disable DRAM refresher")
     args = parser.parse_args()
 
     soc_kwargs     = soc_sdram_argdict(args)
@@ -301,10 +303,12 @@ def main():
 
     # SoC ------------------------------------------------------------------------------------------
     soc = SimSoC(
-        with_analyzer = args.with_analyzer,
-        clocks        = clocks,
-        verilog_model = args.verilog_model,
-        sdram_init    = [] if args.sdram_init is None else get_mem_data(args.sdram_init, cpu.endianness),
+        with_analyzer  = args.with_analyzer,
+        clocks         = clocks,
+        verilog_model  = args.verilog_model,
+        auto_precharge = args.auto_precharge,
+        with_refresh   = not args.no_refresh,
+        sdram_init     = [] if args.sdram_init is None else get_mem_data(args.sdram_init, cpu.endianness),
         **soc_kwargs)
 
     # Build/Run ------------------------------------------------------------------------------------
