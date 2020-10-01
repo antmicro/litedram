@@ -139,10 +139,10 @@ class ModeRegister:
     DFI_ENCODING = {
         # field: (dfi_signal, width, offset)
         "cl":      ("address", 3,  0),
-        "nwr":     ("address", 3,  3),
-        "zout":    ("address", 4,  6),
-        "odt":     ("address", 3, 10),
-        "csr_fx":  ("address", 1, 13),
+        # "nwr":     ("address", 3,  3),  # FIXME: not enough bits in DFI to store all data
+        "zout":    ("address", 4,  3),
+        "odt":     ("address", 3,  7),
+        "csr_fx":  ("address", 1, 10),
         "odt_stb": ("bank",    1,  0),
         "odt_pd":  ("bank",    1,  1),
         "tm":      None,
@@ -398,7 +398,7 @@ class BasePHY(Module, AutoCSR):
         self.memtype     = memtype     = "RPC"
         self.nranks      = nranks      = 1
         self.databits    = databits    = 16
-        self.addressbits = addressbits = 14
+        self.addressbits = addressbits = 12
         self.bankbits    = bankbits    = 2
         self.nphases     = nphases     = 4
         self.tck         = tck         = 1 / (nphases*sys_clk_freq)
