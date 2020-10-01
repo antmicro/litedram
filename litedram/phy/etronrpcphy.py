@@ -692,18 +692,22 @@ class BasePHY(Module, AutoCSR):
 
         # Chip Select ------------------------------------------------------------------------------
         # RPC has quite high required time of CS# low before sending a command (tCSS), this means
-        # that we would need 1 more cmd_latency to support it for all standard frequencies.
+        # that we would need 1 more cmd_latency to support it for all standard frequencies. To meet
+        # tCSH we hold CS# low 1 cycle after each command (and for writes until the burst ends).
         tCSS = 10e-9
         tCSH =  5e-9
         # CS# is held for 2 sysclks before any command, and 1 sysclk after any command
         assert 2 * 1/sys_clk_freq >= tCSS, "tCSS not met for commands on phase 0"
         assert 1 * 1/sys_clk_freq >= tCSH, "tCSH not met for commands on phase 3"
 
-        cs = Signal()
-        self.submodules.cs_cond = ShiftRegister(8)
+        cs         = Signal()
+        cs_wr_hold = Signal()
+        self.submodules.cs_hold = ShiftRegister(2)
+
+        _any_cmd_valid = reduce(or_, (a.cmd_valid for a in dfi_adapters))
         self.comb += [
-            self.cs_cond.i.eq(cmd_valid & reduce(or_, (a.cmd_valid for a in dfi_adapters))),
-            cs.eq(reduce(or_, self.cs_cond.sr)),
+            self.cs_hold.i.eq(cmd_valid & (_any_cmd_valid | cs_wr_hold)),
+            cs.eq(reduce(or_, self.cs_hold.sr)),
             cs_n_1ck_out.eq(Replicate(~cs, len(cs_n_1ck_out))),
         ]
 
@@ -853,6 +857,8 @@ class BasePHY(Module, AutoCSR):
         # DQS Preamble and data mask are transmitted 1 cycle before data, then 2 cycles of data
         self.comb += dq_mask_en.eq(wrdata_en[write_latency])
         self.comb += dq_data_en.eq(wrdata_en[write_latency + 1] | wrdata_en[write_latency + 2])
+        # Hold CS# low until end of write burst (use a latch as there can only be 1 write at a time)
+        self.sync += If(wrdata_en[0], cs_wr_hold.eq(1)).Elif(wrdata_en[-1], cs_wr_hold.eq(0))
 
         # Additional variables for LiteScope -------------------------------------------------------
         variables = ["dq_data_en", "dq_mask_en", "dq_cmd_en", "dq_read_stb", "dfi_adapters",
