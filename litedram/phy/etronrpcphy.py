@@ -404,6 +404,7 @@ class BasePHY(Module, AutoCSR):
         self.tck         = tck         = 1 / (nphases*sys_clk_freq)
 
         # CSRs -------------------------------------------------------------------------------------
+        bitslip_cycles = 1
         self._dly_sel             = CSRStorage(len(self.pads.dqs_p))
         self._rdly_dq_bitslip_rst = CSR()
         self._rdly_dq_bitslip     = CSR()
@@ -446,7 +447,7 @@ class BasePHY(Module, AutoCSR):
         db_cmd_dly   = 2  # (need 1 cycle to insert STB preamble + 1 more to always meet tCSS)
         cmd_ser_dly  = write_ser_latency
         read_mux_dly = 1
-        bitslip_dly  = 3  # ncycles + 1
+        bitslip_dly  = bitslip_cycles + 1
         # Time until first data is available on DB
         read_db_dly = db_cmd_dly + cmd_ser_dly + cl_sys_latency
         # Time until data is deserialized (data present on 1ck signal)
@@ -732,7 +733,7 @@ class BasePHY(Module, AutoCSR):
                 1: rbits_2ck[n_1ck:].eq(rbits_1ck),
             })
 
-            bs = BitSlip(len(rbits_2ck), cycles=2,
+            bs = BitSlip(len(rbits_2ck), cycles=bitslip_cycles,
                 rst = self.dly_sel_for_bit(i) & self._rdly_dq_bitslip_rst.re,
                 slp = self.dly_sel_for_bit(i) & self._rdly_dq_bitslip.re,
             )
