@@ -139,7 +139,8 @@ class ModeRegister:
     DFI_ENCODING = {
         # field: (dfi_signal, width, offset)
         "cl":      ("address", 3,  0),
-        # "nwr":     ("address", 3,  3),  # FIXME: not enough bits in DFI to store all data
+        # FIXME: not enough bits in DFI to store all data
+        "nwr":     None,  # ("address", 3,  3),
         "zout":    ("address", 4,  3),
         "odt":     ("address", 3,  7),
         "csr_fx":  ("address", 1, 10),
@@ -413,12 +414,9 @@ class BasePHY(Module, AutoCSR):
         self._init_done  = CSRStatus()
         self._reset_fsm  = CSR()
 
-        self._burst_stop = CSRStorage()
-
         # PHY settings -----------------------------------------------------------------------------
         def get_cl(tck):
             # FIXME: for testing it's easier to use CL=8; read/write will be on phase 3; max sys_clk_freq=100e6
-            assert tck >= 2/800e6
             return 8
             # tck is for DDR frequency
             f_to_cl = OrderedDict()
@@ -659,34 +657,17 @@ class BasePHY(Module, AutoCSR):
         # rate cycles before writing a parallel command to activate the DRAM.
         stb_bits = []
 
-        assert self.settings.rdphase == 3
-        read_sent = [Signal(), Signal()]
-        self.comb += read_sent[0].eq(dfi_adapters[3].cmd_valid & (dfi_adapters[3].is_cmd("RD") | dfi_adapters[3].is_cmd("WR")))
-        self.sync += read_sent[1].eq(read_sent[0])
-
         for p in range(nphases):
             # Use cmd from current and prev cycle, depending on which phase the command appears on
             preamble = (dfi_adapters[p+2].cmd_valid | dfi_adapters[p+1].cmd_valid) & cmd_valid
-
-            # force 000100xxxxxxxxxx after preamble to generate Burst Stop
-            assert self.settings.rdphase == 3
-            burst_stop = {
-                0: [0, 0],
-                1: [0, 1],
-                2: [0, 0],
-                3: [1, 1],
-            }[(p+1)%4]
-            read = read_sent[0] if p == 3 else read_sent[1]
-            burst_stop_zero = [cmd_valid & read & (bs == 0) & self._burst_stop.storage
-                               for bs in burst_stop]
 
             # We only want to use STB to start parallel commands, serial reset or to send NOPs. NOP
             # is indicated by the first two bits being high (0b11, and other as "don't care"), so
             # we can simply hold STB high all the time and reset is zeros for 8 cycles (1 sysclk).
             # stb_bits += 2 * [~(preamble | stb_reset_seq)]
             stb_bits += [
-                ~(preamble | stb_reset_seq | burst_stop_zero[0]),
-                ~(preamble | stb_reset_seq | burst_stop_zero[1]),
+                ~(preamble | stb_reset_seq),
+                ~(preamble | stb_reset_seq),
             ]
 
         self.comb += stb_1ck_out.eq(Cat(*stb_bits))
@@ -702,12 +683,12 @@ class BasePHY(Module, AutoCSR):
         assert 1 * 1/sys_clk_freq >= tCSH, "tCSH not met for commands on phase 3"
 
         cs         = Signal()
-        cs_wr_hold = Signal()
+        cs_burst_hold = Signal()
         self.submodules.cs_hold = ShiftRegister(2)
 
         _any_cmd_valid = reduce(or_, (a.cmd_valid for a in dfi_adapters))
         self.comb += [
-            self.cs_hold.i.eq(cmd_valid & (_any_cmd_valid | cs_wr_hold)),
+            self.cs_hold.i.eq(cmd_valid & (_any_cmd_valid | cs_burst_hold)),
             cs.eq(reduce(or_, self.cs_hold.sr)),
             cs_n_1ck_out.eq(Replicate(~cs, len(cs_n_1ck_out))),
         ]
@@ -859,7 +840,12 @@ class BasePHY(Module, AutoCSR):
         self.comb += dq_mask_en.eq(wrdata_en[write_latency])
         self.comb += dq_data_en.eq(wrdata_en[write_latency + 1] | wrdata_en[write_latency + 2])
         # Hold CS# low until end of write burst (use a latch as there can only be 1 write at a time)
+
+        cs_wr_hold = Signal()
         self.sync += If(wrdata_en[0], cs_wr_hold.eq(1)).Elif(wrdata_en[-1], cs_wr_hold.eq(0))
+        cs_rd_hold = Signal()
+        self.sync += If(rddata_en[0], cs_rd_hold.eq(1)).Elif(rddata_en[-1], cs_rd_hold.eq(0))
+        self.comb += cs_burst_hold.eq(cs_wr_hold | cs_rd_hold)
 
         # Additional variables for LiteScope -------------------------------------------------------
         variables = ["dq_data_en", "dq_mask_en", "dq_cmd_en", "dq_read_stb", "dfi_adapters",

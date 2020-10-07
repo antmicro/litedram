@@ -235,7 +235,7 @@ def get_rpc_phy_init_sequence(phy_settings, timing_settings):
     nwr = 8
     zout = 60
     odt = 30
-    odt_stb = 0  # disable ODT on STB
+    odt_stb = 1  # disable ODT on STB
     csr_fx = 0  # do not use loop refresh mode
     odt_pd = 0  # ODT during PD disabled by DRAM
 
