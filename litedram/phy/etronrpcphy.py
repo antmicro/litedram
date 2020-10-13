@@ -705,11 +705,19 @@ class BasePHY(Module, AutoCSR):
         cs_burst_hold = Signal()
         self.submodules.cs_hold = ShiftRegister(2)
 
+        # FIXME: currently we hold CS low constantly to avoid problems with signal integrity on our board
+        # lock CS when DFI sends cs_n=0 only on phase 0 (avoids start condition problems)
+        cs_lock = Signal()
+        cs_lock_cond = reduce(and_, [dfi_hist[0].phases[p].cs_n for p in range(1, nphases)])
+        cs_lock_cond = cs_lock_cond & ~dfi_hist[0].p0.cs_n
+        self.sync += If(cs_lock_cond, cs_lock.eq(1)).Elif(self._reset_fsm.re, cs_lock.eq(0))
+
         _any_cmd_valid = reduce(or_, (a.cmd_valid for a in dfi_adapters))
         self.comb += [
-            self.cs_hold.i.eq(cmd_valid & (_any_cmd_valid | cs_burst_hold)),
-            cs.eq(reduce(or_, self.cs_hold.sr)),
-            cs_n_1ck_out.eq(Replicate(~cs, len(cs_n_1ck_out))),
+            # self.cs_hold.i.eq(cmd_valid & (_any_cmd_valid | cs_burst_hold)),
+            # cs.eq(reduce(or_, self.cs_hold.sr)),
+            # cs_n_1ck_out.eq(Replicate(~cs, len(cs_n_1ck_out))),
+            cs_n_1ck_out.eq(Replicate(~cs_lock, len(cs_n_1ck_out))),
         ]
 
         # Data IN ----------------------------------------------------------------------------------
