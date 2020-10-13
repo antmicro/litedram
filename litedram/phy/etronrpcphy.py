@@ -528,6 +528,9 @@ class BasePHY(Module, AutoCSR):
         self.comb += clk_1ck_out.eq(bitpattern("-_-_-_-_"))
 
         # DB muxing --------------------------------------------------------------------------------
+        # Commands allowed by FSM
+        cmd_valid = Signal()
+
         # Muxed cmd/data/mask
         db_1ck_data = [Signal(2*nphases) for _ in range(databits)]
         db_1ck_mask = [Signal(2*nphases) for _ in range(databits)]
@@ -539,7 +542,7 @@ class BasePHY(Module, AutoCSR):
 
         # Output enable when writing cmd/data/mask
         # Mask is being send during negative half of sysclk
-        self.comb += db_oe.eq(dq_data_en | dq_mask_en | dq_cmd_en)
+        self.comb += db_oe.eq(cmd_valid & (dq_data_en | dq_mask_en | dq_cmd_en))
 
         # Mux between cmd/data/mask
         for i in range(databits):
@@ -589,7 +592,6 @@ class BasePHY(Module, AutoCSR):
         t_zqcinit        = 1e-6
         serial_reset_len = 4
 
-        cmd_valid          = Signal()
         stb_reset_seq      = Signal()
         serial_reset_count = Signal(max=serial_reset_len + 1)
 
@@ -846,7 +848,7 @@ class BasePHY(Module, AutoCSR):
             any_phase_valid = any_phase_valid | phase_valid
 
         self.comb += pattern_cases
-        self.comb += dqs_oe.eq(any_phase_valid | dq_mask_en | dq_data_en)
+        self.comb += dqs_oe.eq(cmd_valid & (any_phase_valid | dq_mask_en | dq_data_en))
 
         # Read Control Path ------------------------------------------------------------------------
         # Creates a shift register of read commands coming from the DFI interface. This shift
