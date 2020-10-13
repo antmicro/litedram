@@ -406,7 +406,7 @@ class BasePHY(Module, AutoCSR):
 
         # CSRs -------------------------------------------------------------------------------------
         bitslip_cycles = 1
-        self._dly_sel             = CSRStorage(len(self.pads.dqs_p))
+        self._dly_sel             = CSRStorage()
         self._rdly_dq_bitslip_rst = CSR()
         self._rdly_dq_bitslip     = CSR()
 
@@ -883,7 +883,8 @@ class BasePHY(Module, AutoCSR):
             setattr(self, v, locals()[v])
 
     def dly_sel_for_bit(self, i):
-        return self._dly_sel.storage[i // (self.databits//len(self.pads.dqs_p))]
+        # return self._dly_sel.storage[i // (self.databits//len(self.pads.dqs_p))]
+        return self._dly_sel.storage
 
     def do_finalize(self):
         self.do_clock_serialization(self.clk_1ck_out, self.pads.clk_p, self.pads.clk_n)
