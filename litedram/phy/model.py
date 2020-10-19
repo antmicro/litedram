@@ -268,12 +268,34 @@ class DFITimingsChecker(Module):
             # Print debug information
             if verbose:
                 for _, cmd in self.cmds.items():
+                    def display(all_banks):
+                        fmt = "[%16d ps] {:3} phase=%1d".format(cmd.name)
+                        args = [ps, np]
+                        if all_banks:
+                            fmt += " bank=all"
+                        else:
+                            fmt += " bank=%d"
+                            args += [phase.bank]
+                        if cmd.name == "ACT":
+                            fmt += " row=%d"
+                            args += [phase.address]
+                        elif cmd.name in ["WR", "RD"]:
+                            auto_precharge = Signal()
+                            col_address    = Signal.like(phase.address)
+                            self.comb += [
+                                col_address.eq(phase.address[:10]),
+                                auto_precharge.eq(phase.address[10]),
+                            ]
+                            fmt += " col=%d apre=%d"
+                            args += [col_address, auto_precharge]
+                        return Display(fmt, *args)
+
                     self.sync += [
                         If(state == cmd.enc,
                             If(all_banks,
-                                Display("[%016dps] P%0d " + cmd.name, ps, np)
+                                display(all_banks=True)
                             ).Else(
-                                Display("[%016dps] P%0d B%0d " + cmd.name, ps, np, phase.bank)
+                                display(all_banks=False)
                             )
                         )
                     ]
@@ -291,7 +313,7 @@ class DFITimingsChecker(Module):
                                 self.sync += [
                                     If(cmd_recv & (last_cmd[i] == prev.enc) &
                                        (ps < (last_cmd_ps[i][prev.idx] + rule.delay)),
-                                        Display("[%016dps] {} violation on bank %0d".format(rule.name), ps, i)
+                                        Display("[%16d ps] {} violation on bank %0d".format(rule.name), ps, i)
                                     )
                                 ]
 
@@ -306,14 +328,14 @@ class DFITimingsChecker(Module):
                         # act_curr points to newest ACT timestamp
                         self.sync += [
                             If(cmd_recv & (ps < (act_ps[act_curr] + self.timings["tRRD"])),
-                                Display("[%016dps] tRRD violation on bank %0d", ps, i)
+                                Display("[%16d ps] tRRD violation on bank %0d", ps, i)
                             )
                         ]
 
                         # act_next points to the oldest ACT timestamp
                         self.sync += [
                             If(cmd_recv & (ps < (act_ps[act_next] + self.timings["tFAW"])),
-                                Display("[%016dps] tFAW violation on bank %0d", ps, i)
+                                Display("[%16d ps] tFAW violation on bank %0d", ps, i)
                             )
                         ]
 
@@ -342,7 +364,7 @@ class DFITimingsChecker(Module):
 
         self.sync += [
             If((ref_ps_mod == 0) & (ref_ps_diff > 0),
-                Display("[%016dps] tREFI violation (64ms period): %0d", ps, ref_ps_diff)
+                Display("[%16d ps] tREFI violation (64ms period): %0d", ps, ref_ps_diff)
             )
         ]
 
@@ -353,14 +375,14 @@ class DFITimingsChecker(Module):
                 If(ref_issued != 0,
                     ref_done.eq(1),
                     If(~ref_done,
-                        Display("[%016dps] Late refresh", ps)
+                        Display("[%16d ps] Late refresh", ps)
                     )
                 )
             ]
 
             self.sync += [
                 If((curr_diff > 0) & ref_done & (ref_issued == 0),
-                    Display("[%016dps] tREFI violation", ps),
+                    Display("[%16d ps] tREFI violation", ps),
                     ref_done.eq(0)
                 )
             ]
@@ -374,7 +396,7 @@ class DFITimingsChecker(Module):
             self.sync += [
                 If((ref_issued == 0) & ref_done &
                    (ref_ps > (ps + ref_limit[refresh_mode] * self.timings['tREFI'])),
-                    Display("[%016dps] tREFI violation (too many postponed refreshes)", ps),
+                    Display("[%16d ps] tREFI violation (too many postponed refreshes)", ps),
                     ref_done.eq(0)
                 )
             ]
