@@ -114,7 +114,10 @@ class DFIPhaseModel(Module):
             ),
             If(~phase.cs_n & phase.ras_n & ~phase.cas_n,
                 self.write.eq(~phase.we_n),
-                self.read.eq(phase.we_n)
+                self.read.eq(phase.we_n),
+                If(self.address[10],  # auto precharge
+                    self.precharge.eq(1)
+                )
             )
         ]
 
