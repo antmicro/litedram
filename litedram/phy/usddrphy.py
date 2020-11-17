@@ -303,6 +303,9 @@ class USDDRPHY(Module, AutoCSR):
         for i in range(databits//8):
             if hasattr(pads, "dm"):
                 dm_o_nodelay = Signal()
+                dm_i = Cat(*[dfi.phases[n//2].wrdata_mask[n%2*databits//8+i] for n in range(8)])
+                if memtype == "DDR4":  # inverted polarity for DDR4
+                    dm_i = ~dm_i
                 self.specials += [
                     Instance("OSERDESE3",
                         p_SIM_DEVICE         = device,
@@ -314,7 +317,7 @@ class USDDRPHY(Module, AutoCSR):
                         i_RST    = ResetSignal() | self._rst.storage,
                         i_CLK    = ClockSignal("sys4x"),
                         i_CLKDIV = ClockSignal(),
-                        i_D      = Cat(*[dfi.phases[n//2].wrdata_mask[n%2*databits//8+i] for n in range(8)]),
+                        i_D      = dm_i,
                         o_OQ     = dm_o_nodelay,
                     ),
                     Instance("ODELAYE3",
