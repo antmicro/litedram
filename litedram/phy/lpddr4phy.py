@@ -165,7 +165,6 @@ class LPDDR4PHY(Module, AutoCSR):
         # Commands ---------------------------------------------------------------------------------
         # Each command can span several phases (up to 4), so we must ignore overlapping commands,
         # but in general, module timings should be set in a way that overlapping will never happen.
-        # FIXME: this supports only commands on phase 0
 
         cs_bitslips = []
         for phase, adapter in enumerate(adapters):
@@ -174,41 +173,29 @@ class LPDDR4PHY(Module, AutoCSR):
             self.comb += cs_bs.i.eq(Cat(adapter.cs)),
             cs_bitslips.append(cs_bs)
 
-        valid_bitslip = ConstBitSlip(dw=nphases, cycles=1, slp=phase)
-        self.submodules += valid_bitslip
-        self.comb += valid_bitslip.i.eq(Cat(a.valid for a in adapters)),
-        valids = Signal(2*nphases)
-        self.comb += valids.eq(Cat(valid_bitslip.i, valid_bitslip.o))
+        # bitslip introduces 2 cycle latency
+        valids    = Signal(nphases)
+        valids_d1 = Signal(nphases)
+        valids_d2 = Signal(nphases)
+        self.comb += valids.eq(Cat(a.valid for a in adapters))
+        self.sync += valids_d1.eq(valids)
+        self.sync += valids_d2.eq(valids_d1)
+        valids_hist = Signal(2*nphases)
+        self.comb += valids_hist.eq(Cat(valids_d2, valids_d1))
 
         cs_masked = []
         for phase, adapter in enumerate(adapters):
             cs = cs_bitslips[phase].o
             # we can set the signal if there was no command on 3 previous cycles
-            valids_prev = valids[nphases-3 + phase:nphases + phase]
+            valids_prev = valids_hist[nphases-3 + phase:nphases + phase]
+            print(f'{phase=} {nphases-3 + phase}:{nphases + phase} len({len(valids_prev)})')
             any_valid = reduce(or_, valids_prev)
             allowed = ~any_valid
             mask = Replicate(allowed, len(cs))
             cs_masked.append(cs & mask)
 
-        # FIXME: support other phases than phase 0
         self.comb += self.ck_cs.eq(reduce(or_, cs_masked))
 
-
-
-        #
-        # for bit_i, ca_bit in enumerate(self.ck_ca):
-        #     per_phase = {}
-        #     for phase, adapter in enumerate(adapters):
-        #         # 4-bit span of the command in sys8x SDR clock domain
-        #         bits_4ck8x = Signal(4)
-        #         self.comb += bits_4ck8x.eq(Cat(adapter[ck][bit_i] for ck in range(4)))
-        #         # placement of phase adapter's 4-bit command in the 16-bit span of 2 sysclk clocks
-        #         bits_2ck = Signal(2*nphases)
-        #         assert len(bits_2ck) == 16
-        #         self.comb += bits_2ck[phase:phase+4].eq(bits_4ck8x)
-        #
-        #     per_phase = [adapter.ca[cyc][bit_i] for cyc in range(4)]
-        #     self.comb += ca_bit.eq(Cat(*per_phase))
 
 
 class LPDDR4Pads(Module):
