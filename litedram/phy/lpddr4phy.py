@@ -12,28 +12,65 @@ from litedram.common import *
 from litedram.phy.dfi import *
 
 
+def _chunks(lst, n):
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
+def bitpattern(s):
+    if len(s) > 8:
+        return [bitpattern(si) for si in _chunks(s, 8)]
+    assert len(s) == 8
+    s = s.translate(s.maketrans("_-", "01"))
+    return int(s[::-1], 2)  # LSB first, so reverse the string
+
+class ShiftRegister(Module):
+    def __init__(self, n, i=None):
+        if i is None:
+            i = Signal()
+        assert len(i) == 1
+
+        self.i = i
+        self.sr = sr = Signal(n)
+        last = Signal.like(sr)
+
+        self.comb += sr.eq(Cat(i, last))
+        self.sync += last.eq(sr)
+
+    def __getitem__(self, key):
+        return self.sr[key]
+
+class ConstBitSlip(Module):
+    def __init__(self, dw, i=None, o=None, slp=None, cycles=1):
+        self.i   = Signal(dw, name='i') if i is None else i
+        self.o   = Signal(dw, name='o') if o is None else o
+        assert cycles >= 1
+        assert 0 <= slp <= cycles*dw-1
+        slp = (cycles*dw-1) - slp
+
+        # # #
+
+        r = Signal((cycles+1)*dw, reset_less=True)
+        self.sync += r.eq(Cat(r[dw:], self.i))
+        cases = {}
+        for i in range(cycles*dw):
+            cases[i] = self.o.eq(r[i+1:dw+i+1])
+        self.comb += Case(slp, cases)
+
 class LPDDR4PHY(Module, AutoCSR):
     def __init__(self, pads, *,
-                 sys_clk_freq, write_ser_latency, read_des_latency, phytype
-                 cmd_latency=1):
+                 sys_clk_freq, write_ser_latency, read_des_latency, phytype,
+                 cmd_latency=1, cmd_delay=None):
         self.pads        = pads
         self.memtype     = memtype     = "LPDDR4"
         self.nranks      = nranks      = 1 if not hasattr(pads, "cs_n") else len(pads.cs_n)
         self.databits    = databits    = len(pads.dq)
-        self.addressbits = addressbits = 16  # for activate row address
+        self.addressbits = addressbits = 17  # for activate row address
         self.bankbits    = bankbits    = 3
         self.nphases     = nphases     = 8
         self.tck         = tck         = 1 / (nphases*sys_clk_freq)
         assert databits % 8 == 0
 
         # Parameters -------------------------------------------------------------------------------
-        iodelay_tap_average = {
-            200e6: 78e-12,
-            300e6: 52e-12,
-            400e6: 39e-12,  # Only valid for -3 and -2/2E speed grades
-        }
-        half_sys8x_taps = math.floor(tck/(4*iodelay_tap_average[iodelay_clk_freq]))
-
         def get_cl_cw(memtype, tck):
             # MT53E256M16D1, No DBI, Set A
             f_to_cl_cwl = OrderedDict()
@@ -60,27 +97,14 @@ class LPDDR4PHY(Module, AutoCSR):
         self._rst             = CSRStorage()
 
         self._dly_sel         = CSRStorage(databits//8)
-        self._half_sys8x_taps = CSRStorage(5, reset=half_sys8x_taps)
 
         self._wlevel_en     = CSRStorage()
         self._wlevel_strobe = CSR()
 
-        if with_odelay:
-            self._cdly_rst = CSR()
-            self._cdly_inc = CSR()
-
         self._dly_sel = CSRStorage(databits//8)
 
-        self._rdly_dq_rst         = CSR()
-        self._rdly_dq_inc         = CSR()
         self._rdly_dq_bitslip_rst = CSR()
         self._rdly_dq_bitslip     = CSR()
-
-        if with_odelay:
-            self._wdly_dq_rst   = CSR()
-            self._wdly_dq_inc   = CSR()
-            self._wdly_dqs_rst  = CSR()
-            self._wdly_dqs_inc  = CSR()
 
         self._wdly_dq_bitslip_rst = CSR()
         self._wdly_dq_bitslip     = CSR()
@@ -107,6 +131,8 @@ class LPDDR4PHY(Module, AutoCSR):
         )
 
         # DFI Interface ----------------------------------------------------------------------------
+        # Due to the fact that LPDDR4 has 16n prefetch we use 8 phases to be able to read/write a
+        # whole burst during a single controller clock cycle. PHY should use sys8x clock.
         self.dfi = dfi = Interface(addressbits, bankbits, nranks, 2*databits, nphases=8)
 
         # # #
@@ -114,18 +140,136 @@ class LPDDR4PHY(Module, AutoCSR):
         adapters = [DFIPhaseAdapter(phase) for phase in self.dfi.phases]
         self.submodules += adapters
 
+        # Now prepare the data by converting the sequences on adapters into sequences on the pads.
+        # We have to ignore overlapping commands, and module timings have to ensure that there are
+        # no overlapping commands anyway.
+        # Pads: reset_n, CS, CKE, CK, CA[5:0], DMI[1:0], DQ[15:0], DQS[1:0], ODT_CA
+        self.ck_cke   = Signal(nphases)
+        self.ck_odt   = Signal(nphases)
+        self.ck_clk   = Signal(2*nphases)
+        self.ck_cs    = Signal(nphases)
+        self.ck_ca    = [Signal(nphases)   for _ in range(6)]
+        self.ck_dmi_o = [Signal(2*nphases) for _ in range(2)]
+        self.ck_dmi_i = [Signal(2*nphases) for _ in range(2)]
+        self.dmi_oe   = Signal()
+        self.ck_dq_o  = [Signal(2*nphases) for _ in range(databits)]
+        self.ck_dq_i  = [Signal(2*nphases) for _ in range(databits)]
+        self.dq_oe    = Signal()
+        self.ck_dqs_o = [Signal(2*nphases) for _ in range(2)]
+        self.ck_dqs_i = [Signal(2*nphases) for _ in range(2)]
+        self.dqs_oe   = Signal()
+
+        # Clocks -----------------------------------------------------------------------------------
+        self.comb += self.ck_clk.eq(bitpattern("-_-_-_-_"))  # FIXME: length
+
+        # Commands ---------------------------------------------------------------------------------
+        # Each command can span several phases (up to 4), so we must ignore overlapping commands,
+        # but in general, module timings should be set in a way that overlapping will never happen.
+        # FIXME: this supports only commands on phase 0
+
+        cs_bitslips = []
+        for phase, adapter in enumerate(adapters):
+            cs_bs = ConstBitSlip(dw=nphases, cycles=1, slp=phase)
+            self.submodules += cs_bs
+            self.comb += cs_bs.i.eq(Cat(adapter.cs)),
+            cs_bitslips.append(cs_bs)
+
+        valid_bitslip = ConstBitSlip(dw=nphases, cycles=1, slp=phase)
+        self.submodules += valid_bitslip
+        self.comb += valid_bitslip.i.eq(Cat(a.valid for a in adapters)),
+        valids = Signal(2*nphases)
+        self.comb += valids.eq(Cat(valid_bitslip.i, valid_bitslip.o))
+
+        cs_masked = []
+        for phase, adapter in enumerate(adapters):
+            cs = cs_bitslips[phase].o
+            # we can set the signal if there was no command on 3 previous cycles
+            valids_prev = valids[nphases-3 + phase:nphases + phase]
+            any_valid = reduce(or_, valids_prev)
+            allowed = ~any_valid
+            mask = Replicate(allowed, len(cs))
+            cs_masked.append(cs & mask)
+
+        # FIXME: support other phases than phase 0
+        self.comb += self.ck_cs.eq(reduce(or_, cs_masked))
+
+
+
+        #
+        # for bit_i, ca_bit in enumerate(self.ck_ca):
+        #     per_phase = {}
+        #     for phase, adapter in enumerate(adapters):
+        #         # 4-bit span of the command in sys8x SDR clock domain
+        #         bits_4ck8x = Signal(4)
+        #         self.comb += bits_4ck8x.eq(Cat(adapter[ck][bit_i] for ck in range(4)))
+        #         # placement of phase adapter's 4-bit command in the 16-bit span of 2 sysclk clocks
+        #         bits_2ck = Signal(2*nphases)
+        #         assert len(bits_2ck) == 16
+        #         self.comb += bits_2ck[phase:phase+4].eq(bits_4ck8x)
+        #
+        #     per_phase = [adapter.ca[cyc][bit_i] for cyc in range(4)]
+        #     self.comb += ca_bit.eq(Cat(*per_phase))
+
+
+class LPDDR4Pads(Module):
+    def __init__(self, databits=16):
+        self.clk_p   = Signal()
+        self.clk_n   = Signal()
+        self.cke     = Signal()
+        self.cs      = Signal()
+        self.ca      = Signal(6)
+        self.odt     = Signal()
+        self.dq      = Signal(databits)
+        self.dqs     = Signal(databits//8)
+        self.dmi     = Signal(databits//8)
+        self.reset_n = Signal()
+
+class SimulationPHY(LPDDR4PHY):
+    def __init__(self, sys_clk_freq=100e6):
+        pads = LPDDR4Pads()
+        self.submodules += pads
+        super().__init__(pads, sys_clk_freq=sys_clk_freq,
+                         write_ser_latency=1, read_des_latency=1, phytype="SimulationPHY")
+
+        # Serialization
+        sd_sys   = self.sync.sys
+        sd_sys8x = self.sync.sys8x
+        self.submodules += Serializer(sd_sys, sd_sys8x, i_dw=8, o_dw=1, i=self.ck_cs, o=self.pads.cs, name='ser_cs')
+
+class Serializer(Module):
+    def __init__(self, sd_clk, sd_clkdiv, i_dw, o_dw, i=None, o=None, reset=None, name=None):
+        assert i_dw % o_dw == 0
+        ratio = i_dw // o_dw
+
+        if i is None: i = Signal(i_dw)
+        if o is None: o = Signal(o_dw)
+        if reset is None: reset = Signal()
+
+        self.i = i
+        self.o = o
+        self.reset = reset
+
+        cnt = Signal(max=ratio, name='{}_cnt'.format(name) if name is not None else None)
+        sd_clkdiv += If(reset, cnt.eq(0)).Else(cnt.eq(cnt + 1))
+
+        i_d = Signal.like(self.i)
+        sd_clk += i_d.eq(self.i)
+        i_array = Array([self.i[n*o_dw:(n+1)*o_dw] for n in range(ratio)])
+        self.comb += self.o.eq(i_array[cnt])
+
 
 class DFIPhaseAdapter(Module):
-    # We must perform mapping of DFI commands to the LPDDR4 commands set on CA bus
+    # We must perform mapping of DFI commands to the LPDDR4 commands set on CA bus.
     # LPDDR4 "small command" consists of 2 words CA[5:0] sent on the bus in 2 subsequent
     # cycles. First cycle is marked with CS high, second with CS low.
-    # Then most "big commands" consists of 2 "small commands".
+    # Then most "big commands" consist of 2 "small commands" (e.g. ACTIVATE-1, ACTIVATE-2).
     # If a command uses 1 "small command", then it shall go as cmd2 so that all command
     # timings can be counted from the same moment (cycle of cmd2 CS low).
     def __init__(self, dfi_phase):
         # CS/CA values for 4 SDR cycles
         self.cs = Signal(4)
         self.ca = Array([Signal(6) for _ in range(4)])
+        self.valid = Signal()
 
         # # #
 
@@ -134,10 +278,10 @@ class DFIPhaseAdapter(Module):
         self.comb += [
             self.cs[:2].eq(self.cmd1.cs),
             self.cs[2:].eq(self.cmd2.cs),
-            self.ca[0].eq(self.cmd1.ca[0])
-            self.ca[1].eq(self.cmd1.ca[1])
-            self.ca[2].eq(self.cmd2.ca[0])
-            self.ca[3].eq(self.cmd2.ca[1])
+            self.ca[0].eq(self.cmd1.ca[0]),
+            self.ca[1].eq(self.cmd1.ca[1]),
+            self.ca[2].eq(self.cmd2.ca[0]),
+            self.ca[3].eq(self.cmd2.ca[1]),
         ]
 
         dfi_cmd = Signal(3)
@@ -153,8 +297,8 @@ class DFIPhaseAdapter(Module):
             "MRS": 0b111,
         }
 
-        def cmds(cmd1, cmd2):
-            return self.cmd1.set(cmd1) + self.cmd2.set(cmd2)
+        def cmds(cmd1, cmd2, valid=1):
+            return self.cmd1.set(cmd1) + self.cmd2.set(cmd2) + [self.valid.eq(valid)]
 
         self.comb += Case(dfi_cmd, {
             _cmd["ACT"]: cmds("ACTIVATE-1", "ACTIVATE-2"),
@@ -168,7 +312,7 @@ class DFIPhaseAdapter(Module):
             #     self.cmd2.mpc.eq(0b1001111),
             # ],
             _cmd["MRS"]: cmds("MRW-1",      "MRW-2"),
-            "default":   cmds("DESELECT",   "DESELECT"),
+            "default":   cmds("DESELECT",   "DESELECT", valid=0),
         })
 
 class Command(Module):
