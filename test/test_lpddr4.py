@@ -21,15 +21,29 @@ class TestLPDDR4(unittest.TestCase):
         def __init__(self):
             super().__init__(str)
 
-        def format(self):
+        def format(self, hl_cycle=None, hl_signal=None):
             keys = list(self.keys())
             key_strw = max(len(k) for k in keys)
-            keys = sorted(keys, key=lambda k: 2 if k == 'E' else 1)
             lines = []
             for k in keys:
-                hist = ' '.join(chunk for chunk in chunks(self[k], 8))
-                line = '{:{n}} {}'.format(k + ':' if k != 'E' else '', hist, n=key_strw+1)
+                vals = list(self[k])
+                if hl_cycle is not None and hl_signal is not None:
+                    def highlight(val):
+                        hl = '\033[91m' if hl_signal == k else ''
+                        bold = '\033[1m'
+                        clear = '\033[0m'
+                        return bold + hl + val + clear
+                    vals = [highlight(val) if i == hl_cycle else val for i, val in enumerate(vals)]
+                hist = ' '.join(''.join(chunk) for chunk in chunks(vals, 8))
+                line = '{:{n}} {}'.format(k + ':', hist, n=key_strw+1)
                 lines.append(line)
+            if hl_cycle is not None:
+                n = hl_cycle + hl_cycle//8
+                line = ' ' * (key_strw+1) + ' ' + ' ' * n + '^'
+                lines.append(line)
+            if hl_signal is not None and hl_cycle is None:
+                sig_i = keys.index(hl_signal)
+                lines = ['{} {}'.format('>' if i == sig_i else ' ', line) for i, line in enumerate(lines)]
             return '\n'.join(lines)
 
     def pads_checker(self, pads, signals: Mapping[str, str], fail_fast=False):
@@ -51,15 +65,14 @@ class TestLPDDR4(unittest.TestCase):
                 history[sig] += str((yield pad))
                 if val != 'x':
                     msg = f'Cycle {i} Signal {sig}: {(yield pad)} vs {vals[i]}'
-                    errors.append([i, (yield pad), int(vals[i]), msg])
+                    errors.append([i, sig, (yield pad), int(vals[i]), msg])
                     if fail_fast:
                         msg += '\nHistory:\n{}'.format(history.format())
                         self.assertEqual((yield pad), int(vals[i]), msg=msg)
             yield
 
-        for i, pad_val, ref_val, msg in errors:
-            history['E'] = ''.join(['^' if j == i else ' ' for j in range(n)])
-            msg += '\nHistory:\n{}'.format(history.format())
+        for i, sig, pad_val, ref_val, msg in errors:
+            msg += '\nHistory:\n{}'.format(history.format(hl_cycle=i, hl_signal=sig))
             self.assertEqual(pad_val, ref_val, msg=msg)
 
     def dfi_reset_value(self, sig):
@@ -109,11 +122,10 @@ class TestLPDDR4(unittest.TestCase):
         latency = '00000000' * self.CMD_LATENCY
         self.run_test(
             dfi_sequence = [
-                {p: dict(self.dfi_reset_values()) for p in range(8)},
                 {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)},  # p0: READ
             ],
             pad_checkers = {"sys8x": {
-                'cs': latency + '00000000' + '10100000',
+                'cs': latency + '10100000',
             }},
         )
 
@@ -205,5 +217,26 @@ class TestLPDDR4(unittest.TestCase):
                 'ca4': latency + '0110'+'0010' + '1010'+'000x' + '001x'+'0110',
                 'ca5': latency + '0010'+'0100' + '1001'+'001x' + '000x'+'1101',
             }},
-            # vcd_name='sim.vcd',
+        )
+
+    def test_command_pads(self):
+        latency = '00000000' * self.CMD_LATENCY
+        read = dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)
+        self.run_test(
+            dfi_sequence = [
+                {
+                    0: dict(cke=1, odt=1, reset_n=1, **read),
+                    2: dict(cke=0, odt=1, reset_n=0, **read),
+                    3: dict(cke=1, odt=0, reset_n=0, **read),
+                    5: dict(cke=0, odt=1, reset_n=1, **read),
+                    7: dict(cke=0, odt=0, reset_n=0, **read),
+                },
+            ],
+            pad_checkers = {"sys8x": {
+                'cs':      latency + '10100101',  # p2, p3, p7 ignored
+                'cke':     latency + '10010000',
+                'odt':     latency + '10100100',
+                'reset_n': latency + '11001110',
+            }},
+            vcd_name='sim.vcd',
         )

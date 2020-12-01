@@ -147,36 +147,57 @@ class LPDDR4PHY(Module, AutoCSR):
         # We have to ignore overlapping commands, and module timings have to ensure that there are
         # no overlapping commands anyway.
         # Pads: reset_n, CS, CKE, CK, CA[5:0], DMI[1:0], DQ[15:0], DQS[1:0], ODT_CA
-        self.ck_cke   = Signal(nphases)
-        self.ck_odt   = Signal(nphases)
-        self.ck_clk   = Signal(2*nphases)
-        self.ck_cs    = Signal(nphases)
-        self.ck_ca    = [Signal(nphases)   for _ in range(6)]
-        self.ck_dmi_o = [Signal(2*nphases) for _ in range(2)]
-        self.ck_dmi_i = [Signal(2*nphases) for _ in range(2)]
-        self.dmi_oe   = Signal()
-        self.ck_dq_o  = [Signal(2*nphases) for _ in range(databits)]
-        self.ck_dq_i  = [Signal(2*nphases) for _ in range(databits)]
-        self.dq_oe    = Signal()
-        self.ck_dqs_o = [Signal(2*nphases) for _ in range(2)]
-        self.ck_dqs_i = [Signal(2*nphases) for _ in range(2)]
-        self.dqs_oe   = Signal()
+        self.ck_clk     = Signal(2*nphases)
+        self.ck_cke     = Signal(nphases)
+        self.ck_odt     = Signal(nphases)
+        self.ck_reset_n = Signal(nphases)
+        self.ck_cs      = Signal(nphases)
+        self.ck_ca      = [Signal(nphases)   for _ in range(6)]
+        self.ck_dmi_o   = [Signal(2*nphases) for _ in range(2)]
+        self.ck_dmi_i   = [Signal(2*nphases) for _ in range(2)]
+        self.dmi_oe     = Signal()
+        self.ck_dq_o    = [Signal(2*nphases) for _ in range(databits)]
+        self.ck_dq_i    = [Signal(2*nphases) for _ in range(databits)]
+        self.dq_oe      = Signal()
+        self.ck_dqs_o   = [Signal(2*nphases) for _ in range(2)]
+        self.ck_dqs_i   = [Signal(2*nphases) for _ in range(2)]
+        self.dqs_oe     = Signal()
 
         # Clocks -----------------------------------------------------------------------------------
         self.comb += self.ck_clk.eq(bitpattern("-_-_-_-_" * 2))
 
-        # Commands ---------------------------------------------------------------------------------
+        # Simple commands --------------------------------------------------------------------------
+        def delayed(sig, cycles):
+            for _ in range(cycles):
+                new = Signal.like(sig)
+                self.sync += new.eq(sig)
+                sig = new
+            return sig
+
+        self.comb += [
+            self.ck_cke.eq(Cat(delayed(phase.cke, 1) for phase in self.dfi.phases)),
+            self.ck_odt.eq(Cat(delayed(phase.odt, 1) for phase in self.dfi.phases)),
+            self.ck_reset_n.eq(Cat(delayed(phase.reset_n, 1) for phase in self.dfi.phases)),
+        ]
+
+        # LPDDR4 Commands --------------------------------------------------------------------------
         # Each command can span several phases (up to 4), so we must ignore overlapping commands,
         # but in general, module timings should be set in a way that overlapping will never happen.
 
         # Create a history of valid adapters used for masking overlapping ones.
+        # TODO: make optional, as it takes up resources and the controller should ensure no overlaps
         valids = ConstBitSlip(dw=nphases, cycles=1, slp=0)
         self.submodules += valids
         self.comb += valids.i.eq(Cat(a.valid for a in adapters))
-        valids_hist = valids.r
+        # valids_hist = valids.r
+        valids_hist = Signal.like(valids.r)
+        # TODO: especially make this part optional
+        for i in range(len(valids_hist)):
+            was_valid_before = reduce(or_, valids_hist[max(0, i-3):i], 0)
+            self.comb += valids_hist[i].eq(valids.r[i] & ~was_valid_before)
 
-        cs_masked = []
-        ca_masked = defaultdict(list)
+        cs_per_adapter = []
+        ca_per_adapter = defaultdict(list)
         for phase, adapter in enumerate(adapters):
             # The signals from an adapter can be used if there were no commands on 3 previous cycles
             allowed = ~reduce(or_, valids_hist[nphases+phase - 3:nphases+phase])
@@ -186,7 +207,8 @@ class LPDDR4PHY(Module, AutoCSR):
             self.submodules += cs_bs
             self.comb += cs_bs.i.eq(Cat(adapter.cs)),
             cs_mask = Replicate(allowed, len(cs_bs.o))
-            cs_masked.append(cs_bs.o & cs_mask)
+            cs = cs_bs.o & cs_mask
+            cs_per_adapter.append(cs)
 
             # For CA we need to do the same for each bit
             ca_bits = []
@@ -196,12 +218,13 @@ class LPDDR4PHY(Module, AutoCSR):
                 ca_bit_hist = [adapter.ca[i][bit] for i in range(4)]
                 self.comb += ca_bs.i.eq(Cat(*ca_bit_hist)),
                 ca_mask = Replicate(allowed, len(ca_bs.o))
-                ca_masked[bit].append(ca_bs.o & ca_mask)
+                ca = ca_bs.o & ca_mask
+                ca_per_adapter[bit].append(ca)
 
         # OR all the masked signals
-        self.comb += self.ck_cs.eq(reduce(or_, cs_masked))
+        self.comb += self.ck_cs.eq(reduce(or_, cs_per_adapter))
         for bit in range(6):
-            self.comb += self.ck_ca[bit].eq(reduce(or_, ca_masked[bit]))
+            self.comb += self.ck_ca[bit].eq(reduce(or_, ca_per_adapter[bit]))
 
 class DFIPhaseAdapter(Module):
     # We must perform mapping of DFI commands to the LPDDR4 commands set on CA bus.
@@ -330,9 +353,10 @@ class LPDDR4SimulationPads(Module):
         self.clk_p   = Signal()
         self.clk_n   = Signal()
         self.cke     = Signal()
+        self.odt     = Signal()
+        self.reset_n = Signal()
         self.cs      = Signal()
         self.ca      = Signal(6)
-        self.odt     = Signal()
         # tristates i/o separate for simulation
         self.dq_o    = Signal(databits)
         self.dq_i    = Signal(databits)
@@ -340,7 +364,6 @@ class LPDDR4SimulationPads(Module):
         self.dqs_i   = Signal(databits//8)
         self.dmi_o   = Signal(databits//8)
         self.dmi_i   = Signal(databits//8)
-        self.reset_n = Signal()
 
         # for LPDDR4PHY to get len(dq)
         self.dq = self.dq_o
@@ -367,13 +390,14 @@ class SimulationPHY(LPDDR4PHY):
             sd_clkdiv = {0: self.sync.sys8x_ddr, 90: self.sync.sys8x_90_ddr}[phase]
             serialize(sd_clk=self.sync.sys, sd_clkdiv=sd_clkdiv, i_dw=16, **kwargs)
 
-        ser_sdr(i=self.ck_cke,  o=self.pads.cke,   name='cke')
-        ser_sdr(i=self.ck_odt,  o=self.pads.odt,   name='odt')
+        ser_sdr(i=self.ck_cke,     o=self.pads.cke,     name='cke')
+        ser_sdr(i=self.ck_odt,     o=self.pads.odt,     name='odt')
+        ser_sdr(i=self.ck_reset_n, o=self.pads.reset_n, name='reset_n')
         # FIXME: clk_p uses inverter ck_clk to have correct clk at phase=90; we
         # could use phase=270 or send other sdr signals on phase=90 and clock on phase=0
-        ser_ddr(i=~self.ck_clk, o=self.pads.clk_p, name='clk_p', phase=90)
-        ser_ddr(i=self.ck_clk,  o=self.pads.clk_n, name='clk_n', phase=90)
-        ser_sdr(i=self.ck_cs,   o=self.pads.cs,    name='cs')
+        ser_ddr(i=~self.ck_clk,    o=self.pads.clk_p,   name='clk_p', phase=90)
+        ser_ddr(i=self.ck_clk,     o=self.pads.clk_n,   name='clk_n', phase=90)
+        ser_sdr(i=self.ck_cs,      o=self.pads.cs,      name='cs')
         for i in range(6):
             ser_sdr(i=self.ck_ca[i], o=self.pads.ca[i], name=f'ca{i}')
         # tristates i/o separate for simulation
