@@ -144,6 +144,7 @@ class TestLPDDR4(unittest.TestCase):
                 },
                 {6: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)}, # crosses cycle boundaries
                 {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)},  # should be ignored
+                {2: dict(cs_n=1, cas_n=0, ras_n=1, we_n=1)},  # ignored due to cs_n=1
             ],
             pad_checkers = {"sys8x": {
                 'cs': latency + ''.join([
@@ -153,6 +154,7 @@ class TestLPDDR4(unittest.TestCase):
                     '01010101',  # p1, p5
                     '00000010',  # p6 (cyc 0)
                     '10000000',  # p6 (cyc 1), p0 ignored
+                    '00000000',  # p2 ignored
                 ])
             }},
         )

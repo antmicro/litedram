@@ -245,20 +245,22 @@ class DFIPhaseAdapter(Module):
         def cmds(cmd1, cmd2, valid=1):
             return self.cmd1.set(cmd1) + self.cmd2.set(cmd2) + [self.valid.eq(valid)]
 
-        self.comb += Case(dfi_cmd, {
-            _cmd["ACT"]: cmds("ACTIVATE-1", "ACTIVATE-2"),
-            _cmd["RD"]:  cmds("READ-1",     "CAS-2"),
-            _cmd["WR"]:  cmds("WRITE-1",    "CAS-2"),  # TODO: masked write
-            _cmd["PRE"]: cmds("DESELECT",   "PRECHARGE"),
-            _cmd["REF"]: cmds("DESELECT",   "REFRESH"),
-            # TODO: ZQC init/short/long? start/latch?
-            # _cmd["ZQC"]: [
-            #     *cmds("DESELECT", "MPC"),
-            #     self.cmd2.mpc.eq(0b1001111),
-            # ],
-            _cmd["MRS"]: cmds("MRW-1",      "MRW-2"),
-            "default":   cmds("DESELECT",   "DESELECT", valid=0),
-        })
+        self.comb += If(dfi_phase.cs_n == 0,  # require dfi.cs_n
+            Case(dfi_cmd, {
+                _cmd["ACT"]: cmds("ACTIVATE-1", "ACTIVATE-2"),
+                _cmd["RD"]:  cmds("READ-1",     "CAS-2"),
+                _cmd["WR"]:  cmds("WRITE-1",    "CAS-2"),  # TODO: masked write
+                _cmd["PRE"]: cmds("DESELECT",   "PRECHARGE"),
+                _cmd["REF"]: cmds("DESELECT",   "REFRESH"),
+                # TODO: ZQC init/short/long? start/latch?
+                # _cmd["ZQC"]: [
+                #     *cmds("DESELECT", "MPC"),
+                #     self.cmd2.mpc.eq(0b1001111),
+                # ],
+                _cmd["MRS"]: cmds("MRW-1",      "MRW-2"),
+                "default":   cmds("DESELECT",   "DESELECT", valid=0),
+            })
+        )
 
 class Command(Module):
     # String description of 1st and 2nd edge of each command, later parsed to construct
