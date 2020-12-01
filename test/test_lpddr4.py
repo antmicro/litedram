@@ -88,19 +88,22 @@ class TestLPDDR4(unittest.TestCase):
 
     def run_simulation(self, dut, generators, **kwargs):
         clocks = {  # sys and sys8x phase aligned
-            "sys":      (32, 16),
-            "sys8x":    ( 4,  2),
-            "sys8x_90": ( 4,  1),
+            "sys":          (32, 16),
+            "sys8x":        ( 4,  2),
+            "sys8x_ddr":    ( 2,  1),
+            "sys8x_90":     ( 4,  1),
+            "sys8x_90_ddr": ( 2,  0),
         }
         run_simulation(dut, generators, clocks, **kwargs)
 
-    def run_test(self, dfi_sequence, pad_signals):
+    def run_test(self, dfi_sequence, pad_checkers: Mapping[str, Mapping[str, str]], **kwargs):
+        # pad_checkers: {clock: {sig: values}}
         dut = SimulationPHY()
-        generators = {
-            "sys":   [self.dfi_generator(dut.dfi, dfi_sequence)],
-            "sys8x": [self.pads_checker(dut.pads, pad_signals)],
-        }
-        self.run_simulation(dut, generators)
+        generators = defaultdict(list)
+        generators["sys"].append(self.dfi_generator(dut.dfi, dfi_sequence))
+        for clock, pad_signals in pad_checkers.items():
+            generators[clock].append(self.pads_checker(dut.pads, pad_signals))
+        self.run_simulation(dut, generators, **kwargs)
 
     def test_cs_phase_0(self):
         latency = '00000000' * self.CMD_LATENCY
@@ -109,9 +112,20 @@ class TestLPDDR4(unittest.TestCase):
                 {p: dict(self.dfi_reset_values()) for p in range(8)},
                 {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)},  # p0: READ
             ],
-            pad_signals = {
+            pad_checkers = {"sys8x": {
                 'cs': latency + '00000000' + '10100000',
-            }
+            }},
+        )
+
+    def test_clk(self):
+        self.run_test(
+            dfi_sequence = [
+                {3: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)},
+            ],
+            pad_checkers = {"sys8x_ddr": {
+                'clk_p': '10101010' * (2 + self.CMD_LATENCY),
+            }},
+            # vcd_name='sim.vcd',
         )
 
     def test_cs_multiple_phases(self):
@@ -131,7 +145,7 @@ class TestLPDDR4(unittest.TestCase):
                 {6: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)}, # crosses cycle boundaries
                 {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)},  # should be ignored
             ],
-            pad_signals = {
+            pad_checkers = {"sys8x": {
                 'cs': latency + ''.join([
                     '10100000',  # p0
                     '00010100',  # p3
@@ -140,7 +154,7 @@ class TestLPDDR4(unittest.TestCase):
                     '00000010',  # p6 (cyc 0)
                     '10000000',  # p6 (cyc 1), p0 ignored
                 ])
-            }
+            }},
         )
 
     def test_ca_sequencing(self):
@@ -153,7 +167,7 @@ class TestLPDDR4(unittest.TestCase):
                 {6: read},
                 {0: read}, # ignored
             ],
-            pad_signals = {
+            pad_checkers = {"sys8x": {
                 'cs':  latency + '10100000' + '10101010' + '00000010' + '10000000',
                 'ca0': latency + '00000000' + '00000000' + '00000000' + '00000000',
                 'ca1': latency + '10100000' + '10101010' + '00000010' + '10000000',
@@ -161,7 +175,7 @@ class TestLPDDR4(unittest.TestCase):
                 'ca3': latency + '0x000000' + '0x000x00' + '0000000x' + '00000000',
                 'ca4': latency + '00100000' + '00100010' + '00000000' + '10000000',
                 'ca5': latency + '00000000' + '00000000' + '00000000' + '00000000',
-            }
+            }},
         )
 
     def test_ca_addressing(self):
@@ -178,7 +192,7 @@ class TestLPDDR4(unittest.TestCase):
                 {0: activate, 4: refresh_ab},
                 {0: precharge, 4: mrw},
             ],
-            pad_signals = {
+            pad_checkers = {"sys8x": {
                 # note that refresh and precharge have a single command so these go as cmd2
                 #                              rd     wr       act    ref      pre    mrw
                 'cs':  latency + '1010'+'1010' + '1010'+'0010' + '0010'+'1010',
@@ -188,5 +202,6 @@ class TestLPDDR4(unittest.TestCase):
                 'ca3': latency + '0x01'+'0x00' + '1110'+'001x' + '000x'+'0001',
                 'ca4': latency + '0110'+'0010' + '1010'+'000x' + '001x'+'0110',
                 'ca5': latency + '0010'+'0100' + '1001'+'001x' + '000x'+'1101',
-            }
+            }},
+            # vcd_name='sim.vcd',
         )

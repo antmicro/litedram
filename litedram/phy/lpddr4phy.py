@@ -19,7 +19,7 @@ def _chunks(lst, n):
 
 def bitpattern(s):
     if len(s) > 8:
-        return [bitpattern(si) for si in _chunks(s, 8)]
+        return reduce(or_, [bitpattern(si) << (8*i) for i, si in enumerate(_chunks(s, 8))])
     assert len(s) == 8
     s = s.translate(s.maketrans("_-", "01"))
     return int(s[::-1], 2)  # LSB first, so reverse the string
@@ -163,7 +163,7 @@ class LPDDR4PHY(Module, AutoCSR):
         self.dqs_oe   = Signal()
 
         # Clocks -----------------------------------------------------------------------------------
-        self.comb += self.ck_clk.eq(bitpattern("-_-_-_-_"))  # FIXME: length
+        self.comb += self.ck_clk.eq(bitpattern("-_-_-_-_" * 2))
 
         # Commands ---------------------------------------------------------------------------------
         # Each command can span several phases (up to 4), so we must ignore overlapping commands,
@@ -323,7 +323,7 @@ class Command(Module):
 
 # SimulationPHY ------------------------------------------------------------------------------------
 
-class LPDDR4Pads(Module):
+class LPDDR4SimulationPads(Module):
     def __init__(self, databits=16):
         self.clk_p   = Signal()
         self.clk_n   = Signal()
@@ -331,25 +331,55 @@ class LPDDR4Pads(Module):
         self.cs      = Signal()
         self.ca      = Signal(6)
         self.odt     = Signal()
-        self.dq      = Signal(databits)
-        self.dqs     = Signal(databits//8)
-        self.dmi     = Signal(databits//8)
+        # tristates i/o separate for simulation
+        self.dq_o    = Signal(databits)
+        self.dq_i    = Signal(databits)
+        self.dqs_o   = Signal(databits//8)
+        self.dqs_i   = Signal(databits//8)
+        self.dmi_o   = Signal(databits//8)
+        self.dmi_i   = Signal(databits//8)
         self.reset_n = Signal()
+
+        # for LPDDR4PHY to get len(dq)
+        self.dq = self.dq_o
 
 class SimulationPHY(LPDDR4PHY):
     def __init__(self, sys_clk_freq=100e6):
-        pads = LPDDR4Pads()
+        pads = LPDDR4SimulationPads()
         self.submodules += pads
         super().__init__(pads, sys_clk_freq=sys_clk_freq,
                          write_ser_latency=1, read_des_latency=1, phytype="SimulationPHY")
 
         # Serialization
-        sd_sys   = self.sync.sys
-        sd_sys8x = self.sync.sys8x
-        self.submodules += Serializer(sd_sys, sd_sys8x, i_dw=8, o_dw=1, i=self.ck_cs, o=self.pads.cs, name='ser_cs')
+        def serialize(**kwargs):
+            name = 'ser_' + kwargs.pop('name', '')
+            ser = Serializer(o_dw=1, name=name.strip('_'), **kwargs)
+            self.submodules += ser
+
+        def ser_sdr(phase=0, **kwargs):
+            sd_clkdiv = {0: self.sync.sys8x, 90: self.sync.sys8x_90}[phase]
+            serialize(sd_clk=self.sync.sys, sd_clkdiv=sd_clkdiv, i_dw=8, **kwargs)
+
+        def ser_ddr(phase=0, **kwargs):
+            # for simulation we require sys8x_ddr clock (=sys16x)
+            sd_clkdiv = {0: self.sync.sys8x_ddr, 90: self.sync.sys8x_90_ddr}[phase]
+            serialize(sd_clk=self.sync.sys, sd_clkdiv=sd_clkdiv, i_dw=16, **kwargs)
+
+        ser_sdr(i=self.ck_cke,  o=self.pads.cke,   name='cke')
+        ser_sdr(i=self.ck_odt,  o=self.pads.odt,   name='odt')
+        # FIXME: clk_p uses inverter ck_clk to have correct clk at phase=90; we
+        # could use phase=270 or send other sdr signals on phase=90 and clock on phase=0
+        ser_ddr(i=~self.ck_clk, o=self.pads.clk_p, name='clk_p', phase=90)
+        ser_ddr(i=self.ck_clk,  o=self.pads.clk_n, name='clk_n', phase=90)
+        ser_sdr(i=self.ck_cs,   o=self.pads.cs,    name='cs')
         for i in range(6):
-            s = Serializer(sd_sys, sd_sys8x, i_dw=8, o_dw=1, i=self.ck_ca[i], o=self.pads.ca[i], name='ser_ca')
-            self.submodules += s
+            ser_sdr(i=self.ck_ca[i], o=self.pads.ca[i], name=f'ca{i}')
+        # tristates i/o separate for simulation
+        for i in range(self.databits//8):
+            ser_ddr(i=self.ck_dmi_o[i], o=self.pads.dmi_o[i], name=f'dmi_o{i}')
+            ser_ddr(i=self.ck_dqs_o[i], o=self.pads.dqs_o[i], name=f'dqs_o{i}')
+        for i in range(self.databits):
+            ser_ddr(i=self.ck_dq_o[i], o=self.pads.dq_o[i], name=f'dq_o{i}')
 
 class Serializer(Module):
     def __init__(self, sd_clk, sd_clkdiv, i_dw, o_dw, i=None, o=None, reset=None, name=None):
