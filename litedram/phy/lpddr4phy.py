@@ -1,6 +1,7 @@
 import re
 from functools import reduce
 from operator import or_
+from collections import defaultdict
 
 import math
 
@@ -49,12 +50,14 @@ class ConstBitSlip(Module):
 
         # # #
 
-        r = Signal((cycles+1)*dw, reset_less=True)
+        self.r = r = Signal((cycles+1)*dw, reset_less=True)
         self.sync += r.eq(Cat(r[dw:], self.i))
         cases = {}
         for i in range(cycles*dw):
             cases[i] = self.o.eq(r[i+1:dw+i+1])
         self.comb += Case(slp, cases)
+
+# LPDDR4PHY ----------------------------------------------------------------------------------------
 
 class LPDDR4PHY(Module, AutoCSR):
     def __init__(self, pads, *,
@@ -166,84 +169,39 @@ class LPDDR4PHY(Module, AutoCSR):
         # Each command can span several phases (up to 4), so we must ignore overlapping commands,
         # but in general, module timings should be set in a way that overlapping will never happen.
 
-        cs_bitslips = []
+        # Create a history of valid adapters used for masking overlapping ones.
+        valids = ConstBitSlip(dw=nphases, cycles=1, slp=0)
+        self.submodules += valids
+        self.comb += valids.i.eq(Cat(a.valid for a in adapters))
+        valids_hist = valids.r
+
+        cs_masked = []
+        ca_masked = defaultdict(list)
         for phase, adapter in enumerate(adapters):
+            # The signals from an adapter can be used if there were no commands on 3 previous cycles
+            allowed = ~reduce(or_, valids_hist[nphases+phase - 3:nphases+phase])
+
+            # Use CS and CA of given adapter slipped by `phase` bits
             cs_bs = ConstBitSlip(dw=nphases, cycles=1, slp=phase)
             self.submodules += cs_bs
             self.comb += cs_bs.i.eq(Cat(adapter.cs)),
-            cs_bitslips.append(cs_bs)
+            cs_mask = Replicate(allowed, len(cs_bs.o))
+            cs_masked.append(cs_bs.o & cs_mask)
 
-        # bitslip introduces 2 cycle latency
-        valids    = Signal(nphases)
-        valids_d1 = Signal(nphases)
-        valids_d2 = Signal(nphases)
-        self.comb += valids.eq(Cat(a.valid for a in adapters))
-        self.sync += valids_d1.eq(valids)
-        self.sync += valids_d2.eq(valids_d1)
-        valids_hist = Signal(2*nphases)
-        self.comb += valids_hist.eq(Cat(valids_d2, valids_d1))
+            # For CA we need to do the same for each bit
+            ca_bits = []
+            for bit in range(6):
+                ca_bs = ConstBitSlip(dw=nphases, cycles=1, slp=phase)
+                self.submodules += ca_bs
+                ca_bit_hist = [adapter.ca[i][bit] for i in range(4)]
+                self.comb += ca_bs.i.eq(Cat(*ca_bit_hist)),
+                ca_mask = Replicate(allowed, len(ca_bs.o))
+                ca_masked[bit].append(ca_bs.o & ca_mask)
 
-        cs_masked = []
-        for phase, adapter in enumerate(adapters):
-            cs = cs_bitslips[phase].o
-            # we can set the signal if there was no command on 3 previous cycles
-            valids_prev = valids_hist[nphases-3 + phase:nphases + phase]
-            print(f'{phase=} {nphases-3 + phase}:{nphases + phase} len({len(valids_prev)})')
-            any_valid = reduce(or_, valids_prev)
-            allowed = ~any_valid
-            mask = Replicate(allowed, len(cs))
-            cs_masked.append(cs & mask)
-
+        # OR all the masked signals
         self.comb += self.ck_cs.eq(reduce(or_, cs_masked))
-
-
-
-class LPDDR4Pads(Module):
-    def __init__(self, databits=16):
-        self.clk_p   = Signal()
-        self.clk_n   = Signal()
-        self.cke     = Signal()
-        self.cs      = Signal()
-        self.ca      = Signal(6)
-        self.odt     = Signal()
-        self.dq      = Signal(databits)
-        self.dqs     = Signal(databits//8)
-        self.dmi     = Signal(databits//8)
-        self.reset_n = Signal()
-
-class SimulationPHY(LPDDR4PHY):
-    def __init__(self, sys_clk_freq=100e6):
-        pads = LPDDR4Pads()
-        self.submodules += pads
-        super().__init__(pads, sys_clk_freq=sys_clk_freq,
-                         write_ser_latency=1, read_des_latency=1, phytype="SimulationPHY")
-
-        # Serialization
-        sd_sys   = self.sync.sys
-        sd_sys8x = self.sync.sys8x
-        self.submodules += Serializer(sd_sys, sd_sys8x, i_dw=8, o_dw=1, i=self.ck_cs, o=self.pads.cs, name='ser_cs')
-
-class Serializer(Module):
-    def __init__(self, sd_clk, sd_clkdiv, i_dw, o_dw, i=None, o=None, reset=None, name=None):
-        assert i_dw % o_dw == 0
-        ratio = i_dw // o_dw
-
-        if i is None: i = Signal(i_dw)
-        if o is None: o = Signal(o_dw)
-        if reset is None: reset = Signal()
-
-        self.i = i
-        self.o = o
-        self.reset = reset
-
-        cnt = Signal(max=ratio, name='{}_cnt'.format(name) if name is not None else None)
-        sd_clkdiv += If(reset, cnt.eq(0)).Else(cnt.eq(cnt + 1))
-
-        i_d = Signal.like(self.i)
-        sd_clk += i_d.eq(self.i)
-        i_array = Array([self.i[n*o_dw:(n+1)*o_dw] for n in range(ratio)])
-        self.comb += self.o.eq(i_array[cnt])
-
+        for bit in range(6):
+            self.comb += self.ck_ca[bit].eq(reduce(or_, ca_masked[bit]))
 
 class DFIPhaseAdapter(Module):
     # We must perform mapping of DFI commands to the LPDDR4 commands set on CA bus.
@@ -290,7 +248,7 @@ class DFIPhaseAdapter(Module):
         self.comb += Case(dfi_cmd, {
             _cmd["ACT"]: cmds("ACTIVATE-1", "ACTIVATE-2"),
             _cmd["RD"]:  cmds("READ-1",     "CAS-2"),
-            _cmd["WR"]:  cmds("WRITE-1",    "CAS-2"),
+            _cmd["WR"]:  cmds("WRITE-1",    "CAS-2"),  # TODO: masked write
             _cmd["PRE"]: cmds("DESELECT",   "PRECHARGE"),
             _cmd["REF"]: cmds("DESELECT",   "REFRESH"),
             # TODO: ZQC init/short/long? start/latch?
@@ -312,7 +270,7 @@ class Command(Module):
         "REFRESH":      ["L L L H L AB",        "BA0 BA1 BA2 V V V"],
         "ACTIVATE-1":   ["H L R12 R13 R14 R15", "BA0 BA1 BA2 R16 R10 R11"],
         "ACTIVATE-2":   ["H H R6 R7 R8 R9",     "R0 R1 R2 R3 R4 R5"],
-        "WRITE-1":      ["L H L L BL",          "BA0 BA1 BA2 V C9 AP"],
+        "WRITE-1":      ["L L H L L BL",        "BA0 BA1 BA2 V C9 AP"],
         "MASK WRITE-1": ["L L H H L BL",        "BA0 BA1 BA2 V C9 AP"],
         "READ-1":       ["L H L L L BL",        "BA0 BA1 BA2 V C9 AP"],
         "CAS-2":        ["L H L L H C8",        "C2 C3 C4 C5 C6 C7"],
@@ -321,6 +279,10 @@ class Command(Module):
         "DESELECT":     ["X X X X X X",         "X X X X X X"],
     }
 
+    for cmd, (subcmd1, subcmd2) in TRUTH_TABLE.items():
+        assert len(subcmd1.split()) == 6, (cmd, subcmd1)
+        assert len(subcmd2.split()) == 6, (cmd, subcmd2)
+
     def __init__(self, dfi_phase):
         self.cs = Signal(2)
         self.ca = Array([Signal(6), Signal(6)])  # CS high, CS low
@@ -328,7 +290,6 @@ class Command(Module):
         self.dfi = dfi_phase
 
     def set(self, cmd):
-        desc = self.TRUTH_TABLE[cmd]
         ops = []
         for i, description in enumerate(self.TRUTH_TABLE[cmd]):
             for j, bit in enumerate(description.split()):
@@ -359,3 +320,54 @@ class Command(Module):
                 args = [int(g) for g in m.groups()]
                 return value(*args)
         raise ValueError(bit)
+
+# SimulationPHY ------------------------------------------------------------------------------------
+
+class LPDDR4Pads(Module):
+    def __init__(self, databits=16):
+        self.clk_p   = Signal()
+        self.clk_n   = Signal()
+        self.cke     = Signal()
+        self.cs      = Signal()
+        self.ca      = Signal(6)
+        self.odt     = Signal()
+        self.dq      = Signal(databits)
+        self.dqs     = Signal(databits//8)
+        self.dmi     = Signal(databits//8)
+        self.reset_n = Signal()
+
+class SimulationPHY(LPDDR4PHY):
+    def __init__(self, sys_clk_freq=100e6):
+        pads = LPDDR4Pads()
+        self.submodules += pads
+        super().__init__(pads, sys_clk_freq=sys_clk_freq,
+                         write_ser_latency=1, read_des_latency=1, phytype="SimulationPHY")
+
+        # Serialization
+        sd_sys   = self.sync.sys
+        sd_sys8x = self.sync.sys8x
+        self.submodules += Serializer(sd_sys, sd_sys8x, i_dw=8, o_dw=1, i=self.ck_cs, o=self.pads.cs, name='ser_cs')
+        for i in range(6):
+            s = Serializer(sd_sys, sd_sys8x, i_dw=8, o_dw=1, i=self.ck_ca[i], o=self.pads.ca[i], name='ser_ca')
+            self.submodules += s
+
+class Serializer(Module):
+    def __init__(self, sd_clk, sd_clkdiv, i_dw, o_dw, i=None, o=None, reset=None, name=None):
+        assert i_dw % o_dw == 0
+        ratio = i_dw // o_dw
+
+        if i is None: i = Signal(i_dw)
+        if o is None: o = Signal(o_dw)
+        if reset is None: reset = Signal()
+
+        self.i = i
+        self.o = o
+        self.reset = reset
+
+        cnt = Signal(max=ratio, name='{}_cnt'.format(name) if name is not None else None)
+        sd_clkdiv += If(reset, cnt.eq(0)).Else(cnt.eq(cnt + 1))
+
+        i_d = Signal.like(self.i)
+        sd_clk += i_d.eq(self.i)
+        i_array = Array([self.i[n*o_dw:(n+1)*o_dw] for n in range(ratio)])
+        self.comb += self.o.eq(i_array[cnt])
