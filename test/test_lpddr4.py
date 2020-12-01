@@ -238,5 +238,5 @@ class TestLPDDR4(unittest.TestCase):
                 'odt':     latency + '10100100',
                 'reset_n': latency + '11001110',
             }},
-            vcd_name='sim.vcd',
+            # vcd_name='sim.vcd',
         )

@@ -167,17 +167,15 @@ class LPDDR4PHY(Module, AutoCSR):
         self.comb += self.ck_clk.eq(bitpattern("-_-_-_-_" * 2))
 
         # Simple commands --------------------------------------------------------------------------
-        def delayed(sig, cycles):
-            for _ in range(cycles):
-                new = Signal.like(sig)
-                self.sync += new.eq(sig)
-                sig = new
-            return sig
+        def delayed(sig, cycles=1):
+            delay = TappedDelayLine(signal=sig, ntaps=cycles)
+            self.submodules += delay
+            return delay.output
 
         self.comb += [
-            self.ck_cke.eq(Cat(delayed(phase.cke, 1) for phase in self.dfi.phases)),
-            self.ck_odt.eq(Cat(delayed(phase.odt, 1) for phase in self.dfi.phases)),
-            self.ck_reset_n.eq(Cat(delayed(phase.reset_n, 1) for phase in self.dfi.phases)),
+            self.ck_cke.eq(Cat(delayed(phase.cke) for phase in self.dfi.phases)),
+            self.ck_odt.eq(Cat(delayed(phase.odt) for phase in self.dfi.phases)),
+            self.ck_reset_n.eq(Cat(delayed(phase.reset_n) for phase in self.dfi.phases)),
         ]
 
         # LPDDR4 Commands --------------------------------------------------------------------------
