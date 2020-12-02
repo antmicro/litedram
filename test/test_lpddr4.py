@@ -1,4 +1,5 @@
 import re
+import random
 import unittest
 from collections import defaultdict
 from typing import Mapping, Sequence
@@ -6,7 +7,7 @@ from typing import Mapping, Sequence
 from migen import *
 
 from litedram.phy import dfi
-from litedram.phy.lpddr4phy import SimulationPHY
+from litedram.phy.lpddr4phy import SimulationPHY, Serializer, Deserializer
 
 from litex.gen.sim import run_simulation
 
@@ -15,7 +16,7 @@ def chunks(lst, n):
         yield lst[i:i + n]
 
 class TestLPDDR4(unittest.TestCase):
-    CMD_LATENCY = 2
+    CMD_LATENCY = 3
 
     class PadsHistory(defaultdict):
         def __init__(self):
@@ -100,7 +101,8 @@ class TestLPDDR4(unittest.TestCase):
             yield
 
     def run_simulation(self, dut, generators, **kwargs):
-        clocks = {  # sys and sys8x phase aligned
+        # phase shifts set up such that the 0-shift clocks are phase unaligned
+        clocks = {
             "sys":          (32, 16),
             "sys8x":        ( 4,  2),
             "sys8x_ddr":    ( 2,  1),
@@ -108,6 +110,84 @@ class TestLPDDR4(unittest.TestCase):
             "sys8x_90_ddr": ( 2,  0),
         }
         run_simulation(dut, generators, clocks, **kwargs)
+
+    def test_sim_serializer(self):
+        data_widths = [8, 16]
+        latency = 1
+        rng = random.Random(42)
+
+        for data_width in data_widths:
+            nwords = 4
+            words = [[rng.randint(0, 1) for _ in range(data_width)] for _ in range(nwords)]
+
+            def generator(dut):
+                for word in words:
+                    value = reduce(or_, (b << i for i, b in enumerate(word)))
+                    yield dut.i.eq(value)
+                    yield
+
+            def checker(dut):
+                # +1 due to the way clocks are set up (1st edge does not run)
+                for _ in range((latency + 1) * data_width):
+                    yield
+                bits = []
+                for _ in range(len(words) * data_width):
+                    bits.append((yield dut.o))
+                    yield
+                self.assertEqual(list(chunks(bits, data_width)), words)
+
+            clkdiv = {
+                8: "sys8x_90",
+                16: "sys8x_90_ddr",
+            }[data_width]
+            dut = Serializer(clk="sys", clkdiv=clkdiv, i_dw=data_width, o_dw=1)
+            generators = {
+                "sys": generator(dut),
+                clkdiv: checker(dut),
+            }
+            self.run_simulation(dut, generators)
+
+    def test_sim_deserializer(self):
+        data_widths = [8]#, 16]
+        latency = 1
+        rng = random.Random(42)
+
+        for data_width in data_widths:
+            nwords = 4
+            words = [[rng.randint(0, 1) for _ in range(data_width)] for _ in range(nwords)]
+
+            def generator(dut):
+                # need to account for the fact that first clock edge is in time=0 and sync assignment
+                # does not work, so we wait until 2nd sys clock edge
+                for _ in range(data_width - 1):
+                    yield
+                for word in words:
+                    for bit in word:
+                        yield dut.i.eq(bit)
+                        yield
+
+            def checker(dut):
+                # +1 due to the way clocks are set up (1st edge does not run)
+                for _ in range(latency + 1):
+                    yield
+                words_found = []
+                for word in words:
+                    w = (yield dut.o)
+                    bits = [(w & (1 << i)) >> i for i in range(data_width)]
+                    words_found.append(bits)
+                    yield
+                self.assertEqual(words_found, words)
+
+            clkdiv = {
+                8: "sys8x_90",
+                16: "sys8x_90_ddr",
+            }[data_width]
+            dut = Deserializer(clk="sys", clkdiv=clkdiv, i_dw=1, o_dw=data_width)
+            generators = {
+                clkdiv: generator(dut),
+                "sys": checker(dut),
+            }
+            self.run_simulation(dut, generators, vcd_name='sim.vcd')
 
     def run_test(self, dfi_sequence, pad_checkers: Mapping[str, Mapping[str, str]], **kwargs):
         # pad_checkers: {clock: {sig: values}}
@@ -118,7 +198,7 @@ class TestLPDDR4(unittest.TestCase):
             generators[clock].append(self.pads_checker(dut.pads, pad_signals))
         self.run_simulation(dut, generators, **kwargs)
 
-    def test_cs_phase_0(self):
+    def test_lpddr4_cs_phase_0(self):
         latency = '00000000' * self.CMD_LATENCY
         self.run_test(
             dfi_sequence = [
@@ -129,18 +209,19 @@ class TestLPDDR4(unittest.TestCase):
             }},
         )
 
-    def test_clk(self):
+    def test_lpddr4_clk(self):
+        latency = 'xxxxxxxx' * self.CMD_LATENCY
         self.run_test(
             dfi_sequence = [
                 {3: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)},
             ],
             pad_checkers = {"sys8x_ddr": {
-                'clk_p': '10101010' * (2 + self.CMD_LATENCY),
+                'clk_p': latency + '10101010' * 3,
             }},
             # vcd_name='sim.vcd',
         )
 
-    def test_cs_multiple_phases(self):
+    def test_lpddr4_cs_multiple_phases(self):
         latency = '00000000' * self.CMD_LATENCY
         self.run_test(
             dfi_sequence = [
@@ -171,7 +252,7 @@ class TestLPDDR4(unittest.TestCase):
             }},
         )
 
-    def test_ca_sequencing(self):
+    def test_lpddr4_ca_sequencing(self):
         latency = '00000000' * self.CMD_LATENCY
         read = dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)
         self.run_test(
@@ -192,7 +273,7 @@ class TestLPDDR4(unittest.TestCase):
             }},
         )
 
-    def test_ca_addressing(self):
+    def test_lpddr4_ca_addressing(self):
         latency = '00000000' * self.CMD_LATENCY
         read       = dict(cs_n=0, cas_n=0, ras_n=1, we_n=1, bank=0b101, address=0b1100110011)  # actually invalid because CA[1:0] should always be 0
         write_ap   = dict(cs_n=0, cas_n=0, ras_n=1, we_n=0, bank=0b111, address=0b10000000000)
@@ -219,7 +300,7 @@ class TestLPDDR4(unittest.TestCase):
             }},
         )
 
-    def test_command_pads(self):
+    def test_lpddr4_command_pads(self):
         latency = '00000000' * self.CMD_LATENCY
         read = dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)
         self.run_test(

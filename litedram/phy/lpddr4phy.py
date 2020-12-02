@@ -380,13 +380,13 @@ class SimulationPHY(LPDDR4PHY):
             self.submodules += ser
 
         def ser_sdr(phase=0, **kwargs):
-            sd_clkdiv = {0: self.sync.sys8x, 90: self.sync.sys8x_90}[phase]
-            serialize(sd_clk=self.sync.sys, sd_clkdiv=sd_clkdiv, i_dw=8, **kwargs)
+            clkdiv = {0: "sys8x", 90: "sys8x_90"}[phase]
+            serialize(clk="sys", clkdiv=clkdiv, i_dw=8, **kwargs)
 
         def ser_ddr(phase=0, **kwargs):
             # for simulation we require sys8x_ddr clock (=sys16x)
-            sd_clkdiv = {0: self.sync.sys8x_ddr, 90: self.sync.sys8x_90_ddr}[phase]
-            serialize(sd_clk=self.sync.sys, sd_clkdiv=sd_clkdiv, i_dw=16, **kwargs)
+            clkdiv = {0: "sys8x_ddr", 90: "sys8x_90_ddr"}[phase]
+            serialize(clk="sys", clkdiv=clkdiv, i_dw=16, **kwargs)
 
         ser_sdr(i=self.ck_cke,     o=self.pads.cke,     name='cke')
         ser_sdr(i=self.ck_odt,     o=self.pads.odt,     name='odt')
@@ -406,9 +406,13 @@ class SimulationPHY(LPDDR4PHY):
             ser_ddr(i=self.ck_dq_o[i], o=self.pads.dq_o[i], name=f'dq_o{i}')
 
 class Serializer(Module):
-    def __init__(self, sd_clk, sd_clkdiv, i_dw, o_dw, i=None, o=None, reset=None, name=None):
+    def __init__(self, clk, clkdiv, i_dw, o_dw, i=None, o=None, reset=None, name=None):
+        assert i_dw > o_dw
         assert i_dw % o_dw == 0
         ratio = i_dw // o_dw
+
+        sd_clk = getattr(self.sync, clk)
+        sd_clkdiv = getattr(self.sync, clkdiv)
 
         if i is None: i = Signal(i_dw)
         if o is None: o = Signal(o_dw)
@@ -423,5 +427,30 @@ class Serializer(Module):
 
         i_d = Signal.like(self.i)
         sd_clk += i_d.eq(self.i)
-        i_array = Array([self.i[n*o_dw:(n+1)*o_dw] for n in range(ratio)])
+        i_array = Array([i_d[n*o_dw:(n+1)*o_dw] for n in range(ratio)])
         self.comb += self.o.eq(i_array[cnt])
+
+class Deserializer(Module):
+    def __init__(self, clk, clkdiv, i_dw, o_dw, i=None, o=None, reset=None, name=None):
+        assert i_dw < o_dw
+        assert o_dw % i_dw == 0
+        ratio = o_dw // i_dw
+
+        sd_clk = getattr(self.sync, clk)
+        sd_clkdiv = getattr(self.sync, clkdiv)
+
+        if i is None: i = Signal(i_dw)
+        if o is None: o = Signal(o_dw)
+        if reset is None: reset = Signal()
+
+        self.i = i
+        self.o = o
+        self.reset = reset
+
+        cnt = Signal(max=ratio, name='{}_cnt'.format(name) if name is not None else None)
+        sd_clkdiv += If(reset, cnt.eq(0)).Else(cnt.eq(cnt + 1))
+
+        o_pre = Signal.like(self.o)
+        o_array = Array([o_pre[n*i_dw:(n+1)*i_dw] for n in range(ratio)])
+        sd_clkdiv += o_array[cnt].eq(self.i)
+        sd_clk += self.o.eq(o_pre)
