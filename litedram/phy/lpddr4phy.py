@@ -24,21 +24,10 @@ def bitpattern(s):
     s = s.translate(s.maketrans("_-", "01"))
     return int(s[::-1], 2)  # LSB first, so reverse the string
 
-class ShiftRegister(Module):
-    def __init__(self, n, i=None):
-        if i is None:
-            i = Signal()
-        assert len(i) == 1
-
-        self.i = i
-        self.sr = sr = Signal(n)
-        last = Signal.like(sr)
-
-        self.comb += sr.eq(Cat(i, last))
-        self.sync += last.eq(sr)
-
-    def __getitem__(self, key):
-        return self.sr[key]
+def delayed(mod, sig, cycles=1):
+    delay = TappedDelayLine(signal=sig, ntaps=cycles)
+    mod.submodules += delay
+    return delay.output
 
 class ConstBitSlip(Module):
     def __init__(self, dw, i=None, o=None, slp=None, cycles=1):
@@ -167,15 +156,10 @@ class LPDDR4PHY(Module, AutoCSR):
         self.comb += self.ck_clk.eq(bitpattern("-_-_-_-_" * 2))
 
         # Simple commands --------------------------------------------------------------------------
-        def delayed(sig, cycles=1):
-            delay = TappedDelayLine(signal=sig, ntaps=cycles)
-            self.submodules += delay
-            return delay.output
-
         self.comb += [
-            self.ck_cke.eq(Cat(delayed(phase.cke) for phase in self.dfi.phases)),
-            self.ck_odt.eq(Cat(delayed(phase.odt) for phase in self.dfi.phases)),
-            self.ck_reset_n.eq(Cat(delayed(phase.reset_n) for phase in self.dfi.phases)),
+            self.ck_cke.eq(Cat(delayed(self, phase.cke) for phase in self.dfi.phases)),
+            self.ck_odt.eq(Cat(delayed(self, phase.odt) for phase in self.dfi.phases)),
+            self.ck_reset_n.eq(Cat(delayed(self, phase.reset_n) for phase in self.dfi.phases)),
         ]
 
         # LPDDR4 Commands --------------------------------------------------------------------------
@@ -223,6 +207,66 @@ class LPDDR4PHY(Module, AutoCSR):
         self.comb += self.ck_cs.eq(reduce(or_, cs_per_adapter))
         for bit in range(6):
             self.comb += self.ck_ca[bit].eq(reduce(or_, ca_per_adapter[bit]))
+
+        # DQ ---------------------------------------------------------------------------------------
+        for bit in range(self.databits):
+            # output
+            self.submodules += BitSlip(
+                dw     = 2*nphases,
+                cycles = 1,
+                rst    = (self._dly_sel.storage[bit//8] & self._wdly_dq_bitslip_rst.re) | self._rst.storage,
+                slp    = self._dly_sel.storage[bit//8] & self._wdly_dq_bitslip.re,
+                i      = Cat(*[self.dfi.phases[i//2].wrdata[i%2 * self.databits + bit] for i in range(2*nphases)]),
+                o      = self.ck_dq_o[bit],
+            )
+
+            # input
+            dq_i_bs = Signal(2*nphases)
+            self.submodules += BitSlip(
+                dw     = 2*nphases,
+                cycles = 1,
+                rst    = (self._dly_sel.storage[bit//8] & self._rdly_dq_bitslip_rst.re) | self._rst.storage,
+                slp    = self._dly_sel.storage[bit//8] & self._rdly_dq_bitslip.re,
+                i      = self.ck_dq_i[bit],
+                o      = dq_i_bs,
+            )
+            for i in range(2*nphases):
+                self.comb += self.dfi.phases[i//2].rddata[i%2 * self.databits + bit].eq(dq_i_bs[i])
+
+        # Read Control Path ------------------------------------------------------------------------
+        # Creates a delay line of read commands coming from the DFI interface. The output is used to
+        # signal a valid read data to the DFI interface.
+        #
+        # The read data valid is asserted for 1 sys_clk cycle when the data is available on the DFI
+        # interface, the latency is the sum of the OSERDESE2, CAS, ISERDESE2 and Bitslip latencies.
+        rddata_en = TappedDelayLine(
+            signal = reduce(or_, [dfi.phases[i].rddata_en for i in range(nphases)]),
+            ntaps  = self.settings.read_latency
+        )
+        self.submodules += rddata_en
+
+        self.comb += [phase.rddata_valid.eq(rddata_en.output | self._wlevel_en.storage) for phase in dfi.phases]
+
+        # Write Control Path -----------------------------------------------------------------------
+        wrtap = cwl_sys_latency - 1
+
+        # Create a delay line of write commands coming from the DFI interface. This taps are used to
+        # control DQ/DQS tristates.
+        wrdata_en = TappedDelayLine(
+            signal = reduce(or_, [dfi.phases[i].wrdata_en for i in range(nphases)]),
+            ntaps  = wrtap + 2
+        )
+        self.submodules += wrdata_en
+
+        self.comb += self.dq_oe.eq(wrdata_en.taps[wrtap])
+        # self.comb += If(self._wlevel_en.storage, dqs_oe.eq(1)).Else(dqs_oe.eq(dq_oe))
+
+        # # Write DQS Postamble/Preamble Control Path ------------------------------------------------
+        # # Generates DQS Preamble 1 cycle before the first write and Postamble 1 cycle after the last
+        # # write. During writes, DQS tristate is configured as output for at least 3 sys_clk cycles:
+        # # 1 for Preamble, 1 for the Write and 1 for the Postamble.
+        # self.comb += dqs_preamble.eq( wrdata_en.taps[wrtap - 1]  & ~wrdata_en.taps[wrtap + 0])
+        # self.comb += dqs_postamble.eq(wrdata_en.taps[wrtap + 1]  & ~wrdata_en.taps[wrtap + 0])
 
 class DFIPhaseAdapter(Module):
     # We must perform mapping of DFI commands to the LPDDR4 commands set on CA bus.
@@ -355,16 +399,27 @@ class LPDDR4SimulationPads(Module):
         self.reset_n = Signal()
         self.cs      = Signal()
         self.ca      = Signal(6)
-        # tristates i/o separate for simulation
-        self.dq_o    = Signal(databits)
-        self.dq_i    = Signal(databits)
+        # signals for checking actual tristate lines state (PHY reads these)
+        self.dq      = Signal(databits)
+        self.dqs     = Signal(databits//8)
+        self.dmi     = Signal(databits//8)
+        # internal tristates i/o that should be driven for simulation
+        self.dq_o    = Signal(databits)  # PHY drives these
+        self.dq_i    = Signal(databits)  # DRAM chip (simulator) drives these
+        self.dq_oe   = Signal()          # PHY drives these
         self.dqs_o   = Signal(databits//8)
         self.dqs_i   = Signal(databits//8)
+        self.dqs_oe  = Signal()
         self.dmi_o   = Signal(databits//8)
         self.dmi_i   = Signal(databits//8)
+        self.dmi_oe  = Signal()
 
-        # for LPDDR4PHY to get len(dq)
-        self.dq = self.dq_o
+        self.comb += [
+            If(self.dq_oe, self.dq.eq(self.dq_o)).Else(self.dq.eq(self.dq_i)),
+            If(self.dqs_oe, self.dqs.eq(self.dqs_o)).Else(self.dqs.eq(self.dqs_i)),
+            If(self.dmi_oe, self.dmi.eq(self.dmi_o)).Else(self.dmi.eq(self.dmi_i)),
+        ]
+
 
 class SimulationPHY(LPDDR4PHY):
     def __init__(self, sys_clk_freq=100e6):
@@ -379,6 +434,11 @@ class SimulationPHY(LPDDR4PHY):
             ser = Serializer(o_dw=1, name=name.strip('_'), **kwargs)
             self.submodules += ser
 
+        def deserialize(**kwargs):
+            name = 'des_' + kwargs.pop('name', '')
+            des = Deserializer(i_dw=1, name=name.strip('_'), **kwargs)
+            self.submodules += des
+
         def ser_sdr(phase=0, **kwargs):
             clkdiv = {0: "sys8x", 90: "sys8x_90"}[phase]
             serialize(clk="sys", clkdiv=clkdiv, i_dw=8, **kwargs)
@@ -387,6 +447,10 @@ class SimulationPHY(LPDDR4PHY):
             # for simulation we require sys8x_ddr clock (=sys16x)
             clkdiv = {0: "sys8x_ddr", 90: "sys8x_90_ddr"}[phase]
             serialize(clk="sys", clkdiv=clkdiv, i_dw=16, **kwargs)
+
+        def des_ddr(phase=0, **kwargs):
+            clkdiv = {0: "sys8x_ddr", 90: "sys8x_90_ddr"}[phase]
+            deserialize(clk="sys", clkdiv=clkdiv, o_dw=16, **kwargs)
 
         ser_sdr(i=self.ck_cke,     o=self.pads.cke,     name='cke')
         ser_sdr(i=self.ck_odt,     o=self.pads.odt,     name='odt')
@@ -398,14 +462,22 @@ class SimulationPHY(LPDDR4PHY):
         ser_sdr(i=self.ck_cs,      o=self.pads.cs,      name='cs')
         for i in range(6):
             ser_sdr(i=self.ck_ca[i], o=self.pads.ca[i], name=f'ca{i}')
-        # tristates i/o separate for simulation
+        # tristate i/o separate for simulation
         for i in range(self.databits//8):
             ser_ddr(i=self.ck_dmi_o[i], o=self.pads.dmi_o[i], name=f'dmi_o{i}')
+            des_ddr(o=self.ck_dmi_i[i], i=self.pads.dmi[i], name=f'dmi_i{i}')
             ser_ddr(i=self.ck_dqs_o[i], o=self.pads.dqs_o[i], name=f'dqs_o{i}')
+            des_ddr(o=self.ck_dqs_i[i], i=self.pads.dqs[i], name=f'dqs_i{i}')
         for i in range(self.databits):
             ser_ddr(i=self.ck_dq_o[i], o=self.pads.dq_o[i], name=f'dq_o{i}')
+            des_ddr(o=self.ck_dq_i[i], i=self.pads.dq[i], name=f'dq_i{i}')
+        self.comb += self.pads.dmi_oe.eq(delayed(self, self.dmi_oe, cycles=Serializer.LATENCY))
+        self.comb += self.pads.dqs_oe.eq(delayed(self, self.dqs_oe, cycles=Serializer.LATENCY))
+        self.comb += self.pads.dq_oe.eq(delayed(self, self.dq_oe, cycles=Serializer.LATENCY))
 
 class Serializer(Module):
+    LATENCY = 1
+
     def __init__(self, clk, clkdiv, i_dw, o_dw, i=None, o=None, reset=None, name=None):
         assert i_dw > o_dw
         assert i_dw % o_dw == 0
@@ -431,6 +503,8 @@ class Serializer(Module):
         self.comb += self.o.eq(i_array[cnt])
 
 class Deserializer(Module):
+    LATENCY = 1
+
     def __init__(self, clk, clkdiv, i_dw, o_dw, i=None, o=None, reset=None, name=None):
         assert i_dw < o_dw
         assert o_dw % i_dw == 0

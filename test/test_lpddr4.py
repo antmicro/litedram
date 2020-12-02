@@ -11,9 +11,14 @@ from litedram.phy.lpddr4phy import SimulationPHY, Serializer, Deserializer
 
 from litex.gen.sim import run_simulation
 
+
+def bit(n, val):
+    return (val & (1 << n)) >> n
+
 def chunks(lst, n):
     for i in range(0, len(lst), n):
         yield lst[i:i + n]
+
 
 class TestLPDDR4(unittest.TestCase):
     CMD_LATENCY = 3
@@ -57,7 +62,7 @@ class TestLPDDR4(unittest.TestCase):
         history = self.PadsHistory()
         for i in range(n):
             for sig, vals in signals.items():
-                m = re.match(r'(\S+)(\d+)', sig)
+                m = re.match(r'([a-zA-Z_]+)(\d+)', sig)
                 if m:
                     pad = getattr(pads, m.group(1))[int(m.group(2))]
                 else:
@@ -80,18 +85,22 @@ class TestLPDDR4(unittest.TestCase):
         return 1 if sig.endswith('_n') else 0
 
     def dfi_reset_values(self):
-        return {sig: self.dfi_reset_value(sig) for sig, _, _ in dfi.phase_description(1, 1, 1, 1)}
+        desc = dfi.phase_description(addressbits=17, bankbits=3, nranks=1, databits=16)
+        return {sig: self.dfi_reset_value(sig) for sig, _, _ in desc}
 
     DFIPhaseValues = Mapping[str, int]
     DFIPhase = int
 
     def dfi_generator(self, dfi, sequence: Sequence[Mapping[DFIPhase, DFIPhaseValues]]):
         # sequence: [{phase: {sig: value}}]
-        for per_phase in sequence:
-            # reset in case of any previous changes
+        def reset():
             for phase in dfi.phases:
                 for sig, val in self.dfi_reset_values().items():
                     yield getattr(phase, sig).eq(val)
+
+        for per_phase in sequence:
+            # reset in case of any previous changes
+            (yield from reset())
             # set values
             for phase, values in per_phase.items():
                 for sig, val in values.items():
@@ -99,6 +108,8 @@ class TestLPDDR4(unittest.TestCase):
                     yield getattr(dfi.phases[phase], sig).eq(val)
             # print()
             yield
+        (yield from reset())
+        yield
 
     def run_simulation(self, dut, generators, **kwargs):
         # phase shifts set up such that the 0-shift clocks are phase unaligned
@@ -113,7 +124,6 @@ class TestLPDDR4(unittest.TestCase):
 
     def test_sim_serializer(self):
         data_widths = [8, 16]
-        latency = 1
         rng = random.Random(42)
 
         for data_width in data_widths:
@@ -128,7 +138,7 @@ class TestLPDDR4(unittest.TestCase):
 
             def checker(dut):
                 # +1 due to the way clocks are set up (1st edge does not run)
-                for _ in range((latency + 1) * data_width):
+                for _ in range((Serializer.LATENCY + 1) * data_width):
                     yield
                 bits = []
                 for _ in range(len(words) * data_width):
@@ -149,7 +159,6 @@ class TestLPDDR4(unittest.TestCase):
 
     def test_sim_deserializer(self):
         data_widths = [8]#, 16]
-        latency = 1
         rng = random.Random(42)
 
         for data_width in data_widths:
@@ -168,7 +177,7 @@ class TestLPDDR4(unittest.TestCase):
 
             def checker(dut):
                 # +1 due to the way clocks are set up (1st edge does not run)
-                for _ in range(latency + 1):
+                for _ in range(Deserializer.LATENCY + 1):
                     yield
                 words_found = []
                 for word in words:
@@ -289,7 +298,7 @@ class TestLPDDR4(unittest.TestCase):
             ],
             pad_checkers = {"sys8x": {
                 # note that refresh and precharge have a single command so these go as cmd2
-                #                              rd     wr       act    ref      pre    mrw
+                #                 rd     wr       act    ref      pre    mrw
                 'cs':  latency + '1010'+'1010' + '1010'+'0010' + '0010'+'1010',
                 'ca0': latency + '0100'+'0100' + '1011'+'0000' + '0001'+'0100',
                 'ca1': latency + '1010'+'0110' + '0110'+'0000' + '0001'+'1111',
@@ -319,5 +328,41 @@ class TestLPDDR4(unittest.TestCase):
                 'odt':     latency + '10100100',
                 'reset_n': latency + '11001110',
             }},
-            # vcd_name='sim.vcd',
+        )
+
+    def wrdata_to_dq(self, dq_i, dfi_phases, nphases=8):
+        # data on DQ should go in a pattern:
+        # dq0: p0.wrdata[0], p0.wrdata[16], p1.wrdata[0], p1.wrdata[16], ...
+        # dq1: p0.wrdata[1], p0.wrdata[17], p1.wrdata[1], p1.wrdata[17], ...
+        for p in range(nphases):
+            wrdata = dfi_phases[p]["wrdata"]
+            yield bit(0  + dq_i, wrdata)
+            yield bit(16 + dq_i, wrdata)
+
+
+    def test_lpddr4_dq_output(self):
+        latency = '00000000' * self.CMD_LATENCY
+
+        dfi_phases = {
+            0: dict(wrdata=0x11112222, wrdata_en=1),  # wrdata_en=1 is needed on any phase
+            1: dict(wrdata=0x33334444),
+            2: dict(wrdata=0x55556666),
+            3: dict(wrdata=0x77778888),
+            4: dict(wrdata=0x9999aaaa),
+            5: dict(wrdata=0xbbbbcccc),
+            6: dict(wrdata=0xddddeeee),
+            7: dict(wrdata=0xffff0000),
+        }
+
+        def dq_pattern(i):
+            return ''.join(str(v) for v in self.wrdata_to_dq(i, dfi_phases))
+
+        # no data should be on DQ without wrdata_en=1 (which enables DQ_oe)
+        no_wrdata_en = {p: signals for p, signals in dfi_phases.items() if p != 0}
+        self.run_test(
+            dfi_sequence = [dfi_phases, no_wrdata_en],
+            pad_checkers = {"sys8x_ddr": {
+                f'dq{i}': 2*latency + dq_pattern(i) + 2*latency for i in range(16)
+            }},
+            vcd_name='sim.vcd',
         )
