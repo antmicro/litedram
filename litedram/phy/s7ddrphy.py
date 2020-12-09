@@ -211,8 +211,8 @@ class S7DDRPHY(Module, AutoCSR):
         dqs_postamble = Signal()
         dqs_oe_delay  = TappedDelayLine(ntaps=2 if nphases == 4 else 1)
         dqs_pattern   = DQSPattern(
-            #preamble      = dqs_preamble,  # FIXME
-            #postamble     = dqs_postamble, # FIXME
+            preamble      = dqs_preamble,  # FIXME
+            postamble     = dqs_postamble, # FIXME
             wlevel_en     = self._wlevel_en.storage,
             wlevel_strobe = self._wlevel_strobe.re,
             register      = not with_odelay)

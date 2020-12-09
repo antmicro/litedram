@@ -1,4 +1,5 @@
 import re
+import copy
 import random
 import unittest
 from collections import defaultdict
@@ -52,7 +53,7 @@ class TestLPDDR4(unittest.TestCase):
                 lines = ['{} {}'.format('>' if i == sig_i else ' ', line) for i, line in enumerate(lines)]
             return '\n'.join(lines)
 
-    def pads_checker(self, pads, signals: Mapping[str, str], fail_fast=False):
+    def pads_checker(self, pads, signals: Mapping[str, str], fail_fast=False, print_summary=False):
         # signals: {sig: values}, values: a string of '0'/'1'/'x'
         lengths = [len(vals) for vals in signals.values()]
         n = lengths[0]
@@ -60,6 +61,7 @@ class TestLPDDR4(unittest.TestCase):
 
         errors = []
         history = self.PadsHistory()
+        ref_history = self.PadsHistory()
         for i in range(n):
             for sig, vals in signals.items():
                 m = re.match(r'([a-zA-Z_]+)(\d+)', sig)
@@ -69,6 +71,7 @@ class TestLPDDR4(unittest.TestCase):
                     pad = getattr(pads, sig)
                 val = vals[i]
                 history[sig] += str((yield pad))
+                ref_history[sig] += vals[i]
                 if val != 'x':
                     msg = f'Cycle {i} Signal {sig}: {(yield pad)} vs {vals[i]}'
                     errors.append([i, sig, (yield pad), int(vals[i]), msg])
@@ -77,9 +80,18 @@ class TestLPDDR4(unittest.TestCase):
                         self.assertEqual((yield pad), int(vals[i]), msg=msg)
             yield
 
+        def summary(reference=True, **kwargs):
+            summary = ''
+            summary += '\nHistory:\n{}'.format(history.format(**kwargs))
+            if reference:
+                summary += '\nReference:\n{}'.format(ref_history.format(**kwargs))
+            return summary
+
         for i, sig, pad_val, ref_val, msg in errors:
-            msg += '\nHistory:\n{}'.format(history.format(hl_cycle=i, hl_signal=sig))
-            self.assertEqual(pad_val, ref_val, msg=msg)
+            self.assertEqual(pad_val, ref_val, msg=msg + summary(hl_cycle=i, hl_signal=sig))
+
+        if print_summary:
+            print(summary(reference=False))
 
     def dfi_reset_value(self, sig):
         return 1 if sig.endswith('_n') else 0
@@ -198,9 +210,8 @@ class TestLPDDR4(unittest.TestCase):
             }
             self.run_simulation(dut, generators, vcd_name='sim.vcd')
 
-    def run_test(self, dfi_sequence, pad_checkers: Mapping[str, Mapping[str, str]], **kwargs):
+    def run_test(self, dut, dfi_sequence, pad_checkers: Mapping[str, Mapping[str, str]], **kwargs):
         # pad_checkers: {clock: {sig: values}}
-        dut = SimulationPHY()
         generators = defaultdict(list)
         generators["sys"].append(self.dfi_generator(dut.dfi, dfi_sequence))
         for clock, pad_signals in pad_checkers.items():
@@ -209,7 +220,7 @@ class TestLPDDR4(unittest.TestCase):
 
     def test_lpddr4_cs_phase_0(self):
         latency = '00000000' * self.CMD_LATENCY
-        self.run_test(
+        self.run_test(SimulationPHY(),
             dfi_sequence = [
                 {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)},  # p0: READ
             ],
@@ -220,7 +231,7 @@ class TestLPDDR4(unittest.TestCase):
 
     def test_lpddr4_clk(self):
         latency = 'xxxxxxxx' * self.CMD_LATENCY
-        self.run_test(
+        self.run_test(SimulationPHY(),
             dfi_sequence = [
                 {3: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)},
             ],
@@ -232,7 +243,7 @@ class TestLPDDR4(unittest.TestCase):
 
     def test_lpddr4_cs_multiple_phases(self):
         latency = '00000000' * self.CMD_LATENCY
-        self.run_test(
+        self.run_test(SimulationPHY(),
             dfi_sequence = [
                 {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)},
                 {3: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)},
@@ -264,7 +275,7 @@ class TestLPDDR4(unittest.TestCase):
     def test_lpddr4_ca_sequencing(self):
         latency = '00000000' * self.CMD_LATENCY
         read = dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)
-        self.run_test(
+        self.run_test(SimulationPHY(),
             dfi_sequence = [
                 {0: read, 3: read},  # p4 should be ignored
                 {0: read, 4: read},
@@ -290,7 +301,7 @@ class TestLPDDR4(unittest.TestCase):
         refresh_ab = dict(cs_n=0, cas_n=0, ras_n=0, we_n=1, bank=0b100, address=0b10000000000)
         precharge  = dict(cs_n=0, cas_n=1, ras_n=0, we_n=0, bank=0b011, address=0)
         mrw        = dict(cs_n=0, cas_n=0, ras_n=0, we_n=0, bank=0,     address=(0b110011 << 8) | 0b10101010)  # 6-bit address | 8-bit op code
-        self.run_test(
+        self.run_test(SimulationPHY(),
             dfi_sequence = [
                 {0: read, 4: write_ap},
                 {0: activate, 4: refresh_ab},
@@ -312,7 +323,7 @@ class TestLPDDR4(unittest.TestCase):
     def test_lpddr4_command_pads(self):
         latency = '00000000' * self.CMD_LATENCY
         read = dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)
-        self.run_test(
+        self.run_test(SimulationPHY(),
             dfi_sequence = [
                 {
                     0: dict(cke=1, odt=1, reset_n=1, **read),
@@ -339,12 +350,12 @@ class TestLPDDR4(unittest.TestCase):
             yield bit(0  + dq_i, wrdata)
             yield bit(16 + dq_i, wrdata)
 
+    def test_lpddr4_dq_out(self):
+        dut = SimulationPHY()
+        zero = '00000000' * 2  # zero for 1 sysclk clock in sys8x_ddr clock domain
 
-    def test_lpddr4_dq_output(self):
-        latency = '00000000' * self.CMD_LATENCY
-
-        dfi_phases = {
-            0: dict(wrdata=0x11112222, wrdata_en=1),  # wrdata_en=1 is needed on any phase
+        dfi_data = {
+            0: dict(wrdata=0x11112222),
             1: dict(wrdata=0x33334444),
             2: dict(wrdata=0x55556666),
             3: dict(wrdata=0x77778888),
@@ -353,16 +364,79 @@ class TestLPDDR4(unittest.TestCase):
             6: dict(wrdata=0xddddeeee),
             7: dict(wrdata=0xffff0000),
         }
+        dfi_wrdata_en = {0: dict(wrdata_en=1)}  # wrdata_en=1 required on any single phase
 
         def dq_pattern(i):
-            return ''.join(str(v) for v in self.wrdata_to_dq(i, dfi_phases))
+            return ''.join(str(v) for v in self.wrdata_to_dq(i, dfi_data))
 
-        # no data should be on DQ without wrdata_en=1 (which enables DQ_oe)
-        no_wrdata_en = {p: signals for p, signals in dfi_phases.items() if p != 0}
-        self.run_test(
-            dfi_sequence = [dfi_phases, no_wrdata_en],
+        self.run_test(dut,
+            dfi_sequence = [dfi_wrdata_en, {}, dfi_data],
             pad_checkers = {"sys8x_ddr": {
-                f'dq{i}': 2*latency + dq_pattern(i) + 2*latency for i in range(16)
+                f'dq{i}': (self.CMD_LATENCY+1)*zero + zero + dq_pattern(i) + zero for i in range(16)
             }},
-            vcd_name='sim.vcd',
+            # vcd_name='sim.vcd',
+        )
+
+    def test_lpddr4_dq_only_1cycle(self):
+        dut = SimulationPHY()
+        zero = '00000000' * 2
+
+        dfi_data = {
+            0: dict(wrdata=0x11112222),
+            1: dict(wrdata=0x33334444),
+            2: dict(wrdata=0x55556666),
+            3: dict(wrdata=0x77778888),
+            4: dict(wrdata=0x9999aaaa),
+            5: dict(wrdata=0xbbbbcccc),
+            6: dict(wrdata=0xddddeeee),
+            7: dict(wrdata=0xffff0000),
+        }
+        dfi_wrdata_en = copy.deepcopy(dfi_data)
+        dfi_wrdata_en[0].update(dict(wrdata_en=1))
+
+        def dq_pattern(i):
+            return ''.join(str(v) for v in self.wrdata_to_dq(i, dfi_data))
+
+        self.run_test(dut,
+            dfi_sequence = [dfi_wrdata_en, dfi_data, dfi_data],
+            pad_checkers = {"sys8x_ddr": {
+                f'dq{i}': (self.CMD_LATENCY+1)*zero + zero + dq_pattern(i) + zero for i in range(16)
+            }},
+            # vcd_name='sim.vcd',
+        )
+
+    def test_lpddr4_dqs(self):
+        zero = '00000000' * 2
+        dfi_phases = {
+            0: dict(wrdata=0xffffffff, wrdata_en=1),  # wrdata_en=1 is needed on any phase
+            1: dict(wrdata=0xffffffff),
+            2: dict(wrdata=0xffffffff),
+            3: dict(wrdata=0xffffffff),
+            4: dict(wrdata=0xffffffff),
+            5: dict(wrdata=0xffffffff),
+            6: dict(wrdata=0xffffffff),
+            7: dict(wrdata=0xffffffff),
+        }
+
+        self.run_test(SimulationPHY(),
+            dfi_sequence = [
+                {0: dict(wrdata_en=1)},
+                {},
+                {
+                    0: dict(wrdata=0xffffffff),
+                    1: dict(wrdata=0xffffffff),
+                    2: dict(wrdata=0xffffffff),
+                    3: dict(wrdata=0xffffffff),
+                    4: dict(wrdata=0xffffffff),
+                    5: dict(wrdata=0xffffffff),
+                    6: dict(wrdata=0xffffffff),
+                    7: dict(wrdata=0xffffffff),
+                },
+            ],
+            pad_checkers = {"sys8x_ddr": {  # preamble, pattern, preamble
+                'dq0':  (self.CMD_LATENCY+1)*zero + '00000000'+'00000000' + '11111111'+'11111111' + '00000000'+'00000000' + zero,
+                'dqs0': (self.CMD_LATENCY+1)*zero + '00000000'+'00101010' + '10101010'+'10101010' + '10101000'+'00000000' + zero,
+                'dqs1': (self.CMD_LATENCY+1)*zero + '00000000'+'00101010' + '10101010'+'10101010' + '10101000'+'00000000' + zero,
+            }},
+            # vcd_name='sim.vcd',
         )

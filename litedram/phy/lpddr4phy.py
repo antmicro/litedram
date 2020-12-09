@@ -66,9 +66,9 @@ class LPDDR4PHY(Module, AutoCSR):
         def get_cl_cw(memtype, tck):
             # MT53E256M16D1, No DBI, Set A
             f_to_cl_cwl = OrderedDict()
-            f_to_cl_cwl[ 532e6] = ( 6,  4)
-            f_to_cl_cwl[1066e6] = (10,  6)
-            f_to_cl_cwl[1600e6] = (14,  8)
+            # f_to_cl_cwl[ 532e6] = ( 6,  4)  # FIXME: with that low cwl, wrtap is 0
+            # f_to_cl_cwl[1066e6] = (10,  6)
+            # f_to_cl_cwl[1600e6] = (14,  8)
             f_to_cl_cwl[2132e6] = (20, 10)
             f_to_cl_cwl[2666e6] = (24, 12)
             f_to_cl_cwl[3200e6] = (28, 14)
@@ -79,6 +79,7 @@ class LPDDR4PHY(Module, AutoCSR):
                     return cl, cwl
             raise ValueError
 
+        bitslip_cycles  = 1
         cl, cwl         = get_cl_cw(memtype, tck)
         cl_sys_latency  = get_sys_latency(nphases, cl)
         cwl_sys_latency = get_sys_latency(nphases, cwl)
@@ -116,8 +117,8 @@ class LPDDR4PHY(Module, AutoCSR):
             wrphase       = self._wrphase.storage,
             cl            = cl,
             cwl           = cwl,
-            read_latency  = cl_sys_latency + 6,
-            write_latency = cwl_sys_latency - 1,
+            read_latency  = cl_sys_latency,
+            write_latency = cwl_sys_latency,
             cmd_latency   = cmd_latency,
             cmd_delay     = cmd_delay,
         )
@@ -209,11 +210,14 @@ class LPDDR4PHY(Module, AutoCSR):
             self.comb += self.ck_ca[bit].eq(reduce(or_, ca_per_adapter[bit]))
 
         # DQ ---------------------------------------------------------------------------------------
+        dq_oe = Signal()
+        self.comb += self.dq_oe.eq(delayed(self, dq_oe, cycles=1))
+
         for bit in range(self.databits):
             # output
             self.submodules += BitSlip(
                 dw     = 2*nphases,
-                cycles = 1,
+                cycles = bitslip_cycles,
                 rst    = (self._dly_sel.storage[bit//8] & self._wdly_dq_bitslip_rst.re) | self._rst.storage,
                 slp    = self._dly_sel.storage[bit//8] & self._wdly_dq_bitslip.re,
                 i      = Cat(*[self.dfi.phases[i//2].wrdata[i%2 * self.databits + bit] for i in range(2*nphases)]),
@@ -224,7 +228,7 @@ class LPDDR4PHY(Module, AutoCSR):
             dq_i_bs = Signal(2*nphases)
             self.submodules += BitSlip(
                 dw     = 2*nphases,
-                cycles = 1,
+                cycles = bitslip_cycles,
                 rst    = (self._dly_sel.storage[bit//8] & self._rdly_dq_bitslip_rst.re) | self._rst.storage,
                 slp    = self._dly_sel.storage[bit//8] & self._rdly_dq_bitslip.re,
                 i      = self.ck_dq_i[bit],
@@ -232,6 +236,43 @@ class LPDDR4PHY(Module, AutoCSR):
             )
             for i in range(2*nphases):
                 self.comb += self.dfi.phases[i//2].rddata[i%2 * self.databits + bit].eq(dq_i_bs[i])
+
+        # DQS --------------------------------------------------------------------------------------
+        dqs_oe        = Signal()
+        dqs_preamble  = Signal()
+        dqs_postamble = Signal()
+        dqs_pattern   = DQSPattern(
+            preamble      = dqs_postamble,  # FIXME: are defined the opposite way (common.py) ???
+            postamble     = dqs_preamble,
+            wlevel_en     = self._wlevel_en.storage,
+            wlevel_strobe = self._wlevel_strobe.re)
+        self.submodules += dqs_pattern
+        self.comb += [
+            self.dqs_oe.eq(delayed(self, dqs_oe, cycles=1)),
+        ]
+
+        # adjust the pattern as we need 8 phases = 16 bits (instead of 8)
+        dqs_pattern_full = Signal(2*nphases)
+        self.comb += \
+            If(dqs_preamble,
+                dqs_pattern_full.eq(Cat(Replicate(0, nphases), dqs_pattern.o))
+            ).Elif(dqs_postamble,
+                dqs_pattern_full.eq(dqs_pattern.o)
+            ).Else(
+                dqs_pattern_full.eq(Cat(dqs_pattern.o, dqs_pattern.o))
+            )
+        # self.comb += dqs_pattern_full.eq(Cat(dqs_pattern.o, dqs_pattern.o))
+
+        for bit in range(self.databits//8):
+            # output
+            self.submodules += BitSlip(
+                dw     = 2*nphases,
+                cycles = bitslip_cycles,
+                rst    = (self._dly_sel.storage[bit//8] & self._wdly_dq_bitslip_rst.re) | self._rst.storage,
+                slp    = self._dly_sel.storage[bit//8] & self._wdly_dq_bitslip.re,
+                i      = dqs_pattern_full,
+                o      = self.ck_dqs_o[bit],
+            )
 
         # Read Control Path ------------------------------------------------------------------------
         # Creates a delay line of read commands coming from the DFI interface. The output is used to
@@ -249,6 +290,7 @@ class LPDDR4PHY(Module, AutoCSR):
 
         # Write Control Path -----------------------------------------------------------------------
         wrtap = cwl_sys_latency - 1
+        assert wrtap >= 1
 
         # Create a delay line of write commands coming from the DFI interface. This taps are used to
         # control DQ/DQS tristates.
@@ -258,15 +300,15 @@ class LPDDR4PHY(Module, AutoCSR):
         )
         self.submodules += wrdata_en
 
-        self.comb += self.dq_oe.eq(wrdata_en.taps[wrtap])
-        # self.comb += If(self._wlevel_en.storage, dqs_oe.eq(1)).Else(dqs_oe.eq(dq_oe))
+        self.comb += dq_oe.eq(wrdata_en.taps[wrtap])
+        self.comb += If(self._wlevel_en.storage, dqs_oe.eq(1)).Else(dqs_oe.eq(dqs_preamble | dq_oe | dqs_postamble))
 
-        # # Write DQS Postamble/Preamble Control Path ------------------------------------------------
-        # # Generates DQS Preamble 1 cycle before the first write and Postamble 1 cycle after the last
-        # # write. During writes, DQS tristate is configured as output for at least 3 sys_clk cycles:
-        # # 1 for Preamble, 1 for the Write and 1 for the Postamble.
-        # self.comb += dqs_preamble.eq( wrdata_en.taps[wrtap - 1]  & ~wrdata_en.taps[wrtap + 0])
-        # self.comb += dqs_postamble.eq(wrdata_en.taps[wrtap + 1]  & ~wrdata_en.taps[wrtap + 0])
+        # Write DQS Postamble/Preamble Control Path ------------------------------------------------
+        # Generates DQS Preamble 1 cycle before the first write and Postamble 1 cycle after the last
+        # write. During writes, DQS tristate is configured as output for at least 3 sys_clk cycles:
+        # 1 for Preamble, 1 for the Write and 1 for the Postamble.
+        self.comb += dqs_preamble.eq( wrdata_en.taps[wrtap - 1]  & ~wrdata_en.taps[wrtap + 0])
+        self.comb += dqs_postamble.eq(wrdata_en.taps[wrtap + 1]  & ~wrdata_en.taps[wrtap + 0])
 
 class DFIPhaseAdapter(Module):
     # We must perform mapping of DFI commands to the LPDDR4 commands set on CA bus.
@@ -465,12 +507,12 @@ class SimulationPHY(LPDDR4PHY):
         # tristate i/o separate for simulation
         for i in range(self.databits//8):
             ser_ddr(i=self.ck_dmi_o[i], o=self.pads.dmi_o[i], name=f'dmi_o{i}')
-            des_ddr(o=self.ck_dmi_i[i], i=self.pads.dmi[i], name=f'dmi_i{i}')
+            des_ddr(o=self.ck_dmi_i[i], i=self.pads.dmi[i],   name=f'dmi_i{i}')
             ser_ddr(i=self.ck_dqs_o[i], o=self.pads.dqs_o[i], name=f'dqs_o{i}')
-            des_ddr(o=self.ck_dqs_i[i], i=self.pads.dqs[i], name=f'dqs_i{i}')
+            des_ddr(o=self.ck_dqs_i[i], i=self.pads.dqs[i],   name=f'dqs_i{i}')
         for i in range(self.databits):
             ser_ddr(i=self.ck_dq_o[i], o=self.pads.dq_o[i], name=f'dq_o{i}')
-            des_ddr(o=self.ck_dq_i[i], i=self.pads.dq[i], name=f'dq_i{i}')
+            des_ddr(o=self.ck_dq_i[i], i=self.pads.dq[i],   name=f'dq_i{i}')
         self.comb += self.pads.dmi_oe.eq(delayed(self, self.dmi_oe, cycles=Serializer.LATENCY))
         self.comb += self.pads.dqs_oe.eq(delayed(self, self.dqs_oe, cycles=Serializer.LATENCY))
         self.comb += self.pads.dq_oe.eq(delayed(self, self.dq_oe, cycles=Serializer.LATENCY))
