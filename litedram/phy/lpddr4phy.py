@@ -242,8 +242,8 @@ class LPDDR4PHY(Module, AutoCSR):
         dqs_preamble  = Signal()
         dqs_postamble = Signal()
         dqs_pattern   = DQSPattern(
-            preamble      = dqs_postamble,  # FIXME: are defined the opposite way (common.py) ???
-            postamble     = dqs_preamble,
+            preamble      = dqs_preamble,  # FIXME: are defined the opposite way (common.py) ???
+            postamble     = dqs_postamble,
             wlevel_en     = self._wlevel_en.storage,
             wlevel_strobe = self._wlevel_strobe.re)
         self.submodules += dqs_pattern
@@ -253,15 +253,17 @@ class LPDDR4PHY(Module, AutoCSR):
 
         # adjust the pattern as we need 8 phases = 16 bits (instead of 8)
         dqs_pattern_full = Signal(2*nphases)
+        # self.comb += dqs_pattern_full.eq(Cat(dqs_pattern.o, dqs_pattern.o))
         self.comb += \
             If(dqs_preamble,
-                dqs_pattern_full.eq(Cat(Replicate(0, nphases), dqs_pattern.o))
+                # dqs_pattern_full.eq(Cat(Replicate(0, nphases), dqs_pattern.o))
+                dqs_pattern_full.eq(0)
             ).Elif(dqs_postamble,
-                dqs_pattern_full.eq(dqs_pattern.o)
+                # dqs_pattern_full.eq(dqs_pattern.o)
+                dqs_pattern_full.eq(0)
             ).Else(
                 dqs_pattern_full.eq(Cat(dqs_pattern.o, dqs_pattern.o))
             )
-        # self.comb += dqs_pattern_full.eq(Cat(dqs_pattern.o, dqs_pattern.o))
 
         for bit in range(self.databits//8):
             # output
@@ -483,12 +485,16 @@ class SimulationPHY(LPDDR4PHY):
 
         def ser_sdr(phase=0, **kwargs):
             clkdiv = {0: "sys8x", 90: "sys8x_90"}[phase]
-            serialize(clk="sys", clkdiv=clkdiv, i_dw=8, **kwargs)
+            clk = {0: "sys", 90: "sys_11_25"}[phase]
+            # clk = "sys"
+            serialize(clk=clk, clkdiv=clkdiv, i_dw=8, **kwargs)
 
         def ser_ddr(phase=0, **kwargs):
             # for simulation we require sys8x_ddr clock (=sys16x)
             clkdiv = {0: "sys8x_ddr", 90: "sys8x_90_ddr"}[phase]
-            serialize(clk="sys", clkdiv=clkdiv, i_dw=16, **kwargs)
+            clk = {0: "sys", 90: "sys_11_25"}[phase]
+            # clk = "sys"
+            serialize(clk=clk, clkdiv=clkdiv, i_dw=16, **kwargs)
 
         def des_ddr(phase=0, **kwargs):
             clkdiv = {0: "sys8x_ddr", 90: "sys8x_90_ddr"}[phase]
@@ -508,8 +514,8 @@ class SimulationPHY(LPDDR4PHY):
         for i in range(self.databits//8):
             ser_ddr(i=self.ck_dmi_o[i], o=self.pads.dmi_o[i], name=f'dmi_o{i}')
             des_ddr(o=self.ck_dmi_i[i], i=self.pads.dmi[i],   name=f'dmi_i{i}')
-            ser_ddr(i=self.ck_dqs_o[i], o=self.pads.dqs_o[i], name=f'dqs_o{i}')
-            des_ddr(o=self.ck_dqs_i[i], i=self.pads.dqs[i],   name=f'dqs_i{i}')
+            ser_ddr(i=self.ck_dqs_o[i], o=self.pads.dqs_o[i], name=f'dqs_o{i}', phase=90)
+            des_ddr(o=self.ck_dqs_i[i], i=self.pads.dqs[i],   name=f'dqs_i{i}', phase=90)
         for i in range(self.databits):
             ser_ddr(i=self.ck_dq_o[i], o=self.pads.dq_o[i], name=f'dq_o{i}')
             des_ddr(o=self.ck_dq_i[i], i=self.pads.dq[i],   name=f'dq_i{i}')
@@ -518,9 +524,18 @@ class SimulationPHY(LPDDR4PHY):
         self.comb += self.pads.dq_oe.eq(delayed(self, self.dq_oe, cycles=Serializer.LATENCY))
 
 class Serializer(Module):
+    """Serialize given input signal
+
+    It latches the input data on the rising edge of `clk`. Output data counter `cnt` is incremented
+    on rising edges of `clkdiv` and it determines current slice of `i` that is presented on `o`.
+    `latency` is specified in `clk` cycles.
+
+    NOTE: both `clk` and `clkdiv` should be phase aligned.
+    NOTE: `reset_value` is set to `ratio - 1` so that on the first clock edge after reset it is 0
+    """
     LATENCY = 1
 
-    def __init__(self, clk, clkdiv, i_dw, o_dw, i=None, o=None, reset=None, name=None):
+    def __init__(self, clk, clkdiv, i_dw, o_dw, i=None, o=None, reset=None, reset_value=-1, name=None):
         assert i_dw > o_dw
         assert i_dw % o_dw == 0
         ratio = i_dw // o_dw
@@ -536,8 +551,11 @@ class Serializer(Module):
         self.o = o
         self.reset = reset
 
-        cnt = Signal(max=ratio, name='{}_cnt'.format(name) if name is not None else None)
-        sd_clkdiv += If(reset, cnt.eq(0)).Else(cnt.eq(cnt + 1))
+        if reset_value < 0:
+            reset_value = ratio + reset_value
+
+        cnt = Signal(max=ratio, reset=reset_value, name='{}_cnt'.format(name) if name is not None else None)
+        sd_clkdiv += If(reset | cnt == ratio - 1, cnt.eq(0)).Else(cnt.eq(cnt + 1))
 
         i_d = Signal.like(self.i)
         sd_clk += i_d.eq(self.i)
@@ -545,9 +563,17 @@ class Serializer(Module):
         self.comb += self.o.eq(i_array[cnt])
 
 class Deserializer(Module):
-    LATENCY = 1
+    """Deserialize given input signal
 
-    def __init__(self, clk, clkdiv, i_dw, o_dw, i=None, o=None, reset=None, name=None):
+    Latches the input data on the rising edges of `clkdiv` and stores them in the `o_pre` buffer.
+    Additional latency cycle is used to ensure that the last input bit is deserialized correctly.
+
+    NOTE: both `clk` and `clkdiv` should be phase aligned.
+    NOTE: `reset_value` is set to `ratio - 1` so that on the first clock edge after reset it is 0
+    """
+    LATENCY = 2
+
+    def __init__(self, clk, clkdiv, i_dw, o_dw, i=None, o=None, reset=None, reset_value=-1, name=None):
         assert i_dw < o_dw
         assert o_dw % i_dw == 0
         ratio = o_dw // i_dw
@@ -563,10 +589,16 @@ class Deserializer(Module):
         self.o = o
         self.reset = reset
 
-        cnt = Signal(max=ratio, name='{}_cnt'.format(name) if name is not None else None)
+        if reset_value < 0:
+            reset_value = ratio + reset_value
+
+        cnt = Signal(max=ratio, reset=reset_value, name='{}_cnt'.format(name) if name is not None else None)
         sd_clkdiv += If(reset, cnt.eq(0)).Else(cnt.eq(cnt + 1))
 
         o_pre = Signal.like(self.o)
         o_array = Array([o_pre[n*i_dw:(n+1)*i_dw] for n in range(ratio)])
         sd_clkdiv += o_array[cnt].eq(self.i)
-        sd_clk += self.o.eq(o_pre)
+        # we need to ensure that the last bit will be correct if clocks are phase aligned
+        o_pre_d = Signal.like(self.o)
+        sd_clk += o_pre_d.eq(o_pre)
+        sd_clk += self.o.eq(Cat(o_pre_d[:-1], o_pre[-1]))  # would work as self.comb (at least in simulation)
