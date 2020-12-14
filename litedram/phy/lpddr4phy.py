@@ -46,6 +46,37 @@ class ConstBitSlip(Module):
             cases[i] = self.o.eq(r[i+1:dw+i+1])
         self.comb += Case(slp, cases)
 
+# TODO: rewrite DQSPattern in common.py to support different data widths
+class DQSPattern(Module):
+    def __init__(self, preamble=None, postamble=None, wlevel_en=0, wlevel_strobe=0, register=False):
+        self.preamble  = Signal() if preamble  is None else preamble
+        self.postamble = Signal() if postamble is None else postamble
+        self.o = Signal(16)
+
+        # # #
+
+        # DQS Pattern transmitted as LSB-first.
+
+        self.comb += [
+            self.o.eq(0b0101010101010101),
+            If(self.preamble,
+                self.o.eq(0b0001010101010101)
+            ),
+            If(self.postamble,
+                self.o.eq(0b0101010101010100)
+            ),
+            If(wlevel_en,
+                self.o.eq(0b0000000000000000),
+                If(wlevel_strobe,
+                    self.o.eq(0b0000000000000001)
+                )
+            )
+        ]
+        if register:
+            o = Signal.like(self.o)
+            self.sync += o.eq(self.o)
+            self.o = o
+
 # LPDDR4PHY ----------------------------------------------------------------------------------------
 
 class LPDDR4PHY(Module, AutoCSR):
@@ -251,20 +282,6 @@ class LPDDR4PHY(Module, AutoCSR):
             self.dqs_oe.eq(delayed(self, dqs_oe, cycles=1)),
         ]
 
-        # adjust the pattern as we need 8 phases = 16 bits (instead of 8)
-        dqs_pattern_full = Signal(2*nphases)
-        # self.comb += dqs_pattern_full.eq(Cat(dqs_pattern.o, dqs_pattern.o))
-        self.comb += \
-            If(dqs_preamble,
-                # dqs_pattern_full.eq(Cat(Replicate(0, nphases), dqs_pattern.o))
-                dqs_pattern_full.eq(0)
-            ).Elif(dqs_postamble,
-                # dqs_pattern_full.eq(dqs_pattern.o)
-                dqs_pattern_full.eq(0)
-            ).Else(
-                dqs_pattern_full.eq(Cat(dqs_pattern.o, dqs_pattern.o))
-            )
-
         for bit in range(self.databits//8):
             # output
             self.submodules += BitSlip(
@@ -272,7 +289,7 @@ class LPDDR4PHY(Module, AutoCSR):
                 cycles = bitslip_cycles,
                 rst    = (self._dly_sel.storage[bit//8] & self._wdly_dq_bitslip_rst.re) | self._rst.storage,
                 slp    = self._dly_sel.storage[bit//8] & self._wdly_dq_bitslip.re,
-                i      = dqs_pattern_full,
+                i      = dqs_pattern.o,
                 o      = self.ck_dqs_o[bit],
             )
 
@@ -485,15 +502,15 @@ class SimulationPHY(LPDDR4PHY):
 
         def ser_sdr(phase=0, **kwargs):
             clkdiv = {0: "sys8x", 90: "sys8x_90"}[phase]
-            clk = {0: "sys", 90: "sys_11_25"}[phase]
-            # clk = "sys"
+            # clk = {0: "sys", 90: "sys_11_25"}[phase]
+            clk = {0: "sys", 90: "sys"}[phase]
             serialize(clk=clk, clkdiv=clkdiv, i_dw=8, **kwargs)
 
         def ser_ddr(phase=0, **kwargs):
             # for simulation we require sys8x_ddr clock (=sys16x)
             clkdiv = {0: "sys8x_ddr", 90: "sys8x_90_ddr"}[phase]
-            clk = {0: "sys", 90: "sys_11_25"}[phase]
-            # clk = "sys"
+            # clk = {0: "sys", 90: "sys_11_25"}[phase]
+            clk = {0: "sys", 90: "sys"}[phase]
             serialize(clk=clk, clkdiv=clkdiv, i_dw=16, **kwargs)
 
         def des_ddr(phase=0, **kwargs):

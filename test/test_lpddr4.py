@@ -506,12 +506,16 @@ class TestLPDDR4(unittest.TestCase):
                     7: dict(wrdata=0xfffeffff),
                 },
             ],
-            pad_checkers = {"sys8x_90_ddr": {  # preamble, pattern, preamble
-                'dq0':  (self.CMD_LATENCY+1)*zero + '00000000'+'00000000' + '10101010'+'10101010' + '00000000'+'00000000' + zero,
-                'dq1':  (self.CMD_LATENCY+1)*zero + '00000000'+'00000000' + '11111111'+'11111111' + '00000000'+'00000000' + zero,
-                'dqs0': (self.CMD_LATENCY+1)*zero + '00000000'+'00101010' + '10101010'+'10101010' + '10101000'+'00000000' + zero,
-                'dqs1': (self.CMD_LATENCY+1)*zero + '00000000'+'00101010' + '10101010'+'10101010' + '10101000'+'00000000' + zero,
-            }},
+            pad_checkers = {
+                "sys8x_90_ddr": {  # preamble, pattern, preamble
+                    'dq0':  (self.CMD_LATENCY+1)*zero + '00000000'+'00000000' + '10101010'+'10101010' + '00000000'+'00000000' + zero,
+                    'dq1':  (self.CMD_LATENCY+1)*zero + '00000000'+'00000000' + '11111111'+'11111111' + '00000000'+'00000000' + zero,
+                },
+                "sys8x_ddr": {  # preamble, pattern, preamble
+                    'dqs0': (self.CMD_LATENCY+1)*zero + '01010101'+'01010100' + '01010101'+'01010101' + '00010101'+'01010101' + zero,
+                    'dqs1': (self.CMD_LATENCY+1)*zero + '01010101'+'01010100' + '01010101'+'01010101' + '00010101'+'01010101' + zero,
+                }
+            },
             vcd_name='sim.vcd',
         )
 
