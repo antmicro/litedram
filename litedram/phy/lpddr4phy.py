@@ -293,6 +293,15 @@ class LPDDR4PHY(Module, AutoCSR):
                 o      = self.ck_dqs_o[bit],
             )
 
+        # DMI --------------------------------------------------------------------------------------
+        # DMI signal is used for Data Mask or Data Bus Invertion depending on Mode Registers values.
+        # With DM and DBI disabled, this signal is a Don't Care.
+        # With DM enabled, masking is performed only when the command used is WRITE-MASKED.
+        # TODO: use WRITE-MASKED for all write commands, and configure Mode Registers for that
+        #       during DRAM initialization (we don't want to support DBI).
+        for bin in range(self.databits//8):
+            self.comb += self.ck_dmi_o[bit].eq(0)
+
         # Read Control Path ------------------------------------------------------------------------
         # Creates a delay line of read commands coming from the DFI interface. The output is used to
         # signal a valid read data to the DFI interface.

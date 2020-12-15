@@ -349,7 +349,6 @@ class TestLPDDR4(unittest.TestCase):
             pad_checkers = {"sys8x_90_ddr": {
                 'clk_p': latency + '10101010' * 3,
             }},
-            # vcd_name='sim.vcd',
         )
 
     def test_lpddr4_cs_multiple_phases(self):
@@ -485,7 +484,6 @@ class TestLPDDR4(unittest.TestCase):
             pad_checkers = {"sys8x_90_ddr": {
                 f'dq{i}': (self.CMD_LATENCY+1)*zero + zero + dq_pattern(i) + zero for i in range(16)
             }},
-            # vcd_name='sim.vcd',
         )
 
     def test_lpddr4_dq_only_1cycle(self):
@@ -513,21 +511,10 @@ class TestLPDDR4(unittest.TestCase):
             pad_checkers = {"sys8x_90_ddr": {
                 f'dq{i}': (self.CMD_LATENCY+1)*zero + zero + dq_pattern(i) + zero for i in range(16)
             }},
-            # vcd_name='sim.vcd',
         )
 
     def test_lpddr4_dqs(self):
         zero = '00000000' * 2
-        dfi_phases = {
-            0: dict(wrdata=0xffffffff, wrdata_en=1),  # wrdata_en=1 is needed on any phase
-            1: dict(wrdata=0xffffffff),
-            2: dict(wrdata=0xffffffff),
-            3: dict(wrdata=0xffffffff),
-            4: dict(wrdata=0xffffffff),
-            5: dict(wrdata=0xffffffff),
-            6: dict(wrdata=0xffffffff),
-            7: dict(wrdata=0xffffffff),
-        }
 
         self.run_test(SimulationPHY(),
             dfi_sequence = [
@@ -554,41 +541,34 @@ class TestLPDDR4(unittest.TestCase):
                     'dqs1': (self.CMD_LATENCY+1)*zero + '01010101'+'01010100' + '01010101'+'01010101' + '00010101'+'01010101' + zero,
                 }
             },
-            vcd_name='sim.vcd',
         )
 
-    # def test_lpddr4_dmi(self):
-    #     zero = '00000000' * 2
-    #     dfi_phases = {
-    #         0: dict(wrdata=0xffffffff, wrdata_en=1),  # wrdata_en=1 is needed on any phase
-    #         1: dict(wrdata=0xffffffff),
-    #         2: dict(wrdata=0xffffffff),
-    #         3: dict(wrdata=0xffffffff),
-    #         4: dict(wrdata=0xffffffff),
-    #         5: dict(wrdata=0xffffffff),
-    #         6: dict(wrdata=0xffffffff),
-    #         7: dict(wrdata=0xffffffff),
-    #     }
-    #
-    #     self.run_test(SimulationPHY(),
-    #         dfi_sequence = [
-    #             {0: dict(wrdata_en=1)},
-    #             {},
-    #             {
-    #                 0: dict(wrdata=0xffffffff),
-    #                 1: dict(wrdata=0xffffffff),
-    #                 2: dict(wrdata=0xffffffff),
-    #                 3: dict(wrdata=0xffffffff),
-    #                 4: dict(wrdata=0xffffffff),
-    #                 5: dict(wrdata=0xffffffff),
-    #                 6: dict(wrdata=0xffffffff),
-    #                 7: dict(wrdata=0xffffffff),
-    #             },
-    #         ],
-    #         pad_checkers = {"sys8x_ddr": {
-    #             'dq0':  (self.CMD_LATENCY+1)*zero + '00000000'+'00000000' + '11111111'+'11111111' + '00000000'+'00000000' + zero,
-    #             'dqs0': (self.CMD_LATENCY+1)*zero + '00000000'+'00101010' + '10101010'+'10101010' + '10101000'+'00000000' + zero,
-    #             'dqs1': (self.CMD_LATENCY+1)*zero + '00000000'+'00101010' + '10101010'+'10101010' + '10101000'+'00000000' + zero,
-    #         }},
-    #         # vcd_name='sim.vcd',
-    #     )
+    def test_lpddr4_dmi_no_mask(self):
+        # There should be no masking
+        zero = '00000000' * 2
+
+        self.run_test(SimulationPHY(),
+            dfi_sequence = [
+                {0: dict(wrdata_en=1)},
+                {},
+                {
+                    0: dict(wrdata=0xffffffff),
+                    1: dict(wrdata=0xffffffff),
+                    2: dict(wrdata=0xffffffff),
+                    3: dict(wrdata=0xffffffff),
+                    4: dict(wrdata=0xffffffff),
+                    5: dict(wrdata=0xffffffff),
+                    6: dict(wrdata=0xffffffff),
+                    7: dict(wrdata=0xffffffff),
+                },
+            ],
+            pad_checkers = {
+                "sys8x_90_ddr": {
+                    'dq0':  (self.CMD_LATENCY+1)*zero + zero + '11111111'+'11111111' + 2*zero,
+                },
+                "sys8x_ddr": {
+                    'dmi0': (self.CMD_LATENCY+1)*zero + (3 + 1)*zero,
+                    'dmi1': (self.CMD_LATENCY+1)*zero + (3 + 1)*zero,
+                }
+            },
+        )
