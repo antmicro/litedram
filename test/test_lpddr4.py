@@ -286,48 +286,111 @@ class PadChecker:
             msg = f'Cycle {i} Signal `{sig}`: {val} vs {ref}\n'
             test_case.assertEqual(val, ref, msg=msg + '\n'.join(summaries))
 
-class TestLPDDR4(unittest.TestCase):
-    CMD_LATENCY = 2
+def dfi_names(cmd=True, wrdata=True, rddata=True):
+    names = []
+    if cmd:    names += [name for name, _, _ in dfi.phase_cmd_description(1, 1, 1)]
+    if wrdata: names += [name for name, _, _ in dfi.phase_wrdata_description(16)]
+    if rddata: names += [name for name, _, _ in dfi.phase_rddata_description(16)]
+    return names
 
-    def dfi_reset_value(self, sig):
-        return 1 if sig.endswith('_n') else 0
 
-    def dfi_reset_values(self):
-        desc = dfi.phase_description(addressbits=17, bankbits=3, nranks=1, databits=16)
-        return {sig: self.dfi_reset_value(sig) for sig, _, _ in desc}
+class DFIPhaseValues(dict):
+    """Dictionary {dfi_signal_name: value}"""
+    def __init__(self, **kwargs):
+        # widths are not important
+        names = dfi_names()
+        for sig in kwargs:
+            assert sig in names
+        super().__init__(**kwargs)
 
-    DFIPhaseValues = Mapping[str, int]
+
+class DFISequencer:
+    Cycle = int
     DFIPhase = int
+    DFISequence = Sequence[Mapping[DFIPhase, DFIPhaseValues]]
 
-    def dfi_generator(self, dfi, sequence: Sequence[Mapping[DFIPhase, DFIPhaseValues]]):
+    def __init__(self, sequence: DFISequence = []):
         # sequence: [{phase: {sig: value}}]
-        def reset():
-            for phase in dfi.phases:
-                for sig, val in self.dfi_reset_values().items():
-                    yield getattr(phase, sig).eq(val)
+        self.sequence = []  # generated on DFI
+        self.read_sequence = []  # read from DFI
+        self.expected_sequence = []  # expected to read from DFI
 
-        for per_phase in sequence:
+        # split sequence into read/write
+        for cycle in sequence:
+            read = {}
+            write = {}
+            for p, phase in cycle.items():
+                read[p] = DFIPhaseValues()
+                write[p] = DFIPhaseValues()
+                for sig, val in phase.items():
+                    target = write[p] if sig in dfi_names(rddata=False) else read[p]
+                    target[sig] = val
+            self.sequence.append(write)
+            self.expected_sequence.append(write)
+
+    def add(self, dfi_cycle: Mapping[DFIPhase, DFIPhaseValues]):
+        self.sequence.append(dfi_cycle)
+
+    def _dfi_reset_values(self):
+        return {sig: 1 if sig.endswith("_n") else 0 for sig in dfi_names()}
+
+    def _reset(self, dfi):
+        for phase in dfi.phases:
+            for sig, val in self._dfi_reset_values().items():
+                yield getattr(phase, sig).eq(val)
+
+    def assert_ok(self, test_case, expected: Mapping[Cycle, Mapping[DFIPhase, DFIPhaseValues]]):
+        # expected: should contain only rddata* signals
+        names = dfi_names(cmd=False, wrdata=False, rddata=True)
+        for cyc, (read, expected) in enumerate(zip(self.read_sequence, self.expected_sequence)):
+            for p in range(len(expected.phases)):
+                for sig in expected[p]:
+                    assert sig in names, f"`{sig}` is not DFI input signal"
+                    val = read[p][sig]
+                    ref = expected[p][sig]
+                    err = f"Cycle {cyc} signal `{sig}`: {val} vs {ref}"
+                    test_case.assertEqual(val, ref, msg=err)
+
+    def generator(self, dfi):
+        names = dfi_names(cmd=True, wrdata=True, rddata=False)
+        for per_phase in self.sequence:
             # reset in case of any previous changes
-            (yield from reset())
+            (yield from self._reset(dfi))
             # set values
             for phase, values in per_phase.items():
                 for sig, val in values.items():
-                    # print(f'dfi.p{phase}.{sig} = {val}')
+                    assert sig in names, f"`{sig}` is not DFI output signal"
                     yield getattr(dfi.phases[phase], sig).eq(val)
-            # print()
             yield
-        (yield from reset())
+        (yield from self._reset(dfi))
         yield
+
+    @passive
+    def reader(self, dfi):
+        while True:
+            phases = {}
+            for i, p in enumerate(dfi.phases):
+                values = DFIPhaseValues(rddata_en=(yield p.rddata_en), rddata=(yield p.rddata),
+                                        rddata_valid=(yield p.rddata_valid))
+                phases[i] = values
+            self.read_sequence.append(phases)
+            yield
+
+
+class TestLPDDR4(unittest.TestCase):
+    CMD_LATENCY = 2
 
     def run_test(self, dut, dfi_sequence, pad_checkers: Mapping[str, Mapping[str, str]], **kwargs):
         # pad_checkers: {clock: {sig: values}}
+        dfi = DFISequencer(dfi_sequence)
         checkers = {clk: PadChecker(dut.pads, pad_signals) for clk, pad_signals in pad_checkers.items()}
         generators = defaultdict(list)
-        generators["sys"].append(self.dfi_generator(dut.dfi, dfi_sequence))
+        generators["sys"].append(dfi.generator(dut.dfi))
         for clock, checker in checkers.items():
             generators[clock].append(checker.run())
         run_simulation(dut, generators, **kwargs)
         PadChecker.assert_ok(self, checkers)
+        dfi.assert_ok(self, {})  # TODO: add expected
 
     def test_lpddr4_cs_phase_0(self):
         latency = '00000000' * self.CMD_LATENCY
@@ -543,8 +606,7 @@ class TestLPDDR4(unittest.TestCase):
             },
         )
 
-    def test_lpddr4_dmi_no_mask(self):
-        # There should be no masking
+    def test_lpddr4_dmi_no_mask(self):  # There should be no masking
         zero = '00000000' * 2
 
         self.run_test(SimulationPHY(),
