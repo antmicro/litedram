@@ -181,77 +181,113 @@ class TestSimSerializers(unittest.TestCase):
     test_sim_deserializer_16_phase90_check0 = _d(ARGS_16, clk="sys_11_25", clkdiv="sys8x_90_ddr", clkcheck="sys", latency=Deserializer.LATENCY + 1)
 
 
-class TestLPDDR4(unittest.TestCase):
-    CMD_LATENCY = 2
+BOLD = '\033[1m'
+HIGHLIGHT = '\033[91m'
+CLEAR = '\033[0m'
 
-    class PadsHistory(defaultdict):
-        def __init__(self):
-            super().__init__(str)
+def highlight(s, hl=True):
+    return BOLD + (HIGHLIGHT if hl else '') + s + CLEAR
 
-        def format(self, hl_cycle=None, hl_signal=None):
+
+class PadsHistory(defaultdict):
+    def __init__(self):
+        super().__init__(str)
+
+    def format(self, hl_cycle=None, hl_signal=None, underline_cycle=False, key_strw=None):
+        if key_strw is None:
+            key_strw = max(len(k) for k in self)
+        lines = []
+        for k in self:
+            vals = list(self[k])
+            if hl_cycle is not None and hl_signal is not None:
+                vals = [highlight(val, hl=hl_signal == k) if i == hl_cycle else val
+                        for i, val in enumerate(vals)]
+            hist = ' '.join(''.join(chunk) for chunk in chunks(vals, 8))
+            line = '{:{n}} {}'.format(k + ':', hist, n=key_strw+1)
+            lines.append(line)
+        if underline_cycle:
+            assert hl_cycle is not None
+            n = hl_cycle + hl_cycle//8
+            line = ' ' * (key_strw+1) + ' ' + ' ' * n + '^'
+            lines.append(line)
+        if hl_signal is not None and hl_cycle is None:
             keys = list(self.keys())
-            key_strw = max(len(k) for k in keys)
-            lines = []
-            for k in keys:
-                vals = list(self[k])
-                if hl_cycle is not None and hl_signal is not None:
-                    def highlight(val):
-                        hl = '\033[91m' if hl_signal == k else ''
-                        bold = '\033[1m'
-                        clear = '\033[0m'
-                        return bold + hl + val + clear
-                    vals = [highlight(val) if i == hl_cycle else val for i, val in enumerate(vals)]
-                hist = ' '.join(''.join(chunk) for chunk in chunks(vals, 8))
-                line = '{:{n}} {}'.format(k + ':', hist, n=key_strw+1)
-                lines.append(line)
-            if hl_cycle is not None:
-                n = hl_cycle + hl_cycle//8
-                line = ' ' * (key_strw+1) + ' ' + ' ' * n + '^'
-                lines.append(line)
-            if hl_signal is not None and hl_cycle is None:
-                sig_i = keys.index(hl_signal)
-                lines = ['{} {}'.format('>' if i == sig_i else ' ', line) for i, line in enumerate(lines)]
-            return '\n'.join(lines)
+            sig_i = keys.index(hl_signal)
+            lines = ['{} {}'.format('>' if i == sig_i else ' ', line) for i, line in enumerate(lines)]
+        return '\n'.join(lines)
 
-    def pads_checker(self, pads, signals: Mapping[str, str], fail_fast=False, print_summary=False):
-        # signals: {sig: values}, values: a string of '0'/'1'/'x'
+    @staticmethod
+    def width_for(histories):
+        keys = itertools.chain.from_iterable(h.keys() for h in histories)
+        return max(len(k) for k in keys)
+
+class PadChecker:
+    def __init__(self, pads, signals: Mapping[str, str]):
+        # signals: {sig: values}, values: a string of '0'/'1'/'x'/' '
+        self.pads = pads
+        self.signals = signals
+        self.history = PadsHistory()  # registered values
+        self.ref_history = PadsHistory()  # expected values
+
+        assert all(v in '01x' for values in signals.values() for v in values)
+
         lengths = [len(vals) for vals in signals.values()]
-        n = lengths[0]
-        assert all(l == n for l in lengths)
+        assert all(l == lengths[0] for l in lengths)
 
-        errors = []
-        history = self.PadsHistory()
-        ref_history = self.PadsHistory()
-        for i in range(n):
-            for sig, vals in signals.items():
+    @property
+    def length(self):
+        return len(list(self.signals.values())[0])
+
+    def run(self):
+        for i in range(self.length):
+            for sig, vals in self.signals.items():
+                # transform numbered signal names to pad indicies (e.g. dq1 -> dq[1])
                 m = re.match(r'([a-zA-Z_]+)(\d+)', sig)
-                if m:
-                    pad = getattr(pads, m.group(1))[int(m.group(2))]
-                else:
-                    pad = getattr(pads, sig)
+                pad = getattr(self.pads, m.group(1))[int(m.group(2))] if m else getattr(self.pads, sig)
+
+                # save the value at current cycle
                 val = vals[i]
-                history[sig] += str((yield pad))
-                ref_history[sig] += vals[i]
-                if val != 'x':
-                    msg = f'Cycle {i} Signal {sig}: {(yield pad)} vs {vals[i]}'
-                    errors.append([i, sig, (yield pad), int(vals[i]), msg])
-                    if fail_fast:
-                        msg += '\nHistory:\n{}'.format(history.format())
-                        self.assertEqual((yield pad), int(vals[i]), msg=msg)
+                self.history[sig] += str((yield pad))
+                self.ref_history[sig] += val
             yield
 
-        def summary(reference=True, **kwargs):
-            summary = ''
-            summary += '\nHistory:\n{}'.format(history.format(**kwargs))
-            if reference:
-                summary += '\nReference:\n{}'.format(ref_history.format(**kwargs))
-            return summary
+    def find_error(self, start=0):
+        for i in range(start, self.length):
+            for sig in self.history:
+                val = self.history[sig][i]
+                ref = self.ref_history[sig][i]
+                if ref != 'x' and val != ref:
+                    return (i, sig, val, ref)
+        return None
 
-        for i, sig, pad_val, ref_val, msg in errors:
-            self.assertEqual(pad_val, ref_val, msg=msg + summary(hl_cycle=i, hl_signal=sig))
+    def summary(self, **kwargs):
+        error = self.find_error()
+        cycle, sig = None, None
+        if error is not None:
+            cycle, sig, val, ref = error
+        lines = []
+        lines.append(self.history.format(hl_cycle=cycle, hl_signal=sig, **kwargs))
+        lines.append('vs ref:')
+        lines.append(self.ref_history.format(hl_cycle=cycle, hl_signal=sig, **kwargs))
+        return '\n'.join(lines)
 
-        if print_summary:
-            print(summary(reference=False))
+    @staticmethod
+    def assert_ok(test_case, clock_checkers):
+        # clock_checkers: {clock: PadChecker(...), ...}
+        errors = list(filter(None, [c.find_error() for c in clock_checkers.values()]))
+        if errors:
+            all_histories = [c.history for c in clock_checkers.values()]
+            all_histories += [c.ref_history for c in clock_checkers.values()]
+            key_strw = PadsHistory.width_for(all_histories)
+            summaries = ['{}\n{}'.format(highlight(clock, hl=False), checker.summary(key_strw=key_strw))
+                         for clock, checker in clock_checkers.items()]
+            first_error = min(errors, key=lambda e: e[0])  # first error
+            i, sig, val, ref = first_error
+            msg = f'Cycle {i} Signal `{sig}`: {val} vs {ref}\n'
+            test_case.assertEqual(val, ref, msg=msg + '\n'.join(summaries))
+
+class TestLPDDR4(unittest.TestCase):
+    CMD_LATENCY = 2
 
     def dfi_reset_value(self, sig):
         return 1 if sig.endswith('_n') else 0
@@ -285,11 +321,13 @@ class TestLPDDR4(unittest.TestCase):
 
     def run_test(self, dut, dfi_sequence, pad_checkers: Mapping[str, Mapping[str, str]], **kwargs):
         # pad_checkers: {clock: {sig: values}}
+        checkers = {clk: PadChecker(dut.pads, pad_signals) for clk, pad_signals in pad_checkers.items()}
         generators = defaultdict(list)
         generators["sys"].append(self.dfi_generator(dut.dfi, dfi_sequence))
-        for clock, pad_signals in pad_checkers.items():
-            generators[clock].append(self.pads_checker(dut.pads, pad_signals))
+        for clock, checker in checkers.items():
+            generators[clock].append(checker.run())
         run_simulation(dut, generators, **kwargs)
+        PadChecker.assert_ok(self, checkers)
 
     def test_lpddr4_cs_phase_0(self):
         latency = '00000000' * self.CMD_LATENCY
@@ -507,7 +545,7 @@ class TestLPDDR4(unittest.TestCase):
                 },
             ],
             pad_checkers = {
-                "sys8x_90_ddr": {  # preamble, pattern, preamble
+                "sys8x_90_ddr": {
                     'dq0':  (self.CMD_LATENCY+1)*zero + '00000000'+'00000000' + '10101010'+'10101010' + '00000000'+'00000000' + zero,
                     'dq1':  (self.CMD_LATENCY+1)*zero + '00000000'+'00000000' + '11111111'+'11111111' + '00000000'+'00000000' + zero,
                 },
