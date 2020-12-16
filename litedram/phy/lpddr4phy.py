@@ -81,8 +81,7 @@ class DQSPattern(Module):
 
 class LPDDR4PHY(Module, AutoCSR):
     def __init__(self, pads, *,
-                 sys_clk_freq, write_ser_latency, read_des_latency, phytype,
-                 cmd_latency=1, cmd_delay=None):
+                 sys_clk_freq, write_ser_latency, read_des_latency, phytype, cmd_delay=None):
         self.pads        = pads
         self.memtype     = memtype     = "LPDDR4"
         self.nranks      = nranks      = 1 if not hasattr(pads, "cs_n") else len(pads.cs_n)
@@ -110,12 +109,35 @@ class LPDDR4PHY(Module, AutoCSR):
                     return cl, cwl
             raise ValueError
 
+        # Bitslip introduces cycles+1 latency
         bitslip_cycles  = 1
+        # Commands are sent over 2 cycles (1-cycle commands with additional 1-cycle delay)
+        cmd_latency     = 1
+
         cl, cwl         = get_cl_cw(memtype, tck)
         cl_sys_latency  = get_sys_latency(nphases, cl)
         cwl_sys_latency = get_sys_latency(nphases, cwl)
         rdphase         = get_sys_phase(nphases, cl_sys_latency,   cl + cmd_latency)
         wrphase         = get_sys_phase(nphases, cwl_sys_latency, cwl + cmd_latency)
+
+        # Read latency
+        bitslip_delay   = bitslip_cycles + 1
+        read_data_delay = cmd_latency + write_ser_latency + cl_sys_latency  # CMD -> read data on DQ
+        read_des_delay  = read_des_latency + bitslip_delay  # data on DQ -> data on DFI rddata
+        read_latency    = read_data_delay + read_des_delay
+
+        # Write latency
+        write_latency = cwl_sys_latency
+
+        # print('cl', end=' = '); __import__('pprint').pprint(cl)
+        # print('cwl', end=' = '); __import__('pprint').pprint(cwl)
+        # print('cl_sys_latency', end=' = '); __import__('pprint').pprint(cl_sys_latency)
+        # print('cwl_sys_latency', end=' = '); __import__('pprint').pprint(cwl_sys_latency)
+        # print('rdphase', end=' = '); __import__('pprint').pprint(rdphase)
+        # print('wrphase', end=' = '); __import__('pprint').pprint(wrphase)
+        # print('read_data_delay', end=' = '); __import__('pprint').pprint(read_data_delay)
+        # print('read_des_delay', end=' = '); __import__('pprint').pprint(read_des_delay)
+        # print('read_latency', end=' = '); __import__('pprint').pprint(read_latency)
 
         # Registers --------------------------------------------------------------------------------
         self._rst             = CSRStorage()
@@ -148,8 +170,8 @@ class LPDDR4PHY(Module, AutoCSR):
             wrphase       = self._wrphase.storage,
             cl            = cl,
             cwl           = cwl,
-            read_latency  = cl_sys_latency,
-            write_latency = cwl_sys_latency,
+            read_latency  = read_latency,
+            write_latency = write_latency,
             cmd_latency   = cmd_latency,
             cmd_delay     = cmd_delay,
         )
@@ -495,8 +517,11 @@ class SimulationPHY(LPDDR4PHY):
     def __init__(self, sys_clk_freq=100e6):
         pads = LPDDR4SimulationPads()
         self.submodules += pads
-        super().__init__(pads, sys_clk_freq=sys_clk_freq,
-                         write_ser_latency=1, read_des_latency=1, phytype="SimulationPHY")
+        super().__init__(pads,
+                         sys_clk_freq      = sys_clk_freq,
+                         write_ser_latency = Serializer.LATENCY,
+                         read_des_latency  = Deserializer.LATENCY,
+                         phytype           = "SimulationPHY")
 
         # Serialization
         def serialize(**kwargs):

@@ -1,5 +1,6 @@
 import re
 import copy
+import pprint
 import random
 import unittest
 import itertools
@@ -236,7 +237,8 @@ class PadChecker:
 
     @property
     def length(self):
-        return len(list(self.signals.values())[0])
+        values = list(self.signals.values())
+        return len(values[0]) if values else 1
 
     def run(self):
         for i in range(self.length):
@@ -323,10 +325,11 @@ class DFISequencer:
                 read[p] = DFIPhaseValues()
                 write[p] = DFIPhaseValues()
                 for sig, val in phase.items():
-                    target = write[p] if sig in dfi_names(rddata=False) else read[p]
+                    is_write = sig in dfi_names(rddata=False) + ["rddata_en"]
+                    target = write[p] if is_write else read[p]
                     target[sig] = val
             self.sequence.append(write)
-            self.expected_sequence.append(write)
+            self.expected_sequence.append(read)
 
     def add(self, dfi_cycle: Mapping[DFIPhase, DFIPhaseValues]):
         self.sequence.append(dfi_cycle)
@@ -339,20 +342,25 @@ class DFISequencer:
             for sig, val in self._dfi_reset_values().items():
                 yield getattr(phase, sig).eq(val)
 
-    def assert_ok(self, test_case, expected: Mapping[Cycle, Mapping[DFIPhase, DFIPhaseValues]]):
-        # expected: should contain only rddata* signals
-        names = dfi_names(cmd=False, wrdata=False, rddata=True)
+    def assert_ok(self, test_case):
+        # expected: should contain only input signals
+        names = ["rddata", "rddata_valid"]
         for cyc, (read, expected) in enumerate(zip(self.read_sequence, self.expected_sequence)):
-            for p in range(len(expected.phases)):
+            for p in expected:
                 for sig in expected[p]:
                     assert sig in names, f"`{sig}` is not DFI input signal"
                     val = read[p][sig]
                     ref = expected[p][sig]
-                    err = f"Cycle {cyc} signal `{sig}`: {val} vs {ref}"
+                    if sig in ["wrdata", "rddata"]:
+                        err = f"Cycle {cyc} signal `{sig}`: 0x{val:08x} vs 0x{ref:08x}"
+                    else:
+                        err = f"Cycle {cyc} signal `{sig}`: {val:} vs {ref}"
+                    err += "\nread: \n{}".format(pprint.pformat(self.read_sequence))
+                    err += "\nexpected: \n{}".format(pprint.pformat(self.expected_sequence))
                     test_case.assertEqual(val, ref, msg=err)
 
     def generator(self, dfi):
-        names = dfi_names(cmd=True, wrdata=True, rddata=False)
+        names = dfi_names(cmd=True, wrdata=True, rddata=False) + ["rddata_en"]
         for per_phase in self.sequence:
             # reset in case of any previous changes
             (yield from self._reset(dfi))
@@ -365,9 +373,8 @@ class DFISequencer:
         (yield from self._reset(dfi))
         yield
 
-    @passive
     def reader(self, dfi):
-        while True:
+        for _ in range(len(self.expected_sequence)):
             phases = {}
             for i, p in enumerate(dfi.phases):
                 values = DFIPhaseValues(rddata_en=(yield p.rddata_en), rddata=(yield p.rddata),
@@ -380,17 +387,21 @@ class DFISequencer:
 class TestLPDDR4(unittest.TestCase):
     CMD_LATENCY = 2
 
-    def run_test(self, dut, dfi_sequence, pad_checkers: Mapping[str, Mapping[str, str]], **kwargs):
+    def run_test(self, dut, dfi_sequence, pad_checkers: Mapping[str, Mapping[str, str]], pad_generators=None, **kwargs):
         # pad_checkers: {clock: {sig: values}}
         dfi = DFISequencer(dfi_sequence)
         checkers = {clk: PadChecker(dut.pads, pad_signals) for clk, pad_signals in pad_checkers.items()}
         generators = defaultdict(list)
         generators["sys"].append(dfi.generator(dut.dfi))
+        generators["sys"].append(dfi.reader(dut.dfi))
         for clock, checker in checkers.items():
             generators[clock].append(checker.run())
+        pad_generators = pad_generators or {}
+        for clock, gen in pad_generators.items():
+            generators[clock].append(gen(dut.pads))
         run_simulation(dut, generators, **kwargs)
         PadChecker.assert_ok(self, checkers)
-        dfi.assert_ok(self, {})  # TODO: add expected
+        dfi.assert_ok(self)
 
     def test_lpddr4_cs_phase_0(self):
         latency = '00000000' * self.CMD_LATENCY
@@ -514,14 +525,17 @@ class TestLPDDR4(unittest.TestCase):
             }},
         )
 
-    def wrdata_to_dq(self, dq_i, dfi_phases, nphases=8):
+    def dfi_data_to_dq(self, dq_i, dfi_phases, dfi_name, nphases=8):
         # data on DQ should go in a pattern:
         # dq0: p0.wrdata[0], p0.wrdata[16], p1.wrdata[0], p1.wrdata[16], ...
         # dq1: p0.wrdata[1], p0.wrdata[17], p1.wrdata[1], p1.wrdata[17], ...
         for p in range(nphases):
-            wrdata = dfi_phases[p]["wrdata"]
-            yield bit(0  + dq_i, wrdata)
-            yield bit(16 + dq_i, wrdata)
+            data = dfi_phases[p][dfi_name]
+            yield bit(0  + dq_i, data)
+            yield bit(16 + dq_i, data)
+
+    def dq_pattern(self, i, dfi_data, dfi_name):
+        return ''.join(str(v) for v in self.dfi_data_to_dq(i, dfi_data, dfi_name))
 
     def test_lpddr4_dq_out(self):
         dut = SimulationPHY()
@@ -539,13 +553,10 @@ class TestLPDDR4(unittest.TestCase):
         }
         dfi_wrdata_en = {0: dict(wrdata_en=1)}  # wrdata_en=1 required on any single phase
 
-        def dq_pattern(i):
-            return ''.join(str(v) for v in self.wrdata_to_dq(i, dfi_data))
-
         self.run_test(dut,
             dfi_sequence = [dfi_wrdata_en, {}, dfi_data],
             pad_checkers = {"sys8x_90_ddr": {
-                f'dq{i}': (self.CMD_LATENCY+1)*zero + zero + dq_pattern(i) + zero for i in range(16)
+                f'dq{i}': (self.CMD_LATENCY+1)*zero + zero + self.dq_pattern(i, dfi_data, "wrdata") + zero for i in range(16)
             }},
         )
 
@@ -566,13 +577,10 @@ class TestLPDDR4(unittest.TestCase):
         dfi_wrdata_en = copy.deepcopy(dfi_data)
         dfi_wrdata_en[0].update(dict(wrdata_en=1))
 
-        def dq_pattern(i):
-            return ''.join(str(v) for v in self.wrdata_to_dq(i, dfi_data))
-
         self.run_test(dut,
             dfi_sequence = [dfi_wrdata_en, dfi_data, dfi_data],
             pad_checkers = {"sys8x_90_ddr": {
-                f'dq{i}': (self.CMD_LATENCY+1)*zero + zero + dq_pattern(i) + zero for i in range(16)
+                f'dq{i}': (self.CMD_LATENCY+1)*zero + zero + self.dq_pattern(i, dfi_data, "wrdata") + zero for i in range(16)
             }},
         )
 
@@ -633,4 +641,47 @@ class TestLPDDR4(unittest.TestCase):
                     'dmi1': (self.CMD_LATENCY+1)*zero + (3 + 1)*zero,
                 }
             },
+        )
+
+    def test_dq_in_rddata(self):
+        # Check that data on DQ pads is deserialized correctly to DFI rddata.
+        # We assume that when there are no commands, PHY will still still deserialize the data,
+        # which is generally true (tristate oe is 0 whenever we are not writing).
+        dfi_data = {
+            0: dict(rddata=0x11112222),
+            1: dict(rddata=0x33334444),
+            2: dict(rddata=0x55556666),
+            3: dict(rddata=0x77778888),
+            4: dict(rddata=0x9999aaaa),
+            5: dict(rddata=0xbbbbcccc),
+            6: dict(rddata=0xddddeeee),
+            7: dict(rddata=0xffff0000),
+        }
+
+        def sim_dq(pads):
+            for _ in range(16 * 1):  # wait 1 sysclk cycle
+                yield
+            for cyc in range(16):  # send a burst of data on pads
+                for bit in range(16):
+                    yield pads.dq_i[bit].eq(int(self.dq_pattern(bit, dfi_data, "rddata")[cyc]))
+                yield
+            for bit in range(16):
+                yield pads.dq_i[bit].eq(0)
+            yield
+
+        read_des_delay = 2+2  # calculated as in PHY
+        dfi_sequence = [
+            {},  # wait 1 sysclk cycle
+            *[{} for _ in range(read_des_delay)],
+            dfi_data,
+            {},
+        ]
+
+        self.run_test(SimulationPHY(),
+            dfi_sequence = dfi_sequence,
+            pad_checkers = {},
+            pad_generators = {
+                "sys8x_90_ddr": sim_dq,
+            },
+            vcd_name='sim.vcd',
         )
