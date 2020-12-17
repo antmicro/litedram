@@ -374,6 +374,7 @@ class DFISequencer:
         yield
 
     def reader(self, dfi):
+        yield  # do not include data read on start (a.k.a. cycle=-1)
         for _ in range(len(self.expected_sequence)):
             phases = {}
             for i, p in enumerate(dfi.phases):
@@ -643,7 +644,23 @@ class TestLPDDR4(unittest.TestCase):
             },
         )
 
-    def test_dq_in_rddata(self):
+    def test_lpddr4_dq_in_rddata_valid(self):
+        # Check that rddata_valid is set with correct delay
+        read_latency = 8  # settings.read_latency
+        dfi_sequence = [
+            {0: dict(rddata_en=1)},  # command is issued by MC (appears on next cycle)
+            *[{p: dict(rddata_valid=0) for p in range(8)} for _ in range(read_latency - 1)],  # nothing is sent during write latency
+            {p: dict(rddata_valid=1) for p in range(8)},
+            {},
+        ]
+
+        self.run_test(SimulationPHY(),
+            dfi_sequence = dfi_sequence,
+            pad_checkers = {},
+            pad_generators = {},
+        )
+
+    def test_lpddr4_dq_in_rddata(self):
         # Check that data on DQ pads is deserialized correctly to DFI rddata.
         # We assume that when there are no commands, PHY will still still deserialize the data,
         # which is generally true (tristate oe is 0 whenever we are not writing).
@@ -669,7 +686,7 @@ class TestLPDDR4(unittest.TestCase):
                 yield pads.dq_i[bit].eq(0)
             yield
 
-        read_des_delay = 2+2  # calculated as in PHY
+        read_des_delay = 3  # phy.read_des_delay
         dfi_sequence = [
             {},  # wait 1 sysclk cycle
             *[{} for _ in range(read_des_delay)],
@@ -683,5 +700,4 @@ class TestLPDDR4(unittest.TestCase):
             pad_generators = {
                 "sys8x_90_ddr": sim_dq,
             },
-            vcd_name='sim.vcd',
         )

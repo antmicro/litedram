@@ -96,9 +96,9 @@ class LPDDR4PHY(Module, AutoCSR):
         def get_cl_cw(memtype, tck):
             # MT53E256M16D1, No DBI, Set A
             f_to_cl_cwl = OrderedDict()
-            # f_to_cl_cwl[ 532e6] = ( 6,  4)  # FIXME: with that low cwl, wrtap is 0
-            # f_to_cl_cwl[1066e6] = (10,  6)
-            # f_to_cl_cwl[1600e6] = (14,  8)
+            f_to_cl_cwl[ 532e6] = ( 6,  4)  # FIXME: with that low cwl, wrtap is 0
+            f_to_cl_cwl[1066e6] = (10,  6)
+            f_to_cl_cwl[1600e6] = (14,  8)
             f_to_cl_cwl[2132e6] = (20, 10)
             f_to_cl_cwl[2666e6] = (24, 12)
             f_to_cl_cwl[3200e6] = (28, 14)
@@ -109,10 +109,10 @@ class LPDDR4PHY(Module, AutoCSR):
                     return cl, cwl
             raise ValueError
 
-        # Bitslip introduces cycles+1 latency
+        # Bitslip introduces latency between from `cycles` up to `cycles + 1`
         bitslip_cycles  = 1
         # Commands are sent over 2 cycles (1-cycle commands with additional 1-cycle delay)
-        cmd_latency     = 1
+        cmd_latency     = 2
 
         cl, cwl         = get_cl_cw(memtype, tck)
         cl_sys_latency  = get_sys_latency(nphases, cl)
@@ -121,9 +121,8 @@ class LPDDR4PHY(Module, AutoCSR):
         wrphase         = get_sys_phase(nphases, cwl_sys_latency, cwl + cmd_latency)
 
         # Read latency
-        bitslip_delay   = bitslip_cycles + 1
         read_data_delay = cmd_latency + write_ser_latency + cl_sys_latency  # CMD -> read data on DQ
-        read_des_delay  = read_des_latency + bitslip_delay  # data on DQ -> data on DFI rddata
+        read_des_delay  = read_des_latency + bitslip_cycles  # data on DQ -> data on DFI rddata
         read_latency    = read_data_delay + read_des_delay
 
         # Write latency
@@ -339,7 +338,7 @@ class LPDDR4PHY(Module, AutoCSR):
         self.comb += [phase.rddata_valid.eq(rddata_en.output | self._wlevel_en.storage) for phase in dfi.phases]
 
         # Write Control Path -----------------------------------------------------------------------
-        wrtap = cwl_sys_latency - 1
+        wrtap = cwl_sys_latency
         assert wrtap >= 1
 
         # Create a delay line of write commands coming from the DFI interface. This taps are used to
@@ -549,7 +548,8 @@ class SimulationPHY(LPDDR4PHY):
 
         def des_ddr(phase=0, **kwargs):
             clkdiv = {0: "sys8x_ddr", 90: "sys8x_90_ddr"}[phase]
-            deserialize(clk="sys", clkdiv=clkdiv, o_dw=16, **kwargs)
+            clk = {0: "sys", 90: "sys_11_25"}[phase]
+            deserialize(clk=clk, clkdiv=clkdiv, o_dw=16, **kwargs)
 
         ser_sdr(i=self.ck_cke,     o=self.pads.cke,     name='cke')
         ser_sdr(i=self.ck_odt,     o=self.pads.odt,     name='odt')
@@ -569,7 +569,7 @@ class SimulationPHY(LPDDR4PHY):
             des_ddr(o=self.ck_dqs_i[i], i=self.pads.dqs[i],   name=f'dqs_i{i}', phase=90)
         for i in range(self.databits):
             ser_ddr(i=self.ck_dq_o[i], o=self.pads.dq_o[i], name=f'dq_o{i}')
-            des_ddr(o=self.ck_dq_i[i], i=self.pads.dq[i],   name=f'dq_i{i}')
+            des_ddr(o=self.ck_dq_i[i], i=self.pads.dq[i],   name=f'dq_i{i}', phase=90)
         self.comb += self.pads.dmi_oe.eq(delayed(self, self.dmi_oe, cycles=Serializer.LATENCY))
         self.comb += self.pads.dqs_oe.eq(delayed(self, self.dqs_oe, cycles=Serializer.LATENCY))
         self.comb += self.pads.dq_oe.eq(delayed(self, self.dq_oe, cycles=Serializer.LATENCY))
