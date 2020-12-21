@@ -111,8 +111,8 @@ class LPDDR4PHY(Module, AutoCSR):
 
         # Bitslip introduces latency between from `cycles` up to `cycles + 1`
         bitslip_cycles  = 1
-        # Commands are sent over 2 cycles (1-cycle commands with additional 1-cycle delay)
-        cmd_latency     = 2
+        # Commands are sent over 4 cycles of DRAM clock (sys8x)
+        cmd_latency     = 4
 
         cl, cwl         = get_cl_cw(memtype, tck)
         cl_sys_latency  = get_sys_latency(nphases, cl)
@@ -120,23 +120,33 @@ class LPDDR4PHY(Module, AutoCSR):
         rdphase         = get_sys_phase(nphases, cl_sys_latency,   cl + cmd_latency)
         wrphase         = get_sys_phase(nphases, cwl_sys_latency, cwl + cmd_latency)
 
+        # When the calculated phase is negative, it means that we need to increase sys latency
+        cwl_sys_delay = 0
+        while wrphase < 0:
+            wrphase += nphases
+            cwl_sys_delay += 1
+        cwl_sys_latency += cwl_sys_delay
+
         # Read latency
-        read_data_delay = cmd_latency + write_ser_latency + cl_sys_latency  # CMD -> read data on DQ
+        read_data_delay = write_ser_latency + cl_sys_latency  # CMD -> read data on DQ
         read_des_delay  = read_des_latency + bitslip_cycles  # data on DQ -> data on DFI rddata
         read_latency    = read_data_delay + read_des_delay
 
         # Write latency
         write_latency = cwl_sys_latency
 
-        # print('cl', end=' = '); __import__('pprint').pprint(cl)
-        # print('cwl', end=' = '); __import__('pprint').pprint(cwl)
-        # print('cl_sys_latency', end=' = '); __import__('pprint').pprint(cl_sys_latency)
-        # print('cwl_sys_latency', end=' = '); __import__('pprint').pprint(cwl_sys_latency)
-        # print('rdphase', end=' = '); __import__('pprint').pprint(rdphase)
-        # print('wrphase', end=' = '); __import__('pprint').pprint(wrphase)
-        # print('read_data_delay', end=' = '); __import__('pprint').pprint(read_data_delay)
-        # print('read_des_delay', end=' = '); __import__('pprint').pprint(read_des_delay)
-        # print('read_latency', end=' = '); __import__('pprint').pprint(read_latency)
+        # FIXME: remove
+        if __import__("os").environ.get("DEBUG") == '1':
+            print('cl', end=' = '); __import__('pprint').pprint(cl)
+            print('cwl', end=' = '); __import__('pprint').pprint(cwl)
+            print('cl_sys_latency', end=' = '); __import__('pprint').pprint(cl_sys_latency)
+            print('cwl_sys_latency', end=' = '); __import__('pprint').pprint(cwl_sys_latency)
+            print('rdphase', end=' = '); __import__('pprint').pprint(rdphase)
+            print('wrphase', end=' = '); __import__('pprint').pprint(wrphase)
+            print('read_data_delay', end=' = '); __import__('pprint').pprint(read_data_delay)
+            print('read_des_delay', end=' = '); __import__('pprint').pprint(read_des_delay)
+            print('read_latency', end=' = '); __import__('pprint').pprint(read_latency)
+            print('write_latency', end=' = '); __import__('pprint').pprint(write_latency)
 
         # Registers --------------------------------------------------------------------------------
         self._rst             = CSRStorage()
@@ -338,7 +348,7 @@ class LPDDR4PHY(Module, AutoCSR):
         self.comb += [phase.rddata_valid.eq(rddata_en.output | self._wlevel_en.storage) for phase in dfi.phases]
 
         # Write Control Path -----------------------------------------------------------------------
-        wrtap = cwl_sys_latency
+        wrtap = cwl_sys_latency - 1
         assert wrtap >= 1
 
         # Create a delay line of write commands coming from the DFI interface. This taps are used to
@@ -551,17 +561,21 @@ class SimulationPHY(LPDDR4PHY):
             clk = {0: "sys", 90: "sys_11_25"}[phase]
             deserialize(clk=clk, clkdiv=clkdiv, o_dw=16, **kwargs)
 
+        # Clock is shifted 180 degrees to get rising edge in the middle of SDR signals.
+        # To achieve that we send negated clock on clk_p and non-negated on clk_n.
+        ser_ddr(i=~self.ck_clk,    o=self.pads.clk_p,   name='clk_p')
+        ser_ddr(i=self.ck_clk,     o=self.pads.clk_n,   name='clk_n')
+
         ser_sdr(i=self.ck_cke,     o=self.pads.cke,     name='cke')
         ser_sdr(i=self.ck_odt,     o=self.pads.odt,     name='odt')
         ser_sdr(i=self.ck_reset_n, o=self.pads.reset_n, name='reset_n')
-        # FIXME: clk_p uses inverter ck_clk to have correct clk at phase=90; we
-        # could use phase=270 or send other sdr signals on phase=90 and clock on phase=0
-        ser_ddr(i=~self.ck_clk,    o=self.pads.clk_p,   name='clk_p', phase=90)
-        ser_ddr(i=self.ck_clk,     o=self.pads.clk_n,   name='clk_n', phase=90)
+
+        # Command/address
         ser_sdr(i=self.ck_cs,      o=self.pads.cs,      name='cs')
         for i in range(6):
             ser_sdr(i=self.ck_ca[i], o=self.pads.ca[i], name=f'ca{i}')
-        # tristate i/o separate for simulation
+
+        # Tristate I/O (separate for simulation)
         for i in range(self.databits//8):
             ser_ddr(i=self.ck_dmi_o[i], o=self.pads.dmi_o[i], name=f'dmi_o{i}')
             des_ddr(o=self.ck_dmi_i[i], i=self.pads.dmi[i],   name=f'dmi_i{i}')
@@ -570,6 +584,7 @@ class SimulationPHY(LPDDR4PHY):
         for i in range(self.databits):
             ser_ddr(i=self.ck_dq_o[i], o=self.pads.dq_o[i], name=f'dq_o{i}')
             des_ddr(o=self.ck_dq_i[i], i=self.pads.dq[i],   name=f'dq_i{i}', phase=90)
+        # Output enable signals
         self.comb += self.pads.dmi_oe.eq(delayed(self, self.dmi_oe, cycles=Serializer.LATENCY))
         self.comb += self.pads.dqs_oe.eq(delayed(self, self.dqs_oe, cycles=Serializer.LATENCY))
         self.comb += self.pads.dq_oe.eq(delayed(self, self.dq_oe, cycles=Serializer.LATENCY))

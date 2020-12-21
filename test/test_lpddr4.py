@@ -424,7 +424,7 @@ class TestLPDDR4(unittest.TestCase):
                 {3: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)},
             ],
             pad_checkers = {"sys8x_90_ddr": {
-                'clk_p': latency + '10101010' * 3,
+                'clk_p': latency + '01010101' * 3,
             }},
         )
 
@@ -709,5 +709,54 @@ class TestLPDDR4(unittest.TestCase):
             pad_checkers = {},
             pad_generators = {
                 "sys8x_90_ddr": sim_dq,
+            },
+        )
+
+    def test_lpddr4_cmd_write(self):
+        phy = SimulationPHY()
+        zero = '00000000' * 2
+        write_latency = phy.settings.write_latency
+        wrphase = phy.settings.wrphase.reset.value
+
+        dfi_data = {
+            0: dict(wrdata=0x11112222),
+            1: dict(wrdata=0x33334444),
+            2: dict(wrdata=0x55556666),
+            3: dict(wrdata=0x77778888),
+            4: dict(wrdata=0x9999aaaa),
+            5: dict(wrdata=0xbbbbcccc),
+            6: dict(wrdata=0xddddeeee),
+            7: dict(wrdata=0xffff0000),
+        }
+        dfi_sequence = [
+            {wrphase: dict(cs_n=0, cas_n=0, ras_n=1, we_n=0, wrdata_en=1)},
+            *[{} for _ in range(write_latency - 1)],
+            dfi_data,
+            {},
+            {},
+            {},
+            {},
+            {},
+        ]
+
+        self.run_test(phy,
+            dfi_sequence = dfi_sequence,
+            pad_checkers = {
+                "sys8x_90": {
+                    "cs":  "00000000"*2 + "00001010" + "00000000"*2,
+                    "ca0": "00000000"*2 + "00000000" + "00000000"*2,
+                    "ca1": "00000000"*2 + "00000010" + "00000000"*2,
+                    "ca2": "00000000"*2 + "00001000" + "00000000"*2,
+                    "ca3": "00000000"*2 + "00000000" + "00000000"*2,
+                    "ca4": "00000000"*2 + "00000010" + "00000000"*2,
+                    "ca5": "00000000"*2 + "00000000" + "00000000"*2,
+                },
+                "sys8x_90_ddr": {
+                    f'dq{i}': (self.CMD_LATENCY+1)*zero + zero + self.dq_pattern(i, dfi_data, "wrdata") + zero
+                    for i in range(16)
+                },
+                "sys8x_ddr": {
+                    "dqs0": (self.CMD_LATENCY+1)*zero + '01010101'+'01010100' + '01010101'+'01010101' + '00010101'+'01010101' + zero,
+                },
             },
         )
