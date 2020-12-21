@@ -385,6 +385,19 @@ class DFISequencer:
             yield
 
 
+def dfi_data_to_dq(dq_i, dfi_phases, dfi_name, nphases=8):
+    # data on DQ should go in a pattern:
+    # dq0: p0.wrdata[0], p0.wrdata[16], p1.wrdata[0], p1.wrdata[16], ...
+    # dq1: p0.wrdata[1], p0.wrdata[17], p1.wrdata[1], p1.wrdata[17], ...
+    for p in range(nphases):
+        data = dfi_phases[p][dfi_name]
+        yield bit(0  + dq_i, data)
+        yield bit(16 + dq_i, data)
+
+def dq_pattern(i, dfi_data, dfi_name):
+    return ''.join(str(v) for v in dfi_data_to_dq(i, dfi_data, dfi_name))
+
+
 class TestLPDDR4(unittest.TestCase):
     CMD_LATENCY = 2
 
@@ -398,8 +411,10 @@ class TestLPDDR4(unittest.TestCase):
         for clock, checker in checkers.items():
             generators[clock].append(checker.run())
         pad_generators = pad_generators or {}
-        for clock, gen in pad_generators.items():
-            generators[clock].append(gen(dut.pads))
+        for clock, gens in pad_generators.items():
+            gens = gens if isinstance(gens, list) else [gens]
+            for gen in gens:
+                generators[clock].append(gen(dut.pads))
         run_simulation(dut, generators, **kwargs)
         PadChecker.assert_ok(self, checkers)
         dfi.assert_ok(self)
@@ -532,18 +547,6 @@ class TestLPDDR4(unittest.TestCase):
             }},
         )
 
-    def dfi_data_to_dq(self, dq_i, dfi_phases, dfi_name, nphases=8):
-        # data on DQ should go in a pattern:
-        # dq0: p0.wrdata[0], p0.wrdata[16], p1.wrdata[0], p1.wrdata[16], ...
-        # dq1: p0.wrdata[1], p0.wrdata[17], p1.wrdata[1], p1.wrdata[17], ...
-        for p in range(nphases):
-            data = dfi_phases[p][dfi_name]
-            yield bit(0  + dq_i, data)
-            yield bit(16 + dq_i, data)
-
-    def dq_pattern(self, i, dfi_data, dfi_name):
-        return ''.join(str(v) for v in self.dfi_data_to_dq(i, dfi_data, dfi_name))
-
     def test_lpddr4_dq_out(self):
         # Test serialization of dfi wrdata to DQ pads
         dut = SimulationPHY()
@@ -564,7 +567,7 @@ class TestLPDDR4(unittest.TestCase):
         self.run_test(dut,
             dfi_sequence = [dfi_wrdata_en, {}, dfi_data],
             pad_checkers = {"sys8x_90_ddr": {
-                f'dq{i}': (self.CMD_LATENCY+1)*zero + zero + self.dq_pattern(i, dfi_data, "wrdata") + zero for i in range(16)
+                f'dq{i}': (self.CMD_LATENCY+1)*zero + zero + dq_pattern(i, dfi_data, "wrdata") + zero for i in range(16)
             }},
         )
 
@@ -589,7 +592,7 @@ class TestLPDDR4(unittest.TestCase):
         self.run_test(dut,
             dfi_sequence = [dfi_wrdata_en, dfi_data, dfi_data],
             pad_checkers = {"sys8x_90_ddr": {
-                f'dq{i}': (self.CMD_LATENCY+1)*zero + zero + self.dq_pattern(i, dfi_data, "wrdata") + zero for i in range(16)
+                f'dq{i}': (self.CMD_LATENCY+1)*zero + zero + dq_pattern(i, dfi_data, "wrdata") + zero for i in range(16)
             }},
         )
 
@@ -690,7 +693,7 @@ class TestLPDDR4(unittest.TestCase):
                 yield
             for cyc in range(16):  # send a burst of data on pads
                 for bit in range(16):
-                    yield pads.dq_i[bit].eq(int(self.dq_pattern(bit, dfi_data, "rddata")[cyc]))
+                    yield pads.dq_i[bit].eq(int(dq_pattern(bit, dfi_data, "rddata")[cyc]))
                 yield
             for bit in range(16):
                 yield pads.dq_i[bit].eq(0)
@@ -713,6 +716,7 @@ class TestLPDDR4(unittest.TestCase):
         )
 
     def test_lpddr4_cmd_write(self):
+        # Test whole WRITE command sequence verifying data on pads and write_latency from MC perspective
         phy = SimulationPHY()
         zero = '00000000' * 2
         write_latency = phy.settings.write_latency
@@ -752,11 +756,132 @@ class TestLPDDR4(unittest.TestCase):
                     "ca5": "00000000"*2 + "00000000" + "00000000"*2,
                 },
                 "sys8x_90_ddr": {
-                    f'dq{i}': (self.CMD_LATENCY+1)*zero + zero + self.dq_pattern(i, dfi_data, "wrdata") + zero
+                    f'dq{i}': (self.CMD_LATENCY+1)*zero + zero + dq_pattern(i, dfi_data, "wrdata") + zero
                     for i in range(16)
                 },
                 "sys8x_ddr": {
                     "dqs0": (self.CMD_LATENCY+1)*zero + '01010101'+'01010100' + '01010101'+'01010101' + '00010101'+'01010101' + zero,
                 },
+            },
+        )
+
+    def test_lpddr4_cmd_read(self):
+        # Test whole READ command sequence simulating DRAM response and verifying read_latency from MC perspective
+        phy = SimulationPHY()
+        zero = '00000000' * 2
+        read_latency = phy.settings.read_latency
+        rdphase = phy.settings.rdphase.reset.value
+
+        dfi_data = {
+            0: dict(rddata=0x11112222, rddata_valid=1),
+            1: dict(rddata=0x33334444, rddata_valid=1),
+            2: dict(rddata=0x55556666, rddata_valid=1),
+            3: dict(rddata=0x77778888, rddata_valid=1),
+            4: dict(rddata=0x9999aaaa, rddata_valid=1),
+            5: dict(rddata=0xbbbbcccc, rddata_valid=1),
+            6: dict(rddata=0xddddeeee, rddata_valid=1),
+            7: dict(rddata=0xffff0000, rddata_valid=1),
+        }
+        dfi_sequence = [
+            {rdphase: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1, rddata_en=1)},
+            *[{} for _ in range(read_latency - 1)],
+            dfi_data,
+            {},
+            {},
+            {},
+            {},
+            {},
+        ]
+
+        class Simulator:
+            def __init__(self, dfi_data, test_case, cl):
+                self.dfi_data = dfi_data
+                self.read_cmd = False
+                self.test_case = test_case
+                self.cl = cl
+
+            @passive
+            def cmd_checker(self, pads):
+                # Monitors CA/CS for a READ command
+                read = [
+                    0b000010,  # READ-1 (1) BL=0
+                    0b000000,  # READ-1 (2) BA=0, C9=0, AP=0
+                    0b010010,  # CAS-2 (1) C8=0
+                    0b000000,  # CAS-2 (2) C=0
+                ]
+
+                def check_ca(i):
+                    err = "{}: CA = 0b{:06b}, expected = 0b{:06b}".format(i, (yield pads.ca), read[i])
+                    self.test_case.assertEqual((yield pads.ca), read[i], msg=err)
+
+                while True:
+                    while not (yield pads.cs):
+                        yield
+                    yield from check_ca(0)
+                    yield
+                    yield from check_ca(1)
+                    yield
+                    self.test_case.assertEqual((yield pads.cs), 1, msg="Found CS on 1st cycle but not on 3rd cycle")
+                    yield from check_ca(2)
+                    yield
+                    yield from check_ca(3)
+                    self.read_cmd = True
+
+            @passive
+            def dq_generator(self, pads):
+                # After a READ command is received, wait CL and send data
+                while True:
+                    while not self.read_cmd:
+                        yield
+                    dfi_data = self.dfi_data.pop(0)
+                    for _ in range(2*self.cl + 1):
+                        yield
+                    self.read_cmd = False
+                    for cyc in range(16):
+                        for bit in range(16):
+                            yield pads.dq_i[bit].eq(int(dq_pattern(bit, dfi_data, "rddata")[cyc]))
+                        yield
+                    for bit in range(16):
+                        yield pads.dq_i[bit].eq(0)
+
+            @passive
+            def dqs_generator(self, pads):
+                # After a READ command is received, wait CL and send data strobe
+                while True:
+                    while not self.read_cmd:
+                        yield
+                    for _ in range(2*self.cl - 1):  # DQS to transmit DQS preamble
+                        yield
+                    for cyc in range(16 + 1):  # send a burst of data on pads
+                        for bit in range(2):
+                            yield pads.dqs_i[bit].eq(int((cyc + 1) % 2))
+                        yield
+                    for bit in range(2):
+                        yield pads.dqs_i[bit].eq(0)
+
+        sim = Simulator([dfi_data], self, cl=14)
+        self.run_test(phy,
+            dfi_sequence = dfi_sequence,
+            pad_checkers = {
+                "sys8x_90": {
+                    "cs":  "00000000"*2 + rdphase*"0" + "1010" + "00000000"*2,
+                    "ca0": "00000000"*2 + rdphase*"0" + "0000" + "00000000"*2,
+                    "ca1": "00000000"*2 + rdphase*"0" + "1010" + "00000000"*2,
+                    "ca2": "00000000"*2 + rdphase*"0" + "0000" + "00000000"*2,
+                    "ca3": "00000000"*2 + rdphase*"0" + "0000" + "00000000"*2,
+                    "ca4": "00000000"*2 + rdphase*"0" + "0010" + "00000000"*2,
+                    "ca5": "00000000"*2 + rdphase*"0" + "0000" + "00000000"*2,
+                },
+                "sys8x_90_ddr": { #?
+                    f'dq{i}': (self.CMD_LATENCY+2)*zero + zero + dq_pattern(i, dfi_data, "rddata") + zero
+                    for i in range(16)
+                },
+                "sys8x_ddr": {
+                    "dqs0": (self.CMD_LATENCY+2)*zero + '00000000'+'00000001' + '01010101'+'01010101' + zero,
+                },
+            },
+            pad_generators = {
+                "sys8x_ddr": [sim.dq_generator, sim.dqs_generator],
+                "sys8x_90": sim.cmd_checker,
             },
         )

@@ -113,6 +113,8 @@ class LPDDR4PHY(Module, AutoCSR):
         bitslip_cycles  = 1
         # Commands are sent over 4 cycles of DRAM clock (sys8x)
         cmd_latency     = 4
+        # Commands read from adapters are delayed on ConstBitSlips
+        ca_latency      = 1
 
         cl, cwl         = get_cl_cw(memtype, tck)
         cl_sys_latency  = get_sys_latency(nphases, cl)
@@ -121,14 +123,20 @@ class LPDDR4PHY(Module, AutoCSR):
         wrphase         = get_sys_phase(nphases, cwl_sys_latency, cwl + cmd_latency)
 
         # When the calculated phase is negative, it means that we need to increase sys latency
-        cwl_sys_delay = 0
-        while wrphase < 0:
-            wrphase += nphases
-            cwl_sys_delay += 1
+        def updated_latency(phase):
+            delay_update = 0
+            while phase < 0:
+                phase += nphases
+                delay_update += 1
+            return phase, delay_update
+
+        wrphase, cwl_sys_delay = updated_latency(wrphase)
+        rdphase, cl_sys_delay = updated_latency(rdphase)
         cwl_sys_latency += cwl_sys_delay
+        cl_sys_latency += cl_sys_delay
 
         # Read latency
-        read_data_delay = write_ser_latency + cl_sys_latency  # CMD -> read data on DQ
+        read_data_delay = ca_latency + write_ser_latency + cl_sys_latency  # DFI cmd -> read data on DQ
         read_des_delay  = read_des_latency + bitslip_cycles  # data on DQ -> data on DFI rddata
         read_latency    = read_data_delay + read_des_delay
 
@@ -583,7 +591,7 @@ class SimulationPHY(LPDDR4PHY):
             des_ddr(o=self.ck_dqs_i[i], i=self.pads.dqs[i],   name=f'dqs_i{i}', phase=90)
         for i in range(self.databits):
             ser_ddr(i=self.ck_dq_o[i], o=self.pads.dq_o[i], name=f'dq_o{i}')
-            des_ddr(o=self.ck_dq_i[i], i=self.pads.dq[i],   name=f'dq_i{i}', phase=90)
+            des_ddr(o=self.ck_dq_i[i], i=self.pads.dq[i],   name=f'dq_i{i}')
         # Output enable signals
         self.comb += self.pads.dmi_oe.eq(delayed(self, self.dmi_oe, cycles=Serializer.LATENCY))
         self.comb += self.pads.dqs_oe.eq(delayed(self, self.dqs_oe, cycles=Serializer.LATENCY))
