@@ -405,6 +405,7 @@ class TestLPDDR4(unittest.TestCase):
         dfi.assert_ok(self)
 
     def test_lpddr4_cs_phase_0(self):
+        # Test that CS is serialized correctly when sending command on phase 0
         latency = '00000000' * self.CMD_LATENCY
         self.run_test(SimulationPHY(),
             dfi_sequence = [
@@ -416,6 +417,7 @@ class TestLPDDR4(unittest.TestCase):
         )
 
     def test_lpddr4_clk(self):
+        # Test clock serialization, first few cycles are undefined so ignore them
         latency = 'xxxxxxxx' * self.CMD_LATENCY
         self.run_test(SimulationPHY(),
             dfi_sequence = [
@@ -427,6 +429,7 @@ class TestLPDDR4(unittest.TestCase):
         )
 
     def test_lpddr4_cs_multiple_phases(self):
+        # Test that CS is serialized on different phases and that overlapping commands are handled
         latency = '00000000' * self.CMD_LATENCY
         self.run_test(SimulationPHY(),
             dfi_sequence = [
@@ -440,7 +443,7 @@ class TestLPDDR4(unittest.TestCase):
                     1: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1),
                     5: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1),  # should NOT be ignored
                 },
-                {6: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)}, # crosses cycle boundaries
+                {6: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)},  # crosses cycle boundaries
                 {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)},  # should be ignored
                 {2: dict(cs_n=1, cas_n=0, ras_n=1, we_n=1)},  # ignored due to cs_n=1
             ],
@@ -458,6 +461,7 @@ class TestLPDDR4(unittest.TestCase):
         )
 
     def test_lpddr4_ca_sequencing(self):
+        # Test proper serialization of commands to CA pads and that overlapping commands are handled
         latency = '00000000' * self.CMD_LATENCY
         read = dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)
         self.run_test(SimulationPHY(),
@@ -479,6 +483,7 @@ class TestLPDDR4(unittest.TestCase):
         )
 
     def test_lpddr4_ca_addressing(self):
+        # Test that bank/address for different commands are correctly serialized to CA pads
         latency = '00000000' * self.CMD_LATENCY
         read       = dict(cs_n=0, cas_n=0, ras_n=1, we_n=1, bank=0b101, address=0b1100110011)  # actually invalid because CA[1:0] should always be 0
         write_ap   = dict(cs_n=0, cas_n=0, ras_n=1, we_n=0, bank=0b111, address=0b10000000000)
@@ -506,6 +511,7 @@ class TestLPDDR4(unittest.TestCase):
         )
 
     def test_lpddr4_command_pads(self):
+        # Test serialization of DFI command pins (cs/cke/odt/reset_n)
         latency = '00000000' * self.CMD_LATENCY
         read = dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)
         self.run_test(SimulationPHY(),
@@ -539,6 +545,7 @@ class TestLPDDR4(unittest.TestCase):
         return ''.join(str(v) for v in self.dfi_data_to_dq(i, dfi_data, dfi_name))
 
     def test_lpddr4_dq_out(self):
+        # Test serialization of dfi wrdata to DQ pads
         dut = SimulationPHY()
         zero = '00000000' * 2  # zero for 1 sysclk clock in sys8x_ddr clock domain
 
@@ -562,6 +569,7 @@ class TestLPDDR4(unittest.TestCase):
         )
 
     def test_lpddr4_dq_only_1cycle(self):
+        # Test that DQ data is sent to pads only during expected cycle, on other cycles there is no data
         dut = SimulationPHY()
         zero = '00000000' * 2
 
@@ -586,6 +594,7 @@ class TestLPDDR4(unittest.TestCase):
         )
 
     def test_lpddr4_dqs(self):
+        # Test serialization of DQS pattern in relation to DQ data, with proper preamble and postamble
         zero = '00000000' * 2
 
         self.run_test(SimulationPHY(),
@@ -615,7 +624,8 @@ class TestLPDDR4(unittest.TestCase):
             },
         )
 
-    def test_lpddr4_dmi_no_mask(self):  # There should be no masking
+    def test_lpddr4_dmi_no_mask(self):
+        # Test proper output on DMI pads. We don't implement masking now, so nothing should be sent to DMI pads
         zero = '00000000' * 2
 
         self.run_test(SimulationPHY(),
@@ -645,7 +655,7 @@ class TestLPDDR4(unittest.TestCase):
         )
 
     def test_lpddr4_dq_in_rddata_valid(self):
-        # Check that rddata_valid is set with correct delay
+        # Test that rddata_valid is set with correct delay
         read_latency = 8  # settings.read_latency
         dfi_sequence = [
             {0: dict(rddata_en=1)},  # command is issued by MC (appears on next cycle)
@@ -661,7 +671,7 @@ class TestLPDDR4(unittest.TestCase):
         )
 
     def test_lpddr4_dq_in_rddata(self):
-        # Check that data on DQ pads is deserialized correctly to DFI rddata.
+        # Test that data on DQ pads is deserialized correctly to DFI rddata.
         # We assume that when there are no commands, PHY will still still deserialize the data,
         # which is generally true (tristate oe is 0 whenever we are not writing).
         dfi_data = {
