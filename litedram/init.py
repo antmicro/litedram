@@ -443,16 +443,35 @@ def get_ddr4_phy_init_sequence(phy_settings, timing_settings):
 
     return init_sequence, mr1
 
+# LPDDR4 -------------------------------------------------------------------------------------------
+
+def get_lpddr4_phy_init_sequence(phy_settings, timing_settings):
+    mr1 = None
+
+    init_sequence = [
+        ("Release reset", 0x0000, 0, cmds["UNRESET"], 50000),
+        ("Bring CKE high", 0x0000, 0, cmds["CKE"], 10000),
+
+        # ("Load Mode Register 2, CWL={0:d}".format(cwl), mr2, 2, cmds["MODE_REGISTER"], 0),
+        # ("Load Mode Register 3", mr3, 3, cmds["MODE_REGISTER"], 0),
+        # ("Load Mode Register 1", mr1, 1, cmds["MODE_REGISTER"], 0),
+        # ("Load Mode Register 0, CL={0:d}, BL={1:d}".format(cl, bl), mr0, 0, cmds["MODE_REGISTER"], 200),
+        # ("ZQ Calibration", 0x0400, 0, "DFII_COMMAND_WE|DFII_COMMAND_CS", 200),
+    ]
+
+    return init_sequence, mr1
+
 # Init Sequence ------------------------------------------------------------------------------------
 
 def get_sdram_phy_init_sequence(phy_settings, timing_settings):
     return {
-        "SDR"  : get_sdr_phy_init_sequence,
-        "DDR"  : get_ddr_phy_init_sequence,
-        "LPDDR": get_lpddr_phy_init_sequence,
-        "DDR2" : get_ddr2_phy_init_sequence,
-        "DDR3" : get_ddr3_phy_init_sequence,
-        "DDR4" : get_ddr4_phy_init_sequence,
+        "SDR":    get_sdr_phy_init_sequence,
+        "DDR":    get_ddr_phy_init_sequence,
+        "LPDDR":  get_lpddr_phy_init_sequence,
+        "DDR2":   get_ddr2_phy_init_sequence,
+        "DDR3":   get_ddr3_phy_init_sequence,
+        "DDR4":   get_ddr4_phy_init_sequence,
+        "LPDDR4": get_lpddr4_phy_init_sequence,
     }[phy_settings.memtype](phy_settings, timing_settings)
 
 # C Header -----------------------------------------------------------------------------------------
