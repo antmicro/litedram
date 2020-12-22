@@ -531,14 +531,18 @@ class LPDDR4SimulationPads(Module):
 
 
 class SimulationPHY(LPDDR4PHY):
-    def __init__(self, sys_clk_freq=100e6):
+    def __init__(self, sys_clk_freq=100e6, aligned_reset_zero=False):
         pads = LPDDR4SimulationPads()
         self.submodules += pads
         super().__init__(pads,
-                         sys_clk_freq      = sys_clk_freq,
-                         write_ser_latency = Serializer.LATENCY,
-                         read_des_latency  = Deserializer.LATENCY,
-                         phytype           = "SimulationPHY")
+                         sys_clk_freq       = sys_clk_freq,
+                         write_ser_latency  = Serializer.LATENCY,
+                         read_des_latency   = Deserializer.LATENCY,
+                         phytype            = "SimulationPHY")
+
+        def add_reset_value(phase, kwargs):
+            if aligned_reset_zero and phase == 0:
+                kwargs["reset_value"] = 0
 
         # Serialization
         def serialize(**kwargs):
@@ -555,6 +559,7 @@ class SimulationPHY(LPDDR4PHY):
             clkdiv = {0: "sys8x", 90: "sys8x_90"}[phase]
             # clk = {0: "sys", 90: "sys_11_25"}[phase]
             clk = {0: "sys", 90: "sys"}[phase]
+            add_reset_value(phase, kwargs)
             serialize(clk=clk, clkdiv=clkdiv, i_dw=8, **kwargs)
 
         def ser_ddr(phase=0, **kwargs):
@@ -562,11 +567,13 @@ class SimulationPHY(LPDDR4PHY):
             clkdiv = {0: "sys8x_ddr", 90: "sys8x_90_ddr"}[phase]
             # clk = {0: "sys", 90: "sys_11_25"}[phase]
             clk = {0: "sys", 90: "sys"}[phase]
+            add_reset_value(phase, kwargs)
             serialize(clk=clk, clkdiv=clkdiv, i_dw=16, **kwargs)
 
         def des_ddr(phase=0, **kwargs):
             clkdiv = {0: "sys8x_ddr", 90: "sys8x_90_ddr"}[phase]
             clk = {0: "sys", 90: "sys_11_25"}[phase]
+            add_reset_value(phase, kwargs)
             deserialize(clk=clk, clkdiv=clkdiv, o_dw=16, **kwargs)
 
         # Clock is shifted 180 degrees to get rising edge in the middle of SDR signals.
