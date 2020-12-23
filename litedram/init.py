@@ -220,7 +220,7 @@ def get_ddr3_phy_init_sequence(phy_settings, timing_settings):
         ("ZQ Calibration", 0x0400, 0, "DFII_COMMAND_WE|DFII_COMMAND_CS", 200),
     ]
 
-    return init_sequence, mr1
+    return init_sequence, {1: mr1}
 
 # DDR4 ---------------------------------------------------------------------------------------------
 
@@ -441,7 +441,7 @@ def get_ddr4_phy_init_sequence(phy_settings, timing_settings):
         ("ZQ Calibration", 0x0400, 0, "DFII_COMMAND_WE|DFII_COMMAND_CS", 200),
     ]
 
-    return init_sequence, mr1
+    return init_sequence, {1: mr1}
 
 # LPDDR4 -------------------------------------------------------------------------------------------
 
@@ -559,7 +559,7 @@ def get_lpddr4_phy_init_sequence(phy_settings, timing_settings):
         # TODO: ZQ calibration
     ]
 
-    return init_sequence, mr[2]  # FIXME: should reset MR2 not MR1 after write leveling
+    return init_sequence, mr
 
 # Init Sequence ------------------------------------------------------------------------------------
 
@@ -685,11 +685,18 @@ const unsigned long sdram_dfii_pix_rddata_addr[SDRAM_PHY_PHASES] = {{
 """.format(sdram_dfii_pix_rddata_addr=",\n\t".join(sdram_dfii_pix_rddata_addr))
     r += "\n"
 
-    init_sequence, mr1 = get_sdram_phy_init_sequence(phy_settings, timing_settings)
+    init_sequence, mr = get_sdram_phy_init_sequence(phy_settings, timing_settings)
 
     if phy_settings.memtype in ["DDR3", "DDR4"]:
-        # The value of MR1 needs to be modified during write leveling
-        r += "#define DDRX_MR1 {}\n\n".format(mr1)
+        # The value of MR1[7] needs to be modified during write leveling
+        r += "#define DDRX_MR_WRLVL_ADDRESS {}\n\n".format(1)
+        r += "#define DDRX_MR_WRLVL_RESET {}\n\n".format(mr[1])
+        r += "#define DDRX_MR_WRLVL_BIT {}\n\n".format(7)
+    elif phy_settings.memtype in ["LPDDR4"]:
+        # Write leveling enabled by MR2[7]
+        r += "#define DDRX_MR_WRLVL_ADDRESS {}\n\n".format(2)
+        r += "#define DDRX_MR_WRLVL_RESET {}\n\n".format(mr[2])
+        r += "#define DDRX_MR_WRLVL_BIT {}\n\n".format(7)
 
     r += "static void init_sequence(void)\n{\n"
     for comment, a, ba, cmd, delay in init_sequence:
