@@ -538,7 +538,7 @@ class SimulationPHY(LPDDR4PHY):
                          sys_clk_freq       = sys_clk_freq,
                          write_ser_latency  = Serializer.LATENCY,
                          read_des_latency   = Deserializer.LATENCY,
-                         phytype            = "SimulationPHY")
+                         phytype            = "LPDDR4SimPHY")
 
         def add_reset_value(phase, kwargs):
             if aligned_reset_zero and phase == 0:
@@ -603,6 +603,80 @@ class SimulationPHY(LPDDR4PHY):
         self.comb += self.pads.dmi_oe.eq(delayed(self, self.dmi_oe, cycles=Serializer.LATENCY))
         self.comb += self.pads.dqs_oe.eq(delayed(self, self.dqs_oe, cycles=Serializer.LATENCY))
         self.comb += self.pads.dq_oe.eq(delayed(self, self.dq_oe, cycles=Serializer.LATENCY))
+
+    def add_simulator(self):
+        self.submodules.sim_cmd = ClockDomainsRenamer("sys8x_90")(CommandsSim(self.pads))
+
+
+class CommandsSim(Module):  # clock domain: clk_p
+    def __init__(self, pads):
+        from litex.soc.interconnect.stream import SyncFIFO
+
+        error = Signal()
+        self.sync += If(error, Display("ERROR"))
+
+        # More Registers
+        mode_regs = Memory(8, depth=64)
+        mr_port = mode_regs.get_port(write_capable=True, async_read=True)
+        self.specials += mode_regs, mr_port
+
+        # Level 1 - "small" commands
+        small_cmds = SyncFIFO([("cs_high", 6), ("cs_low", 6)], 2)
+        cs = TappedDelayLine(pads.cs, ntaps=2)
+        ca = TappedDelayLine(pads.ca, ntaps=2)
+        self.submodules += cs, ca, small_cmds
+
+        self.comb += If(Cat(cs.taps) == 0b10,
+            small_cmds.sink.valid.eq(1),
+            small_cmds.sink.cs_high.eq(ca.taps[1]),
+            small_cmds.sink.cs_low.eq(ca.taps[0]),
+            # ignore ready
+        )
+        self.sync += If(small_cmds.sink.valid & ~small_cmds.sink.ready,
+            Display("'Small' commands overflow")
+        )
+
+        # Level 2 - "big" commands
+        mrw1   = Signal()
+        mrw_ma = Signal(6)
+        mrw_op7 = Signal()
+        mrw_op = Signal(8)
+
+        self.submodules.fsm = fsm = FSM()
+        fsm.act("IDLE",
+            If(small_cmds.source.valid,
+                small_cmds.source.ready.eq(1),
+                # Dispatch command
+                If(small_cmds.source.cs_high[:5] == 0b00110,  # MRW-1
+                    NextValue(mrw_ma, small_cmds.source.cs_low),
+                    NextValue(mrw_op7, small_cmds.source.cs_high[5]),
+                    NextValue(mrw1, 1),
+                ).Elif(small_cmds.source.cs_high[:5] == 0b10110 & mrw1,  # MRW-2
+                    mrw_op.eq(Cat(small_cmds.source.cs_low, small_cmds.source.cs_high[5], mrw_op7)),
+                    mr_port.adr.eq(mrw_ma),
+                    mr_port.dat_w.eq(mrw_op),
+                    mr_port.we.eq(1),
+                    Display("MRW: MR[%d] = %d", mrw_ma, mrw_op),
+                    NextValue(mrw1, 0),
+                ).Elif(small_cmds.source.cs_high[:5] == 0b01000,  # REFRESH
+                ).Elif(small_cmds.source.cs_high[:1] == 0b01,  # ACTIVATE-1
+                ).Elif(small_cmds.source.cs_high[:1] == 0b11,  # ACTIVATE-2
+                ).Elif(small_cmds.source.cs_high[:5] == 0b00100,  # WRITE-1
+                ).Elif(small_cmds.source.cs_high[:5] == 0b00010,  # READ-1
+                ).Elif(small_cmds.source.cs_high[:5] == 0b10010,  # CAS-2
+                ).Elif(small_cmds.source.cs_high[:5] == 0b10000,  # PRECHARGE
+                ).Else(
+                    error.eq(1),
+                    NextValue(mrw1, 0),
+                )
+            )
+        )
+        fsm.act("OTHER", error.eq(1))
+
+class DataSim(Module):  # clock domain: ddr
+    def __init__(self, pads, cmds_sim):
+        pass
+
 
 class Serializer(Module):
     """Serialize given input signal
