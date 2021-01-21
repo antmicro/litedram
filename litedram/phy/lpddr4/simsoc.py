@@ -13,6 +13,7 @@ from litex.soc.cores.cpu import CPUS
 
 from litedram import modules as litedram_modules
 from litedram.core.controller import ControllerSettings
+from litedram.phy.model import DFITimingsChecker, _speedgrade_timings, _technology_timings
 
 from litedram.phy.lpddr4.simphy import LPDDR4SimPHY
 from litedram.phy.lpddr4.sim import LPDDR4Sim
@@ -158,6 +159,22 @@ class SimSoC(SoCCore):
         self.add_constant("CONFIG_SIM_DISABLE_BIOS_PROMPT")
         if disable_delay:
             self.add_constant("CONFIG_SIM_DISABLE_DELAYS")
+
+        # Reuse DFITimingsChecker from phy/model.py
+        nphases = self.sdram.controller.settings.phy.nphases
+        timings = {"tCK": (1e9 / sys_clk_freq) / nphases}
+        for name in _speedgrade_timings + _technology_timings:
+            timings[name] = sdram_module.get(name)
+
+        self.submodules.dfi_timings_checker = DFITimingsChecker(
+            dfi          = self.sdrphy.dfi,
+            nbanks       = 2**self.sdram.controller.settings.geom.bankbits,
+            nphases      = nphases,
+            timings      = timings,
+            refresh_mode = sdram_module.timing_settings.fine_refresh_mode,
+            memtype      = self.sdram.controller.settings.phy.memtype,
+            verbose      = False,
+        )
 
         # Debug info -------------------------------------------------------------------------------
         def dump(obj):
