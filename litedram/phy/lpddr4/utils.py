@@ -22,6 +22,11 @@ def delayed(mod, sig, cycles=1):
     mod.submodules += delay
     return delay.output
 
+def once(mod, cond, *ops):
+    sig = Signal()
+    mod.sync += If(cond, sig.eq(1))
+    return If(~sig & cond, *ops)
+
 class ConstBitSlip(Module):
     def __init__(self, dw, i=None, o=None, slp=None, cycles=1):
         self.i   = Signal(dw, name='i') if i is None else i

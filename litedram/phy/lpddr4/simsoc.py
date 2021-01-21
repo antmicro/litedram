@@ -99,7 +99,8 @@ def get_clocks(sys_clk_freq):
 # SoC ----------------------------------------------------------------------------------------------
 
 class SimSoC(SoCCore):
-    def __init__(self, clocks, auto_precharge=False, with_refresh=True, trace_reset=0, **kwargs):
+    def __init__(self, clocks, auto_precharge=False, with_refresh=True, trace_reset=0,
+            log_level="INFO", **kwargs):
         platform     = Platform()
         sys_clk_freq = clocks["sys"]["freq_hz"]
 
@@ -145,7 +146,11 @@ class SimSoC(SoCCore):
         self.add_constant("MEMTEST_ADDR_SIZE", 8*1024)
 
         # LPDDR4 Sim -------------------------------------------------------------------------------
-        self.submodules.lpddr4sim = LPDDR4Sim(self.sdrphy.pads)
+        self.submodules.lpddr4sim = LPDDR4Sim(
+            pads         = self.sdrphy.pads,
+            sys_clk_freq = sys_clk_freq,
+            log_level    = log_level,
+        )
 
         # Debug info -------------------------------------------------------------------------------
         def dump(obj):
@@ -181,6 +186,7 @@ def main():
     parser.add_argument("--sys-clk-freq",         default="50e6",          help="Core clock frequency")
     parser.add_argument("--auto-precharge",       action="store_true",     help="Use DRAM auto precharge")
     parser.add_argument("--no-refresh",           action="store_true",     help="Disable DRAM refresher")
+    parser.add_argument("--log-level",            default="INFO",          help="Set simulation logging level")
     args = parser.parse_args()
 
     soc_kwargs     = soc_sdram_argdict(args)
@@ -207,6 +213,7 @@ def main():
         auto_precharge = args.auto_precharge,
         with_refresh   = not args.no_refresh,
         trace_reset    = int(args.trace_reset),
+        log_level      = args.log_level,
         **soc_kwargs)
 
     # Build/Run ------------------------------------------------------------------------------------
