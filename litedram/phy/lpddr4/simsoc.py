@@ -100,7 +100,7 @@ def get_clocks(sys_clk_freq):
 
 class SimSoC(SoCCore):
     def __init__(self, clocks, auto_precharge=False, with_refresh=True, trace_reset=0,
-            log_level="INFO", **kwargs):
+            log_level="INFO", disable_delay=False, **kwargs):
         platform     = Platform()
         sys_clk_freq = clocks["sys"]["freq_hz"]
 
@@ -147,10 +147,16 @@ class SimSoC(SoCCore):
 
         # LPDDR4 Sim -------------------------------------------------------------------------------
         self.submodules.lpddr4sim = LPDDR4Sim(
-            pads         = self.sdrphy.pads,
-            sys_clk_freq = sys_clk_freq,
-            log_level    = log_level,
+            pads          = self.sdrphy.pads,
+            settings      = self.sdram.controller.settings,
+            sys_clk_freq  = sys_clk_freq,
+            log_level     = log_level,
+            disable_delay = disable_delay,
         )
+
+        self.add_constant("CONFIG_SIM_DISABLE_BIOS_PROMPT")
+        if disable_delay:
+            self.add_constant("CONFIG_SIM_DISABLE_DELAYS")
 
         # Debug info -------------------------------------------------------------------------------
         def dump(obj):
@@ -187,6 +193,7 @@ def main():
     parser.add_argument("--auto-precharge",       action="store_true",     help="Use DRAM auto precharge")
     parser.add_argument("--no-refresh",           action="store_true",     help="Disable DRAM refresher")
     parser.add_argument("--log-level",            default="INFO",          help="Set simulation logging level")
+    parser.add_argument("--disable-delay",        action="store_true",     help="Disable CPU delays")
     args = parser.parse_args()
 
     soc_kwargs     = soc_sdram_argdict(args)
@@ -214,6 +221,7 @@ def main():
         with_refresh   = not args.no_refresh,
         trace_reset    = int(args.trace_reset),
         log_level      = args.log_level,
+        disable_delay  = args.disable_delay,
         **soc_kwargs)
 
     # Build/Run ------------------------------------------------------------------------------------
