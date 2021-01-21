@@ -99,8 +99,8 @@ def get_clocks(sys_clk_freq):
 # SoC ----------------------------------------------------------------------------------------------
 
 class SimSoC(SoCCore):
-    def __init__(self, clocks, auto_precharge=False, with_refresh=True, trace_reset=0,
-            log_level="INFO", disable_delay=False, **kwargs):
+    def __init__(self, clocks, log_level, auto_precharge=False, with_refresh=True, trace_reset=0,
+            disable_delay=False, **kwargs):
         platform     = Platform()
         sys_clk_freq = clocks["sys"]["freq_hz"]
 
@@ -153,6 +153,7 @@ class SimSoC(SoCCore):
             log_level     = log_level,
             disable_delay = disable_delay,
         )
+        self.add_csr("lpddr4sim")
 
         self.add_constant("CONFIG_SIM_DISABLE_BIOS_PROMPT")
         if disable_delay:
@@ -192,7 +193,7 @@ def main():
     parser.add_argument("--sys-clk-freq",         default="50e6",          help="Core clock frequency")
     parser.add_argument("--auto-precharge",       action="store_true",     help="Use DRAM auto precharge")
     parser.add_argument("--no-refresh",           action="store_true",     help="Disable DRAM refresher")
-    parser.add_argument("--log-level",            default="INFO",          help="Set simulation logging level")
+    parser.add_argument("--log-level",            default="all=INFO",      help="Set simulation logging level")
     parser.add_argument("--disable-delay",        action="store_true",     help="Disable CPU delays")
     args = parser.parse_args()
 

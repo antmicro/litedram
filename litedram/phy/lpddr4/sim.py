@@ -1,20 +1,32 @@
 import math
 from operator import or_
 from functools import reduce
+from collections import defaultdict
 
 from migen import *
 
 from litex.soc.interconnect.stream import ClockDomainCrossing
+from litex.soc.interconnect.csr import AutoCSR
 
 from litedram.common import TappedDelayLine, tXXDController
 from litedram.phy.lpddr4.utils import delayed, once, SimLogger
 from litedram.phy.lpddr4.commands import MPC
 
 
-class LPDDR4Sim(Module):
-    def __init__(self, pads, *, sys_clk_freq, disable_delay, settings, log_level=SimLogger.INFO):
-        if isinstance(log_level, str):
-            log_level = getattr(SimLogger, log_level.upper())
+def log_level_getter(log_level):
+    def get_level(name):
+        return getattr(SimLogger, name.upper())
+    # simple log_level, e.g. "INFO"
+    if "=" not in log_level:
+        return lambda _: get_level(log_level)
+    # parse log_level in the per-module form, e.g. "--log-level=all=INFO,data=DEBUG"
+    per_module = dict(part.split("=") for part in log_level.strip().split(","))
+    return lambda module: get_level(per_module.get(module, per_module.get("all", None)))
+
+
+class LPDDR4Sim(Module, AutoCSR):
+    def __init__(self, pads, *, sys_clk_freq, disable_delay, settings, log_level):
+        log_level = log_level_getter(log_level)
 
         cd_cmd  = "sys8x_90"
         cd_data = "sys8x_90_ddr"
@@ -25,7 +37,7 @@ class LPDDR4Sim(Module):
         cmd = CommandsSim(pads,
             data_cdc    = self.data,
             clk_freq    = 8*sys_clk_freq,
-            log_level   = log_level,
+            log_level   = log_level("cmd"),
             init_delays = not disable_delay,
         )
         self.submodules.cmd = ClockDomainsRenamer(cd_cmd)(cmd)
@@ -34,15 +46,16 @@ class LPDDR4Sim(Module):
             clk_freq  = 2*8*sys_clk_freq,
             cl        = settings.phy.cl,
             cwl       = settings.phy.cwl,
-            log_level = log_level,
+            log_level = log_level("data"),
         )
         self.submodules.data = ClockDomainsRenamer(cd_data)(data)
 
 # Commands -----------------------------------------------------------------------------------------
 
-class CommandsSim(Module):  # clock domain: clk_p
+class CommandsSim(Module, AutoCSR):  # clock domain: clk_p
     def __init__(self, pads, data_cdc, *, clk_freq, log_level, init_delays=False):
         self.submodules.log = log = SimLogger(log_level=log_level, clk_freq=clk_freq)
+        self.log.add_csrs()
 
         self.active_banks = Array([Signal() for _ in range(8)])
         self.active_rows = Array([Signal(17) for _ in range(8)])
@@ -377,9 +390,10 @@ class CommandsSim(Module):  # clock domain: clk_p
 
 # Data ---------------------------------------------------------------------------------------------
 
-class DataSim(Module):  # clock domain: ddr
+class DataSim(Module, AutoCSR):  # clock domain: ddr
     def __init__(self, pads, cmds_sim, *, cl, cwl, clk_freq, log_level):
         self.submodules.log = log = SimLogger(log_level=log_level, clk_freq=clk_freq)
+        self.log.add_csrs()
 
         bl = 16
 

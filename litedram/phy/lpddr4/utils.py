@@ -3,6 +3,8 @@ from operator import or_
 
 from migen import *
 
+from litex.soc.interconnect.csr import CSRStorage, AutoCSR
+
 from litedram.common import TappedDelayLine
 
 
@@ -76,7 +78,7 @@ class DQSPattern(Module):
             self.o = o
 
 
-class SimLogger(Module):
+class SimLogger(Module, AutoCSR):
     # Allows to use Display inside FSM and to filter log messages by level (statically or dynamically)
     DEBUG = 0
     INFO  = 1
@@ -117,6 +119,10 @@ class SimLogger(Module):
 
         self.ops.append((level, condition, fmt, args))
         return cond.eq(1)
+
+    def add_csrs(self):
+        self._level = CSRStorage(len(self.level), reset=self.level.reset.value)
+        self.comb += self.level.eq(self._level.storage)
 
     def do_finalize(self):
         for level, cond, fmt, args in self.ops:
