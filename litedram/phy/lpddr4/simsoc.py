@@ -1,4 +1,7 @@
+import os
+import re
 import argparse
+from collections import namedtuple, defaultdict
 
 from migen import *
 
@@ -195,7 +198,250 @@ class SimSoC(SoCCore):
         print()
         print("=" * 80)
 
+# GTKWave ------------------------------------------------------------------------------------------
+
+class SigTrace:
+    def __init__(self, name, alias=None, color=None, filter_file=None):
+        self.name = name
+        self.alias = alias
+        self.color = color
+        self.filter_file = filter_file
+
+def strip_bits(name):
+    if name.endswith("]") and "[" in name:
+        name = name[:name.rfind("[")]
+    return name
+
+def regex_map(sig, patterns, on_match, on_no_match, remove_bits=True):
+    # Given `patterns` return `on_match(sig, pattern)` if any pattern matches or else `on_no_match(sig)`
+    alias = sig.alias
+    if remove_bits:  # get rid of signal bits (e.g. wb_adr[29:0])
+        alias = strip_bits(alias)
+    for pattern in patterns:
+        if pattern.search(alias):
+            return on_match(sig, pattern)
+    return on_no_match(sig)
+
+def regex_filter(patterns, negate=False, **kwargs):
+    patterns = list(map(re.compile, patterns))
+    def filt(sigs):
+        return list(filter(None, map(lambda sig: regex_map(sig, patterns,
+            on_match = lambda s, p: (s if not negate else None),
+            on_no_match = lambda s: (None if not negate else s),
+            **kwargs), sigs)))
+    return filt
+
+def regex_sorter(patterns, unmatched_last=True, **kwargs):
+    def sort(sigs):
+        order = {re.compile(pattern): i for i, pattern in enumerate(patterns)}
+        return sorted(sigs, key=lambda sig: regex_map(sig, order.keys(),
+            on_match    = lambda s, p: order[p],
+            on_no_match = lambda s: len(order) if unmatched_last else -1,
+            **kwargs))
+    return sort
+
+def suffixes2re(strings):
+    return ["{}$".format(s) for s in strings]
+
+def prefixes2re(strings):
+    return ["^{}".format(s) for s in strings]
+
+def strings2re(strings):
+    return suffixes2re(prefixes2re(strings))
+
+def wishbone_sorter(**kwargs):
+    suffixes = ["cyc", "stb", "ack", "we", "sel", "adr", "dat_w", "dat_r"]
+    return regex_sorter(suffixes2re(suffixes), **kwargs)
+
+def dfi_sorter(phases=True, nphases_max=8, **kwargs):
+    suffixes = [
+        "cas_n", "ras_n", "we_n",
+        "address", "bank",
+        "wrdata_en", "wrdata", "wrdata_mask",
+        "rddata_en", "rddata", "rddata_valid",
+    ]
+    if phases:
+        patterns = []
+        for phase in range(nphases_max):
+            patterns.extend(["p{}_{}".format(phase, suffix) for suffix in suffixes])
+    else:
+        patterns = suffixes
+    return regex_sorter(suffixes2re(patterns), **kwargs)
+
+def regex_colorer(color_patterns, default=None, **kwargs):
+    colors = {}
+    for color, patterns in color_patterns.items():
+        for pattern in patterns:
+            colors[re.compile(pattern)] = color
+
+    def add_color(sig, color):
+        sig.color = color
+
+    def add_colors(sigs):
+        for sig in sigs:
+            regex_map(sig, colors.keys(),
+                on_match = lambda s, p: add_color(s, colors[p]),
+                on_no_match = lambda s: add_color(s, default),
+                **kwargs)
+        return sigs
+    return add_colors
+
+def dfi_per_phase_colorer(nphases_max=8, **kwargs):
+    colors = ["normal", "yellow", "orange", "red"]
+    color_patterns = {}
+    for p in range(nphases_max):
+        color = colors[p % len(colors)]
+        patterns = color_patterns.get(color, [])
+        patterns.append("p{}_".format(p))
+        color_patterns[color] = patterns
+    return regex_colorer(color_patterns, default="indigo", **kwargs)
+
+def dfi_in_phase_colorer(**kwargs):
+    return regex_colorer({
+        "normal": suffixes2re(["cas_n", "ras_n", "we_n"]),
+        "yellow": suffixes2re(["address", "bank"]),
+        "orange": suffixes2re(["wrdata_en", "wrdata", "wrdata_mask"]),
+        "red":    suffixes2re(["rddata_en", "rddata", "rddata_valid"]),
+    }, default="indigo", **kwargs)
+
+class LitexGTKWSave:
+    def __init__(self, vns, savefile, dumpfile, filtersdir=None, prefix="TOP.sim."):
+        self.vns = vns   # Namespace output of Builder.build, required to resolve signal names
+        self.prefix = prefix
+        self.savefile = savefile
+        self.dumpfile = dumpfile
+        self.filtersdir = filtersdir
+        if self.filtersdir is None:
+            self.filtersdir = os.path.dirname(self.dumpfile)
+
+    def __enter__(self):
+        # pyvcd: https://pyvcd.readthedocs.io/en/latest/vcd.gtkw.html
+        from vcd.gtkw import GTKWSave
+        self.file = open(self.savefile, "w")
+        self.gtkw = GTKWSave(self.file)
+        self.gtkw.dumpfile(self.dumpfile)
+        self.gtkw.treeopen("TOP")
+        self.gtkw.sst_expanded(True)
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self.file.close()
+        print("\nGenerated GTKWave save file at: {}\n".format(self.savefile))
+
+    def name(self, sig):
+        bits = ""
+        if len(sig) > 1:
+            bits = "[{}:0]".format(len(sig) - 1)
+        return self.vns.get_name(sig) + bits
+
+    def signal(self, signal):
+        self.gtkw.trace(self.prefix + self.name(signal))
+
+    def common_prefix(self, names):
+        prefix = os.path.commonprefix(names)
+        last_underscore = prefix.rfind("_")
+        return prefix[:last_underscore + 1]
+
+    def group(self, signals, group_name=None, alias=True, closed=True,
+            filter=None, sorter=None, colorer=None, translation_files=None, **kwargs):
+        translation_files = translation_files or {}
+        if len(signals) == 1:
+            return self.signal(signals[0])
+
+        names = [self.name(s) for s in signals]
+        common = self.common_prefix(names)
+
+        make_alias = (lambda n: n[len(common):]) if alias else (lambda n: n)
+        sigs = [SigTrace(name=n, alias=make_alias(n)) for i, n in enumerate(names)]
+        if translation_files is not None:
+            for sig, file in zip(sigs, translation_files):
+                sig.filter_file = file
+
+        for mapper in [filter, sorter, colorer]:
+            if mapper is not None:
+                sigs = list(mapper(sigs))
+
+        with self.gtkw.group(group_name or common.strip("_"), closed=closed):
+            for s in sigs:
+                self.gtkw.trace(self.prefix + s.name, alias=s.alias, color=s.color,
+                    translate_filter_file=s.filter_file, **kwargs)
+
+    def by_regex(self, regex, **kwargs):
+        pattern = re.compile(regex)
+        for sig in self.vns.pnd.keys():
+            m = pattern.search(self.vns.pnd[sig])
+        signals = list(filter(lambda sig: pattern.search(self.vns.pnd[sig]), self.vns.pnd.keys()))
+        assert len(signals) > 0, "No match found for {}".format(regex)
+        return self.group(signals, **kwargs)
+
+    def clocks(self, **kwargs):
+        clks = [cd.clk for cd in self.vns.clock_domains]
+        self.group(clks, group_name="clocks", alias=False, closed=False, **kwargs)
+
+    def add(self, obj, **kwargs):
+        if isinstance(obj, Record):
+            self.group([s for s, _ in obj.iter_flat()], **kwargs)
+        elif isinstance(obj, Signal):
+            self.signal(obj)
+        else:
+            raise NotImplementedError(type(obj), obj)
+
+    def make_fsm_state_translation(self, fsm):
+        # generate filter file
+        from vcd.gtkw import make_translation_filter
+        translations = list(fsm.decoding.items())
+        filename = "filter__{}.txt".format(strip_bits(self.name(fsm.state)))
+        filepath = os.path.join(self.filtersdir, filename)
+        with open(filepath, 'w') as f:
+            f.write(make_translation_filter(translations, size=len(fsm.state)))
+        return filepath
+
+    def iter_submodules(self, fragment):
+        for name, module in getattr(fragment, "_submodules", []):
+            yield module
+            yield from self.iter_submodules(module)
+
+    def fsm_states(self, soc, **kwargs):
+        # TODO: generate alias names for the machines, because the defaults are hard to decipher
+        fsms = list(filter(lambda module: isinstance(module, FSM), self.iter_submodules(soc)))
+        states = [fsm.state for fsm in fsms]
+        files = [self.make_fsm_state_translation(fsm) for fsm in fsms]
+        self.group(states, group_name="FSM states", translation_files=files, **kwargs)
+
 # Build --------------------------------------------------------------------------------------------
+
+def generate_gtkw_savefile(builder, vns, trace_fst):
+    dumpfile = os.path.join(builder.gateware_dir, "sim.{}".format("fst" if trace_fst else "vcd"))
+    savefile = os.path.join(builder.gateware_dir, "sim.gtkw")
+    soc = builder.soc
+
+    with LitexGTKWSave(vns, savefile=savefile, dumpfile=dumpfile) as gtkw:
+        gtkw.clocks()
+        gtkw.add(soc.bus.slaves["main_ram"], sorter=wishbone_sorter())
+        # all dfi signals
+        gtkw.add(soc.sdrphy.dfi, sorter=dfi_sorter(), colorer=dfi_in_phase_colorer())
+        # each phase in separate group
+        with gtkw.gtkw.group("dfi phaseX", closed=True):
+            for i, phase in enumerate(soc.sdrphy.dfi.phases):
+                gtkw.add(phase,
+                    group_name = "dfi p{}".format(i),
+                    sorter     = dfi_sorter(phases=False),
+                    colorer    = dfi_in_phase_colorer())
+        # only dfi command signals
+        gtkw.add(soc.sdrphy.dfi,
+            group_name = "dfi commands",
+            filter     = regex_filter(suffixes2re(["cas_n", "ras_n", "we_n"])),
+            sorter     = dfi_sorter(),
+            colorer    = dfi_per_phase_colorer())
+        gtkw.by_regex("pads_",
+            filter = regex_filter(["clk_n$", "_[io]$", "_oe$"], negate=True),
+            sorter = regex_sorter(suffixes2re(["cke", "odt", "reset_n", "clk_p", "cs", "ca", "dqs", "dq", "dmi"])),
+            colorer = regex_colorer({
+                "yellow": suffixes2re(["cs", "ca"]),
+                "orange": suffixes2re(["dq"]),
+            }),
+        )
+        gtkw.fsm_states(soc)
 
 def main():
     parser = argparse.ArgumentParser(description="Generic LiteX SoC Simulation")
@@ -212,6 +458,7 @@ def main():
     parser.add_argument("--no-refresh",           action="store_true",     help="Disable DRAM refresher")
     parser.add_argument("--log-level",            default="all=INFO",      help="Set simulation logging level")
     parser.add_argument("--disable-delay",        action="store_true",     help="Disable CPU delays")
+    parser.add_argument("--gtkw-savefile",        action="store_true",     help="Generate GTKWave savefile")
     args = parser.parse_args()
 
     soc_kwargs     = soc_sdram_argdict(args)
@@ -253,6 +500,10 @@ def main():
         trace_end   = int(args.trace_end)
     )
     vns = builder.build(run=False, **build_kwargs)
+
+    if args.gtkw_savefile:
+        generate_gtkw_savefile(builder, vns, trace_fst=args.trace_fst)
+
     builder.build(build=False, **build_kwargs)
 
 if __name__ == "__main__":
