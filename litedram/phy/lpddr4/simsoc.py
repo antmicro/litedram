@@ -9,6 +9,7 @@ from litex.build.generic_platform import Pins, Subsignal
 from litex.build.sim import SimPlatform
 from litex.build.sim.config import SimConfig
 
+from litex.soc.interconnect.csr import CSR
 from litex.soc.integration.soc_core import SoCCore
 from litex.soc.integration.soc_sdram import soc_sdram_args, soc_sdram_argdict
 from litex.soc.integration.builder import builder_args, builder_argdict, Builder
@@ -125,18 +126,21 @@ class SimSoC(SoCCore):
         # LPDDR4 -----------------------------------------------------------------------------------
         sdram_module = litedram_modules.MT53E256M16D1(sys_clk_freq, "1:8")
         pads = platform.request("lpddr4")
-        self.submodules.sdrphy = LPDDR4SimPHY(sys_clk_freq=sys_clk_freq, aligned_reset_zero=True)
-        self.add_csr("sdrphy")
+        self.submodules.ddrphy = LPDDR4SimPHY(sys_clk_freq=sys_clk_freq, aligned_reset_zero=True)
+        # fake delays (make no nsense in simulation, but sdram.c expects them)
+        self.ddrphy._rdly_dq_rst         = CSR()
+        self.ddrphy._rdly_dq_inc         = CSR()
+        self.add_csr("ddrphy")
 
         for p in ["clk_p", "clk_n", "cke", "odt", "reset_n", "cs", "ca", "dq", "dqs", "dmi"]:
-            self.comb += getattr(pads, p).eq(getattr(self.sdrphy.pads, p))
+            self.comb += getattr(pads, p).eq(getattr(self.ddrphy.pads, p))
 
         controller_settings = ControllerSettings()
         controller_settings.auto_precharge = auto_precharge
         controller_settings.with_refresh = with_refresh
 
         self.add_sdram("sdram",
-            phy                     = self.sdrphy,
+            phy                     = self.ddrphy,
             module                  = sdram_module,
             origin                  = self.mem_map["main_ram"],
             size                    = kwargs.get("max_sdram_size", 0x40000000),
@@ -151,7 +155,7 @@ class SimSoC(SoCCore):
 
         # LPDDR4 Sim -------------------------------------------------------------------------------
         self.submodules.lpddr4sim = LPDDR4Sim(
-            pads          = self.sdrphy.pads,
+            pads          = self.ddrphy.pads,
             settings      = self.sdram.controller.settings,
             sys_clk_freq  = sys_clk_freq,
             log_level     = log_level,
@@ -170,7 +174,7 @@ class SimSoC(SoCCore):
             timings[name] = sdram_module.get(name)
 
         self.submodules.dfi_timings_checker = DFITimingsChecker(
-            dfi          = self.sdrphy.dfi,
+            dfi          = self.ddrphy.dfi,
             nbanks       = 2**self.sdram.controller.settings.geom.bankbits,
             nphases      = nphases,
             timings      = timings,
@@ -192,7 +196,7 @@ class SimSoC(SoCCore):
 
         print("=" * 80)
         dump(clocks)
-        dump(self.sdrphy.settings)
+        dump(self.ddrphy.settings)
         dump(sdram_module.geom_settings)
         dump(sdram_module.timing_settings)
         print()
@@ -419,27 +423,27 @@ def generate_gtkw_savefile(builder, vns, trace_fst):
         gtkw.clocks()
         gtkw.add(soc.bus.slaves["main_ram"], sorter=wishbone_sorter())
         # all dfi signals
-        gtkw.add(soc.sdrphy.dfi, sorter=dfi_sorter(), colorer=dfi_in_phase_colorer())
+        gtkw.add(soc.ddrphy.dfi, sorter=dfi_sorter(), colorer=dfi_in_phase_colorer())
         # each phase in separate group
         with gtkw.gtkw.group("dfi phaseX", closed=True):
-            for i, phase in enumerate(soc.sdrphy.dfi.phases):
+            for i, phase in enumerate(soc.ddrphy.dfi.phases):
                 gtkw.add(phase,
                     group_name = "dfi p{}".format(i),
                     sorter     = dfi_sorter(phases=False),
                     colorer    = dfi_in_phase_colorer())
         # only dfi command signals
-        gtkw.add(soc.sdrphy.dfi,
+        gtkw.add(soc.ddrphy.dfi,
             group_name = "dfi commands",
             filter     = regex_filter(suffixes2re(["cas_n", "ras_n", "we_n"])),
             sorter     = dfi_sorter(),
             colorer    = dfi_per_phase_colorer())
         # only dfi data signals
-        gtkw.add(soc.sdrphy.dfi,
+        gtkw.add(soc.ddrphy.dfi,
             group_name = "dfi wrdata",
             filter     = regex_filter(suffixes2re(["wrdata"])),
             sorter     = dfi_sorter(),
             colorer    = dfi_per_phase_colorer())
-        gtkw.add(soc.sdrphy.dfi,
+        gtkw.add(soc.ddrphy.dfi,
             group_name = "dfi rddata",
             filter     = regex_filter(suffixes2re(["rddata"])),
             sorter     = dfi_sorter(),
