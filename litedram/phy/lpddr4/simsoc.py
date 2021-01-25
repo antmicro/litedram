@@ -433,9 +433,21 @@ def generate_gtkw_savefile(builder, vns, trace_fst):
             filter     = regex_filter(suffixes2re(["cas_n", "ras_n", "we_n"])),
             sorter     = dfi_sorter(),
             colorer    = dfi_per_phase_colorer())
+        # only dfi data signals
+        gtkw.add(soc.sdrphy.dfi,
+            group_name = "dfi wrdata",
+            filter     = regex_filter(suffixes2re(["wrdata"])),
+            sorter     = dfi_sorter(),
+            colorer    = dfi_per_phase_colorer())
+        gtkw.add(soc.sdrphy.dfi,
+            group_name = "dfi rddata",
+            filter     = regex_filter(suffixes2re(["rddata"])),
+            sorter     = dfi_sorter(),
+            colorer    = dfi_per_phase_colorer())
+        # dram apds
         gtkw.by_regex("pads_",
             filter = regex_filter(["clk_n$", "_[io]$", "_oe$"], negate=True),
-            sorter = regex_sorter(suffixes2re(["cke", "odt", "reset_n", "clk_p", "cs", "ca", "dqs", "dq", "dmi"])),
+            sorter = regex_sorter(suffixes2re(["cke", "odt", "reset_n", "clk_p", "cs", "ca", "dq", "dqs", "dmi"])),
             colorer = regex_colorer({
                 "yellow": suffixes2re(["cs", "ca"]),
                 "orange": suffixes2re(["dq"]),

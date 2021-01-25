@@ -28,12 +28,14 @@ class LPDDR4Sim(Module, AutoCSR):
     def __init__(self, pads, *, sys_clk_freq, disable_delay, settings, log_level):
         log_level = log_level_getter(log_level)
 
-        cd_cmd  = "sys8x_90"
-        cd_data = "sys8x_90_ddr"
-        cd_dqs  = "sys8x_ddr"
+        cd_cmd    = "sys8x_90"
+        cd_dq_wr  = "sys8x_90_ddr"
+        cd_dqs_wr = "sys8x_ddr"
+        cd_dq_rd  = "sys8x_90_ddr"
+        cd_dqs_rd = "sys8x_ddr"
 
-        self.submodules.data = ClockDomainCrossing([("we", 1), ("bank", 3), ("row", 17), ("col", 10)],
-            cd_from=cd_cmd, cd_to=cd_data)
+        self.submodules.data = ClockDomainCrossing(
+            [("we", 1), ("bank", 3), ("row", 17), ("col", 10)], cd_from=cd_cmd, cd_to=cd_dq_wr)
 
         cmd = CommandsSim(pads,
             data_cdc    = self.data,
@@ -44,13 +46,16 @@ class LPDDR4Sim(Module, AutoCSR):
         self.submodules.cmd = ClockDomainsRenamer(cd_cmd)(cmd)
 
         data = DataSim(pads, self.cmd,
-            cd_dqs    = cd_dqs,
+            cd_dq_wr  = cd_dq_wr,
+            cd_dqs_wr = cd_dqs_wr,
+            cd_dq_rd  = cd_dq_rd,
+            cd_dqs_rd = cd_dqs_rd,
             clk_freq  = 2*8*sys_clk_freq,
             cl        = settings.phy.cl,
             cwl       = settings.phy.cwl,
             log_level = log_level("data"),
         )
-        self.submodules.data = ClockDomainsRenamer(cd_data)(data)
+        self.submodules.data = ClockDomainsRenamer(cd_dq_wr)(data)
 
 # Commands -----------------------------------------------------------------------------------------
 
@@ -393,16 +398,11 @@ class CommandsSim(Module, AutoCSR):  # clock domain: clk_p
 # Data ---------------------------------------------------------------------------------------------
 
 class DataSim(Module, AutoCSR):  # clock domain: ddr
-    def __init__(self, pads, cmds_sim, *, cd_dqs, cl, cwl, clk_freq, log_level):
+    def __init__(self, pads, cmds_sim, *, cd_dq_wr, cd_dq_rd, cd_dqs_wr, cd_dqs_rd, cl, cwl, clk_freq, log_level):
         self.submodules.log = log = SimLogger(log_level=log_level, clk_freq=clk_freq)
         self.log.add_csrs()
 
         bl = 16
-
-        bank = Signal(3)
-        row = Signal(17)
-        col = Signal(10)
-        col_burst = Signal(10)
 
         # Per-bank memory
         nrows, ncols = 32768, 1024
@@ -411,87 +411,118 @@ class DataSim(Module, AutoCSR):  # clock domain: ddr
         self.specials += *mems, *ports
         ports = Array(ports)
 
-        burst_counter = Signal(max=32)
-        bank_addr = Signal(max=nrows * ncols)
-        self.comb += col_burst.eq(col + burst_counter)
-        self.comb += bank_addr.eq(row * ncols + col_burst)
+        bank = Signal(3)
+        row = Signal(17)
+        col = Signal(10)
 
-        self.submodules.dqs = ClockDomainsRenamer(cd_dqs)(DQSSim(pads, bl, log_level=log_level, clk_freq=clk_freq))
+        dq_kwargs = dict(bank=bank, row=row, col=col, bl=bl, nrows=nrows, ncols=ncols,
+            log_level=log_level, clk_freq=clk_freq)
+        dqs_kwargs = dict(bl=bl, log_level=log_level, clk_freq=clk_freq)
 
-        self.submodules.fsm = fsm = FSM()
-        fsm.act("IDLE",
-            NextValue(burst_counter, 0),
-            If((cmds_sim.data_en.taps[cl-1] & ~cmds_sim.data.source.we) | (cmds_sim.data_en.taps[cwl-1] & cmds_sim.data.source.we),
-                cmds_sim.data.source.ready.eq(1),
-                NextValue(bank, cmds_sim.data.source.bank),
-                NextValue(row, cmds_sim.data.source.row),
-                NextValue(col, cmds_sim.data.source.col),
-                If(cmds_sim.data.source.we,
-                    self.dqs.write.eq(1),
-                    NextState("WRITE"),
-                ).Else(
-                    self.dqs.read.eq(1),
-                    NextState("READ"),
-                )
+        self.submodules.dq_wr = ClockDomainsRenamer(cd_dq_wr)(DQWrite(dq=pads.dq, ports=ports, **dq_kwargs))
+        self.submodules.dq_rd = ClockDomainsRenamer(cd_dq_rd)(DQRead(dq=pads.dq_i, ports=ports, **dq_kwargs))
+        self.submodules.dqs_wr = ClockDomainsRenamer(cd_dqs_wr)(DQSWrite(dqs=pads.dqs, **dqs_kwargs))
+        self.submodules.dqs_rd = ClockDomainsRenamer(cd_dqs_rd)(DQSRead(dqs=pads.dqs_i,**dqs_kwargs))
+
+        write = Signal()
+        read = Signal()
+
+        self.comb += [
+            write.eq(cmds_sim.data_en.taps[cwl-1] & cmds_sim.data.source.valid & cmds_sim.data.source.we),
+            read.eq(cmds_sim.data_en.taps[cl-1] & cmds_sim.data.source.valid & ~cmds_sim.data.source.we),
+            cmds_sim.data.source.ready.eq(write | read),
+            self.dq_wr.trigger.eq(write),
+            self.dq_rd.trigger.eq(read),
+            self.dqs_wr.trigger.eq(write),
+            self.dqs_rd.trigger.eq(read),
+        ]
+
+        self.sync += [
+            If(cmds_sim.data.source.ready,
+                bank.eq(cmds_sim.data.source.bank),
+                row.eq(cmds_sim.data.source.row),
+                col.eq(cmds_sim.data.source.col),
             )
-        )
-        fsm.act("WRITE",
-            self.log.debug("WRITE[%d]: bank=%d, row=%d, col=%d, data=0x%04x",
-                burst_counter, bank, row, col_burst, pads.dq, once=False),
-            ports[bank].we.eq(1),
-            ports[bank].adr.eq(bank_addr),
-            ports[bank].dat_w.eq(pads.dq),
-            NextValue(burst_counter, burst_counter + 1),
-            If(burst_counter == bl - 1,
-                NextState("IDLE")
-            ),
-        )
-        fsm.act("READ",
-            self.log.debug("READ[%d]: bank=%d, row=%d, col=%d, data=0x%04x",
-                burst_counter, bank, row, col_burst, pads.dq, once=False),
-            ports[bank].we.eq(0),
-            ports[bank].adr.eq(bank_addr),
-            pads.dq.eq(ports[bank].dat_r),
-            NextValue(burst_counter, burst_counter + 1),
-            If(burst_counter == bl - 1,
-                NextState("IDLE")
-            ),
-        )
+        ]
 
-class DQSSim(Module):  # clock domain: ddr, 90-deg shift vs DataSim
-    def __init__(self, pads, bl, log_level, clk_freq):
+
+class DataBurst(Module, AutoCSR):
+    def __init__(self, *, bl, log_level, clk_freq):
         self.submodules.log = log = SimLogger(log_level=log_level, clk_freq=clk_freq)
+        self.log.add_csrs()
 
-        self.read  = Signal()
-        self.write = Signal()
+        self.bl = bl
+        self.trigger = Signal()
+        self.burst_counter = Signal(max=bl - 1)
 
-        burst_counter = Signal(max=bl - 1)
-        dqs0 = Signal()
-
-        # TODO: preamble
+    def add_fsm(self, ops):
         self.submodules.fsm = fsm = FSM()
         fsm.act("IDLE",
-            NextValue(burst_counter, 0),
-            If(self.write,
-                NextState("WRITE")
-            ).Elif(self.read,
-                NextState("READ")
+            NextValue(self.burst_counter, 0),
+            If(self.trigger,
+                NextState("BURST")
             )
         )
-        fsm.act("WRITE",
-            dqs0.eq(pads.dqs[0]),
-            If(pads.dqs[0] != burst_counter[0],
-                self.log.warn("Wrong DQS=%d for cycle=%d", dqs0, burst_counter, once=False)
-            ),
-            NextValue(burst_counter, burst_counter + 1),
-            If(burst_counter == bl - 1,
+        fsm.act("BURST",
+            *ops,
+            NextValue(self.burst_counter, self.burst_counter + 1),
+            If(self.burst_counter == self.bl - 1,
                 NextState("IDLE")
             ),
         )
-        fsm.act("READ",
-            *[dqs_i.eq(burst_counter[0]) for dqs_i in pads.dqs_i],
-            NextValue(burst_counter, burst_counter + 1),
-            If(burst_counter == bl - 1,
-                NextState("IDLE")
+
+
+class DQWrite(DataBurst):
+    def __init__(self, *, dq, ports, nrows, ncols, bank, row, col, **kwargs):
+        super().__init__(**kwargs)
+
+        col_burst = Signal(10)
+        addr = Signal(max=nrows * ncols)
+        self.comb += addr.eq(row * ncols + col_burst)
+
+        self.add_fsm([
+            col_burst.eq(col + self.burst_counter),
+            self.log.debug("WRITE[%d]: bank=%d, row=%d, col=%d, data=0x%04x",
+                self.burst_counter, bank, row, col_burst, dq, once=False),
+            ports[bank].we.eq(1),
+            ports[bank].adr.eq(addr),
+            ports[bank].dat_w.eq(dq),
+        ])
+
+class DQRead(DataBurst):
+    def __init__(self, *, dq, ports, nrows, ncols, bank, row, col, **kwargs):
+        super().__init__(**kwargs)
+
+        col_burst = Signal(10)
+        addr = Signal(max=nrows * ncols)
+        self.comb += addr.eq(row * ncols + col_burst)
+
+        self.add_fsm([
+            col_burst.eq(col + self.burst_counter),
+            self.log.debug("READ[%d]: bank=%d, row=%d, col=%d, data=0x%04x",
+                self.burst_counter, bank, row, col_burst, dq, once=False),
+            ports[bank].we.eq(0),
+            ports[bank].adr.eq(addr),
+            dq.eq(ports[bank].dat_r),
+        ])
+
+
+class DQSWrite(DataBurst):
+    def __init__(self, *, dqs, **kwargs):
+        super().__init__(**kwargs)
+        dqs0 = Signal()
+        self.add_fsm([
+            dqs0.eq(dqs[0]),
+            If(dqs[0] != self.burst_counter[0],
+                self.log.warn("Wrong DQS=%d for cycle=%d", dqs0, self.burst_counter, once=False)
             ),
-        )
+        ])
+
+
+class DQSRead(DataBurst):
+    def __init__(self, *, dqs, **kwargs):
+        super().__init__(**kwargs)
+        dqs0 = Signal()
+        self.add_fsm([
+            *[i.eq(self.burst_counter[0]) for i in dqs],
+        ])
