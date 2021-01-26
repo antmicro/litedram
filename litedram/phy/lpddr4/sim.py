@@ -474,41 +474,37 @@ class DataBurst(Module, AutoCSR):
             ),
         )
 
-
-class DQWrite(DataBurst):
-    def __init__(self, *, dq, ports, nrows, ncols, bank, row, col, **kwargs):
+class DQBurst(DataBurst):
+    def __init__(self, *, nrows, ncols, row, col, **kwargs):
         super().__init__(**kwargs)
+        self.addr = Signal(max=nrows * ncols)
+        self.col_burst = Signal(10)
+        self.comb += [
+            self.col_burst.eq(col + self.burst_counter),
+            self.addr.eq(row * ncols + self.col_burst),
+        ]
 
-        col_burst = Signal(10)
-        addr = Signal(max=nrows * ncols)
-        self.comb += addr.eq(row * ncols + col_burst)
-
+class DQWrite(DQBurst):
+    def __init__(self, *, dq, ports, nrows, ncols, bank, row, col, **kwargs):
+        super().__init__(nrows=nrows, ncols=ncols, row=row, col=col, **kwargs)
         self.add_fsm([
-            col_burst.eq(col + self.burst_counter),
             self.log.debug("WRITE[%d]: bank=%d, row=%d, col=%d, data=0x%04x",
-                self.burst_counter, bank, row, col_burst, dq, once=False),
+                self.burst_counter, bank, row, self.col_burst, dq, once=False),
             ports[bank].we.eq(1),
-            ports[bank].adr.eq(addr),
+            ports[bank].adr.eq(self.addr),
             ports[bank].dat_w.eq(dq),
         ])
 
-class DQRead(DataBurst):
+class DQRead(DQBurst):
     def __init__(self, *, dq, ports, nrows, ncols, bank, row, col, **kwargs):
-        super().__init__(**kwargs)
-
-        col_burst = Signal(10)
-        addr = Signal(max=nrows * ncols)
-        self.comb += addr.eq(row * ncols + col_burst)
-
+        super().__init__(nrows=nrows, ncols=ncols, row=row, col=col, **kwargs)
         self.add_fsm([
-            col_burst.eq(col + self.burst_counter),
             self.log.debug("READ[%d]: bank=%d, row=%d, col=%d, data=0x%04x",
-                self.burst_counter, bank, row, col_burst, dq, once=False),
+                self.burst_counter, bank, row, self.col_burst, dq, once=False),
             ports[bank].we.eq(0),
-            ports[bank].adr.eq(addr),
+            ports[bank].adr.eq(self.addr),
             dq.eq(ports[bank].dat_r),
         ])
-
 
 class DQSWrite(DataBurst):
     def __init__(self, *, dqs, **kwargs):
@@ -520,7 +516,6 @@ class DQSWrite(DataBurst):
                 self.log.warn("Wrong DQS=%d for cycle=%d", dqs0, self.burst_counter, once=False)
             ),
         ])
-
 
 class DQSRead(DataBurst):
     def __init__(self, *, dqs, **kwargs):
