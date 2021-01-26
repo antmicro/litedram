@@ -308,6 +308,9 @@ class CommandsSim(Module, AutoCSR):  # clock domain: clk_p
                 row.eq(Cat(row2, row1)),
                 NextValue(self.active_banks[bank], 1),
                 NextValue(self.active_rows[bank], row),
+                If(self.active_banks[bank],
+                    self.log.error("ACT on already active bank: bank=%d row=%d", bank, row)
+                ),
             ]
         )
 
@@ -328,8 +331,11 @@ class CommandsSim(Module, AutoCSR):  # clock domain: clk_p
                 If(self.cs_high[5],
                     *[self.active_banks[b].eq(0) for b in range(2**len(bank))]
                 ).Else(
-                    self.active_banks[bank].eq(0)
-                )
+                    self.active_banks[bank].eq(0),
+                    If(~self.active_banks[bank],
+                        self.log.warn("PRE on inactive bank: bank=%d", bank)
+                    ),
+                ),
             ]
         )
 
@@ -378,12 +384,16 @@ class CommandsSim(Module, AutoCSR):  # clock domain: clk_p
                 ).Elif(cas1 == read1,
                     self.log.info("READ: bank=%d row=%d col=%d", bank, row, col),
                 ),
-                If(auto_precharge,
-                    self.log.info("AUTO-PRECHARGE: bank=%d row=%d", bank, row)
+                If(~self.active_banks[bank],
+                    self.log.error("CAS command on inactive bank: bank=%d row=%d col=%d", bank, row, col)
                 ),
                 col.eq(Cat(Replicate(0, 2), self.cs_low, self.cs_high[5], col9)),
                 If((cas1 == write1) & (col[:4] != 0),
                     self.log.error("WRITE commands must use C[3:2]=0 (must be aligned to full burst)")
+                ),
+                If(auto_precharge,
+                    self.log.info("AUTO-PRECHARGE: bank=%d row=%d", bank, row),
+                    NextValue(self.active_banks[bank], 0),
                 ),
                 # pass the data to data simulator
                 self.data_en.input.eq(1),
