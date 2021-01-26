@@ -381,7 +381,10 @@ class CommandsSim(Module, AutoCSR):  # clock domain: clk_p
                 If(auto_precharge,
                     self.log.info("AUTO-PRECHARGE: bank=%d row=%d", bank, row)
                 ),
-                col.eq(Cat(Replicate(0, 2), self.cs_low, self.cs_high[5])),
+                col.eq(Cat(Replicate(0, 2), self.cs_low, self.cs_high[5], col9)),
+                If((cas1 == write1) & (col[:4] != 0),
+                    self.log.error("WRITE commands must use C[3:2]=0 (must be aligned to full burst)")
+                ),
                 # pass the data to data simulator
                 self.data_en.input.eq(1),
                 self.data.sink.valid.eq(1),
