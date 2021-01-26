@@ -35,7 +35,8 @@ class LPDDR4Sim(Module, AutoCSR):
         cd_dqs_rd = "sys8x_ddr"
 
         self.submodules.data = ClockDomainCrossing(
-            [("we", 1), ("bank", 3), ("row", 17), ("col", 10)], cd_from=cd_cmd, cd_to=cd_dq_wr)
+            [("we", 1), ("masked", 1), ("bank", 3), ("row", 17), ("col", 10)],
+            cd_from=cd_cmd, cd_to=cd_dq_wr)
 
         cmd = CommandsSim(pads,
             data_cdc    = self.data,
@@ -64,16 +65,15 @@ class CommandsSim(Module, AutoCSR):  # clock domain: clk_p
         self.submodules.log = log = SimLogger(log_level=log_level, clk_freq=clk_freq)
         self.log.add_csrs()
 
+        # Mode Registers storage
+        self.mode_regs = Array([Signal(8) for _ in range(64)])
+        # Active banks
         self.active_banks = Array([Signal() for _ in range(8)])
         self.active_rows = Array([Signal(17) for _ in range(8)])
+        # Connection to DataSim
         self.data_en = TappedDelayLine(ntaps=20)
         self.data = data_cdc
         self.submodules += self.data, self.data_en
-
-        # Mode Registers storage
-        mode_regs = Memory(8, depth=64)
-        self.mr_port = mode_regs.get_port(write_capable=True, async_read=True)
-        self.specials += mode_regs, self.mr_port
 
         # CS/CA shift registers
         cs = TappedDelayLine(pads.cs, ntaps=2)
@@ -274,9 +274,7 @@ class CommandsSim(Module, AutoCSR):  # clock domain: clk_p
             body2 = [
                 self.log.info("MRW: MR[%d] = 0x%02x", ma, op),
                 op.eq(Cat(self.cs_low, self.cs_high[5], op7)),
-                self.mr_port.adr.eq(ma),
-                self.mr_port.dat_w.eq(op),
-                self.mr_port.we.eq(1),
+                NextValue(self.mode_regs[ma], op),
             ]
         )
 
@@ -355,10 +353,13 @@ class CommandsSim(Module, AutoCSR):  # clock domain: clk_p
         )
 
     def cas_handler(self):
-        cas1   = Signal(5)
-        write1 = 0b00100
-        read1  = 0b00010
-        cas2   = 0b10010
+        cas1 = Signal(5)
+        cas2 = 0b10010
+        cas1_cmds = {
+            "WRITE":        0b00100,
+            "MASKED-WRITE": 0b01100,
+            "READ":         0b00010,
+        }
 
         bank           = Signal(3)
         row            = Signal(17)
@@ -368,7 +369,7 @@ class CommandsSim(Module, AutoCSR):  # clock domain: clk_p
         auto_precharge = Signal()
 
         return self.cmd_two_step("CAS",
-            cond1 = (self.cs_high[:5] == write1) | (self.cs_high[:5] == read1),
+            cond1 = reduce(or_, [self.cs_high[:5] == cmd for cmd in cas1_cmds.values()]),
             body1 = [
                 NextValue(cas1, self.cs_high[:5]),
                 NextValue(bank, self.cs_low[:3]),
@@ -379,17 +380,24 @@ class CommandsSim(Module, AutoCSR):  # clock domain: clk_p
             cond2 = self.cs_high[:5] == cas2,
             body2 = [
                 row.eq(self.active_rows[bank]),
-                If(cas1 == write1,
-                    self.log.info("WRITE: bank=%d row=%d col=%d", bank, row, col),
-                ).Elif(cas1 == read1,
-                    self.log.info("READ: bank=%d row=%d col=%d", bank, row, col),
-                ),
+                col.eq(Cat(Replicate(0, 2), self.cs_low, self.cs_high[5], col9)),
+                # command type info
+                Case(cas1, {
+                    value: self.log.info(f"{name}: bank=%d row=%d col=%d", bank, row, col)
+                    for name, value in cas1_cmds.items()
+                }),
+                # sanity checks
                 If(~self.active_banks[bank],
                     self.log.error("CAS command on inactive bank: bank=%d row=%d col=%d", bank, row, col)
                 ),
-                col.eq(Cat(Replicate(0, 2), self.cs_low, self.cs_high[5], col9)),
-                If((cas1 == write1) & (col[:4] != 0),
+                If((cas1 != cas1_cmds["READ"]) & (col[:4] != 0),
                     self.log.error("WRITE commands must use C[3:2]=0 (must be aligned to full burst)")
+                ),
+                If(self.mode_regs[3][6] | self.mode_regs[3][7],
+                    self.log.error("DBI currently not supported in the simulator")
+                ),
+                If((cas1 == cas1_cmds['MASKED-WRITE']) & (self.mode_regs[13][5] == 1),
+                    self.log.error("MASKED-WRITE but Data Mask operation disabled in MR13[5]")
                 ),
                 If(auto_precharge,
                     self.log.info("AUTO-PRECHARGE: bank=%d row=%d", bank, row),
@@ -398,7 +406,8 @@ class CommandsSim(Module, AutoCSR):  # clock domain: clk_p
                 # pass the data to data simulator
                 self.data_en.input.eq(1),
                 self.data.sink.valid.eq(1),
-                self.data.sink.we.eq(cas1 == write1),
+                self.data.sink.we.eq(cas1 != cas1_cmds["READ"]),
+                self.data.sink.masked.eq(cas1 == cas1_cmds["MASKED-WRITE"]),
                 self.data.sink.bank.eq(bank),
                 self.data.sink.row.eq(row),
                 self.data.sink.col.eq(col),
@@ -420,7 +429,7 @@ class DataSim(Module, AutoCSR):  # clock domain: ddr
         # Per-bank memory
         nrows, ncols = 32768, 1024
         mems = [Memory(len(pads.dq), depth=nrows * ncols) for _ in range(8)]
-        ports = [mem.get_port(write_capable=True, async_read=True) for mem in mems]
+        ports = [mem.get_port(write_capable=True, we_granularity=8, async_read=True) for mem in mems]
         self.specials += *mems, *ports
         ports = Array(ports)
 
@@ -432,7 +441,7 @@ class DataSim(Module, AutoCSR):  # clock domain: ddr
             log_level=log_level, clk_freq=clk_freq)
         dqs_kwargs = dict(bl=bl, log_level=log_level, clk_freq=clk_freq)
 
-        self.submodules.dq_wr = ClockDomainsRenamer(cd_dq_wr)(DQWrite(dq=pads.dq, ports=ports, **dq_kwargs))
+        self.submodules.dq_wr = ClockDomainsRenamer(cd_dq_wr)(DQWrite(dq=pads.dq, dmi=pads.dmi, ports=ports, **dq_kwargs))
         self.submodules.dq_rd = ClockDomainsRenamer(cd_dq_rd)(DQRead(dq=pads.dq_i, ports=ports, **dq_kwargs))
         self.submodules.dqs_wr = ClockDomainsRenamer(cd_dqs_wr)(DQSWrite(dqs=pads.dqs, **dqs_kwargs))
         self.submodules.dqs_rd = ClockDomainsRenamer(cd_dqs_rd)(DQSRead(dqs=pads.dqs_i,**dqs_kwargs))
@@ -444,6 +453,7 @@ class DataSim(Module, AutoCSR):  # clock domain: ddr
             write.eq(cmds_sim.data_en.taps[cwl-1] & cmds_sim.data.source.valid & cmds_sim.data.source.we),
             read.eq(cmds_sim.data_en.taps[cl-1] & cmds_sim.data.source.valid & ~cmds_sim.data.source.we),
             cmds_sim.data.source.ready.eq(write | read),
+            self.dq_wr.masked.eq(write & cmds_sim.data.source.masked),
             self.dq_wr.trigger.eq(write),
             self.dq_rd.trigger.eq(read),
             self.dqs_wr.trigger.eq(write),
@@ -468,11 +478,12 @@ class DataBurst(Module, AutoCSR):
         self.trigger = Signal()
         self.burst_counter = Signal(max=bl - 1)
 
-    def add_fsm(self, ops):
+    def add_fsm(self, ops, on_trigger=[]):
         self.submodules.fsm = fsm = FSM()
         fsm.act("IDLE",
             NextValue(self.burst_counter, 0),
             If(self.trigger,
+                *on_trigger,
                 NextState("BURST")
             )
         )
@@ -495,15 +506,29 @@ class DQBurst(DataBurst):
         ]
 
 class DQWrite(DQBurst):
-    def __init__(self, *, dq, ports, nrows, ncols, bank, row, col, **kwargs):
+    def __init__(self, *, dq, dmi, ports, nrows, ncols, bank, row, col, **kwargs):
         super().__init__(nrows=nrows, ncols=ncols, row=row, col=col, **kwargs)
-        self.add_fsm([
-            self.log.debug("WRITE[%d]: bank=%d, row=%d, col=%d, data=0x%04x",
-                self.burst_counter, bank, row, self.col_burst, dq, once=False),
-            ports[bank].we.eq(1),
-            ports[bank].adr.eq(self.addr),
-            ports[bank].dat_w.eq(dq),
-        ])
+
+        assert len(dmi) == len(ports[0].we), "port.we should have the same width as the DMI line"
+        self.masked = Signal()
+        masked = Signal()
+
+        self.add_fsm(
+            on_trigger = [
+                NextValue(masked, self.masked),
+            ],
+            ops = [
+                self.log.debug("WRITE[%d]: bank=%d, row=%d, col=%d, data=0x%04x",
+                    self.burst_counter, bank, row, self.col_burst, dq, once=False),
+                If(masked,
+                    ports[bank].we.eq(~dmi),  # DMI high masks the beat
+                ).Else(
+                    ports[bank].we.eq(2**len(ports[bank].we) - 1),
+                ),
+                ports[bank].adr.eq(self.addr),
+                ports[bank].dat_w.eq(dq),
+            ]
+        )
 
 class DQRead(DQBurst):
     def __init__(self, *, dq, ports, nrows, ncols, bank, row, col, **kwargs):
