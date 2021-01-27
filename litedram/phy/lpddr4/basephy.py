@@ -218,12 +218,16 @@ class LPDDR4PHY(Module, AutoCSR):
 
         for bit in range(self.databits):
             # output
+            wrdata = [
+                self.dfi.phases[i//2].wrdata[i%2 * self.databits + bit]
+                for i in range(2*nphases)
+            ]
             self.submodules += BitSlip(
                 dw     = 2*nphases,
                 cycles = bitslip_cycles,
-                rst    = (self._dly_sel.storage[bit//8] & self._wdly_dq_bitslip_rst.re) | self._rst.storage,
-                slp    = self._dly_sel.storage[bit//8] & self._wdly_dq_bitslip.re,
-                i      = Cat(*[self.dfi.phases[i//2].wrdata[i%2 * self.databits + bit] for i in range(2*nphases)]),
+                rst    = self.get_rst(bit//8, self._wdly_dq_bitslip_rst),
+                slp    = self.get_slp(bit//8, self._wdly_dq_bitslip),
+                i      = Cat(*wrdata),
                 o      = self.ck_dq_o[bit],
             )
 
@@ -232,8 +236,8 @@ class LPDDR4PHY(Module, AutoCSR):
             self.submodules += BitSlip(
                 dw     = 2*nphases,
                 cycles = bitslip_cycles,
-                rst    = (self._dly_sel.storage[bit//8] & self._rdly_dq_bitslip_rst.re) | self._rst.storage,
-                slp    = self._dly_sel.storage[bit//8] & self._rdly_dq_bitslip.re,
+                rst    = self.get_rst(bit//8, self._rdly_dq_bitslip_rst),
+                slp    = self.get_slp(bit//8, self._rdly_dq_bitslip),
                 i      = self.ck_dq_i[bit],
                 o      = dq_i_bs,
             )
@@ -254,15 +258,15 @@ class LPDDR4PHY(Module, AutoCSR):
             self.dqs_oe.eq(delayed(self, dqs_oe, cycles=1)),
         ]
 
-        for bit in range(self.databits//8):
+        for byte in range(self.databits//8):
             # output
             self.submodules += BitSlip(
                 dw     = 2*nphases,
                 cycles = bitslip_cycles,
-                rst    = (self._dly_sel.storage[bit] & self._wdly_dq_bitslip_rst.re) | self._rst.storage,
-                slp    = self._dly_sel.storage[bit] & self._wdly_dq_bitslip.re,
+                rst    = self.get_rst(byte, self._wdly_dq_bitslip_rst),
+                slp    = self.get_slp(byte, self._wdly_dq_bitslip),
                 i      = dqs_pattern.o,
-                o      = self.ck_dqs_o[bit],
+                o      = self.ck_dqs_o[byte],
             )
 
         # DMI --------------------------------------------------------------------------------------
@@ -270,19 +274,23 @@ class LPDDR4PHY(Module, AutoCSR):
         # With DM and DBI disabled, this signal is a Don't Care.
         # With DM enabled, masking is performed only when the command used is WRITE-MASKED.
         # We don't support DBI, DM support is configured statically with `masked_write`.
-        for bit in range(self.databits//8):
+        for byte in range(self.databits//8):
             if not masked_write:
-                self.comb += self.ck_dmi_o[bit].eq(0)
+                self.comb += self.ck_dmi_o[byte].eq(0)
                 self.comb += self.dmi_oe.eq(0)
             else:
                 self.comb += self.dmi_oe.eq(self.dq_oe)
+                wrdata_mask = [
+                    self.dfi.phases[i//2] .wrdata_mask[i%2 * self.databits//8 + byte]
+                    for i in range(2*nphases)
+                ]
                 self.submodules += BitSlip(
                     dw     = 2*nphases,
                     cycles = bitslip_cycles,
-                    rst    = (self._dly_sel.storage[bit] & self._wdly_dq_bitslip_rst.re) | self._rst.storage,
-                    slp    = self._dly_sel.storage[bit] & self._wdly_dq_bitslip.re,
-                    i      = Cat(*[self.dfi.phases[i//2] .wrdata_mask[i%2 * self.databits//8 + bit] for i in range(2*nphases)]),
-                    o      = self.ck_dmi_o[bit],
+                    rst    = self.get_rst(byte, self._wdly_dq_bitslip_rst),
+                    slp    = self.get_slp(byte, self._wdly_dq_bitslip),
+                    i      = Cat(*wrdata_mask),
+                    o      = self.ck_dmi_o[byte],
                 )
 
         # Read Control Path ------------------------------------------------------------------------
@@ -297,7 +305,10 @@ class LPDDR4PHY(Module, AutoCSR):
         )
         self.submodules += rddata_en
 
-        self.comb += [phase.rddata_valid.eq(rddata_en.output | self._wlevel_en.storage) for phase in dfi.phases]
+        self.comb += [
+            phase.rddata_valid.eq(rddata_en.output | self._wlevel_en.storage)
+            for phase in dfi.phases
+        ]
 
         # Write Control Path -----------------------------------------------------------------------
         wrtap = cwl_sys_latency - 1
@@ -312,7 +323,8 @@ class LPDDR4PHY(Module, AutoCSR):
         self.submodules += wrdata_en
 
         self.comb += dq_oe.eq(wrdata_en.taps[wrtap])
-        self.comb += If(self._wlevel_en.storage, dqs_oe.eq(1)).Else(dqs_oe.eq(dqs_preamble | dq_oe | dqs_postamble))
+        # Always enabled in write leveling mode, else during transfers
+        self.comb += dqs_oe.eq(self._wlevel_en.storage | (dqs_preamble | dq_oe | dqs_postamble))
 
         # Write DQS Postamble/Preamble Control Path ------------------------------------------------
         # Generates DQS Preamble 1 cycle before the first write and Postamble 1 cycle after the last
@@ -320,3 +332,9 @@ class LPDDR4PHY(Module, AutoCSR):
         # 1 for Preamble, 1 for the Write and 1 for the Postamble.
         self.comb += dqs_preamble.eq( wrdata_en.taps[wrtap - 1]  & ~wrdata_en.taps[wrtap + 0])
         self.comb += dqs_postamble.eq(wrdata_en.taps[wrtap + 1]  & ~wrdata_en.taps[wrtap + 0])
+
+    def get_rst(self, byte, rst_csr):
+        return (self._dly_sel.storage[byte] & rst_csr.re) | self._rst.storage
+
+    def get_slp(self, byte, slp_csr):
+        return self._dly_sel.storage[byte] & slp_csr.re
