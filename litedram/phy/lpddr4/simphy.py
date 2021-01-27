@@ -84,31 +84,31 @@ class LPDDR4SimPHY(LPDDR4PHY):
 
         # Clock is shifted 180 degrees to get rising edge in the middle of SDR signals.
         # To achieve that we send negated clock on clk_p and non-negated on clk_n.
-        ser_ddr(i=~self.ck_clk,    o=self.pads.clk_p,   name='clk_p')
-        ser_ddr(i=self.ck_clk,     o=self.pads.clk_n,   name='clk_n')
+        ser_ddr(i=~self.out.clk,    o=self.pads.clk_p,   name='clk_p')
+        ser_ddr(i=self.out.clk,     o=self.pads.clk_n,   name='clk_n')
 
-        ser_sdr(i=self.ck_cke,     o=self.pads.cke,     name='cke')
-        ser_sdr(i=self.ck_odt,     o=self.pads.odt,     name='odt')
-        ser_sdr(i=self.ck_reset_n, o=self.pads.reset_n, name='reset_n')
+        ser_sdr(i=self.out.cke,     o=self.pads.cke,     name='cke')
+        ser_sdr(i=self.out.odt,     o=self.pads.odt,     name='odt')
+        ser_sdr(i=self.out.reset_n, o=self.pads.reset_n, name='reset_n')
 
         # Command/address
-        ser_sdr(i=self.ck_cs,      o=self.pads.cs,      name='cs')
+        ser_sdr(i=self.out.cs,      o=self.pads.cs,      name='cs')
         for i in range(6):
-            ser_sdr(i=self.ck_ca[i], o=self.pads.ca[i], name=f'ca{i}')
+            ser_sdr(i=self.out.ca[i], o=self.pads.ca[i], name=f'ca{i}')
 
         # Tristate I/O (separate for simulation)
         for i in range(self.databits//8):
-            ser_ddr(i=self.ck_dmi_o[i], o=self.pads.dmi_o[i], name=f'dmi_o{i}')
-            des_ddr(o=self.ck_dmi_i[i], i=self.pads.dmi[i],   name=f'dmi_i{i}')
-            ser_ddr(i=self.ck_dqs_o[i], o=self.pads.dqs_o[i], name=f'dqs_o{i}', phase=90)
-            des_ddr(o=self.ck_dqs_i[i], i=self.pads.dqs[i],   name=f'dqs_i{i}', phase=90)
+            ser_ddr(i=self.out.dmi_o[i], o=self.pads.dmi_o[i], name=f'dmi_o{i}')
+            des_ddr(o=self.out.dmi_i[i], i=self.pads.dmi[i],   name=f'dmi_i{i}')
+            ser_ddr(i=self.out.dqs_o[i], o=self.pads.dqs_o[i], name=f'dqs_o{i}', phase=90)
+            des_ddr(o=self.out.dqs_i[i], i=self.pads.dqs[i],   name=f'dqs_i{i}', phase=90)
         for i in range(self.databits):
-            ser_ddr(i=self.ck_dq_o[i], o=self.pads.dq_o[i], name=f'dq_o{i}')
-            des_ddr(o=self.ck_dq_i[i], i=self.pads.dq[i],   name=f'dq_i{i}')
+            ser_ddr(i=self.out.dq_o[i], o=self.pads.dq_o[i], name=f'dq_o{i}')
+            des_ddr(o=self.out.dq_i[i], i=self.pads.dq[i],   name=f'dq_i{i}')
         # Output enable signals
-        self.comb += self.pads.dmi_oe.eq(delayed(self, self.dmi_oe, cycles=Serializer.LATENCY))
-        self.comb += self.pads.dqs_oe.eq(delayed(self, self.dqs_oe, cycles=Serializer.LATENCY))
-        self.comb += self.pads.dq_oe.eq(delayed(self, self.dq_oe, cycles=Serializer.LATENCY))
+        self.comb += self.pads.dmi_oe.eq(delayed(self, self.out.dmi_oe, cycles=Serializer.LATENCY))
+        self.comb += self.pads.dqs_oe.eq(delayed(self, self.out.dqs_oe, cycles=Serializer.LATENCY))
+        self.comb += self.pads.dq_oe.eq(delayed(self, self.out.dq_oe, cycles=Serializer.LATENCY))
 
 
 class Serializer(Module):

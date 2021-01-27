@@ -13,6 +13,27 @@ from litedram.phy.lpddr4.utils import bitpattern, delayed, ConstBitSlip, DQSPatt
 from litedram.phy.lpddr4.commands import DFIPhaseAdapter
 
 
+class LPDDR4Output:
+    """Unserialized output of LPDDR4PHY. Has to be serialized by concrete implementation."""
+    def __init__(self, nphases, databits):
+        # Pads: RESET_N, CS, CKE, CK, CA[5:0], DMI[1:0], DQ[15:0], DQS[1:0], ODT_CA
+        self.clk     = Signal(2*nphases)
+        self.cke     = Signal(nphases)
+        self.odt     = Signal(nphases)
+        self.reset_n = Signal(nphases)
+        self.cs      = Signal(nphases)
+        self.ca      = [Signal(nphases)   for _ in range(6)]
+        self.dmi_o   = [Signal(2*nphases) for _ in range(2)]
+        self.dmi_i   = [Signal(2*nphases) for _ in range(2)]
+        self.dmi_oe  = Signal()  # no serialization
+        self.dq_o    = [Signal(2*nphases) for _ in range(databits)]
+        self.dq_i    = [Signal(2*nphases) for _ in range(databits)]
+        self.dq_oe   = Signal()  # no serialization
+        self.dqs_o   = [Signal(2*nphases) for _ in range(2)]
+        self.dqs_i   = [Signal(2*nphases) for _ in range(2)]
+        self.dqs_oe  = Signal()  # no serialization
+
+
 class LPDDR4PHY(Module, AutoCSR):
     def __init__(self, pads, *,
                  sys_clk_freq, write_ser_latency, read_des_latency, phytype,
@@ -139,31 +160,16 @@ class LPDDR4PHY(Module, AutoCSR):
         # Now prepare the data by converting the sequences on adapters into sequences on the pads.
         # We have to ignore overlapping commands, and module timings have to ensure that there are
         # no overlapping commands anyway.
-        # Pads: reset_n, CS, CKE, CK, CA[5:0], DMI[1:0], DQ[15:0], DQS[1:0], ODT_CA
-        self.ck_clk     = Signal(2*nphases)
-        self.ck_cke     = Signal(nphases)
-        self.ck_odt     = Signal(nphases)
-        self.ck_reset_n = Signal(nphases)
-        self.ck_cs      = Signal(nphases)
-        self.ck_ca      = [Signal(nphases)   for _ in range(6)]
-        self.ck_dmi_o   = [Signal(2*nphases) for _ in range(2)]
-        self.ck_dmi_i   = [Signal(2*nphases) for _ in range(2)]
-        self.dmi_oe     = Signal()
-        self.ck_dq_o    = [Signal(2*nphases) for _ in range(databits)]
-        self.ck_dq_i    = [Signal(2*nphases) for _ in range(databits)]
-        self.dq_oe      = Signal()
-        self.ck_dqs_o   = [Signal(2*nphases) for _ in range(2)]
-        self.ck_dqs_i   = [Signal(2*nphases) for _ in range(2)]
-        self.dqs_oe     = Signal()
+        self.out = LPDDR4Output(nphases, databits)
 
         # Clocks -----------------------------------------------------------------------------------
-        self.comb += self.ck_clk.eq(bitpattern("-_-_-_-_" * 2))
+        self.comb += self.out.clk.eq(bitpattern("-_-_-_-_" * 2))
 
         # Simple commands --------------------------------------------------------------------------
         self.comb += [
-            self.ck_cke.eq(Cat(delayed(self, phase.cke) for phase in self.dfi.phases)),
-            self.ck_odt.eq(Cat(delayed(self, phase.odt) for phase in self.dfi.phases)),
-            self.ck_reset_n.eq(Cat(delayed(self, phase.reset_n) for phase in self.dfi.phases)),
+            self.out.cke.eq(Cat(delayed(self, phase.cke) for phase in self.dfi.phases)),
+            self.out.odt.eq(Cat(delayed(self, phase.odt) for phase in self.dfi.phases)),
+            self.out.reset_n.eq(Cat(delayed(self, phase.reset_n) for phase in self.dfi.phases)),
         ]
 
         # LPDDR4 Commands --------------------------------------------------------------------------
@@ -208,13 +214,13 @@ class LPDDR4PHY(Module, AutoCSR):
                 ca_per_adapter[bit].append(ca)
 
         # OR all the masked signals
-        self.comb += self.ck_cs.eq(reduce(or_, cs_per_adapter))
+        self.comb += self.out.cs.eq(reduce(or_, cs_per_adapter))
         for bit in range(6):
-            self.comb += self.ck_ca[bit].eq(reduce(or_, ca_per_adapter[bit]))
+            self.comb += self.out.ca[bit].eq(reduce(or_, ca_per_adapter[bit]))
 
         # DQ ---------------------------------------------------------------------------------------
         dq_oe = Signal()
-        self.comb += self.dq_oe.eq(delayed(self, dq_oe, cycles=1))
+        self.comb += self.out.dq_oe.eq(delayed(self, dq_oe, cycles=1))
 
         for bit in range(self.databits):
             # output
@@ -228,7 +234,7 @@ class LPDDR4PHY(Module, AutoCSR):
                 rst    = self.get_rst(bit//8, self._wdly_dq_bitslip_rst),
                 slp    = self.get_slp(bit//8, self._wdly_dq_bitslip),
                 i      = Cat(*wrdata),
-                o      = self.ck_dq_o[bit],
+                o      = self.out.dq_o[bit],
             )
 
             # input
@@ -238,7 +244,7 @@ class LPDDR4PHY(Module, AutoCSR):
                 cycles = bitslip_cycles,
                 rst    = self.get_rst(bit//8, self._rdly_dq_bitslip_rst),
                 slp    = self.get_slp(bit//8, self._rdly_dq_bitslip),
-                i      = self.ck_dq_i[bit],
+                i      = self.out.dq_i[bit],
                 o      = dq_i_bs,
             )
             for i in range(2*nphases):
@@ -255,7 +261,7 @@ class LPDDR4PHY(Module, AutoCSR):
             wlevel_strobe = self._wlevel_strobe.re)
         self.submodules += dqs_pattern
         self.comb += [
-            self.dqs_oe.eq(delayed(self, dqs_oe, cycles=1)),
+            self.out.dqs_oe.eq(delayed(self, dqs_oe, cycles=1)),
         ]
 
         for byte in range(self.databits//8):
@@ -266,7 +272,7 @@ class LPDDR4PHY(Module, AutoCSR):
                 rst    = self.get_rst(byte, self._wdly_dq_bitslip_rst),
                 slp    = self.get_slp(byte, self._wdly_dq_bitslip),
                 i      = dqs_pattern.o,
-                o      = self.ck_dqs_o[byte],
+                o      = self.out.dqs_o[byte],
             )
 
         # DMI --------------------------------------------------------------------------------------
@@ -276,10 +282,10 @@ class LPDDR4PHY(Module, AutoCSR):
         # We don't support DBI, DM support is configured statically with `masked_write`.
         for byte in range(self.databits//8):
             if not masked_write:
-                self.comb += self.ck_dmi_o[byte].eq(0)
-                self.comb += self.dmi_oe.eq(0)
+                self.comb += self.out.dmi_o[byte].eq(0)
+                self.comb += self.out.dmi_oe.eq(0)
             else:
-                self.comb += self.dmi_oe.eq(self.dq_oe)
+                self.comb += self.out.dmi_oe.eq(self.out.dq_oe)
                 wrdata_mask = [
                     self.dfi.phases[i//2] .wrdata_mask[i%2 * self.databits//8 + byte]
                     for i in range(2*nphases)
@@ -290,7 +296,7 @@ class LPDDR4PHY(Module, AutoCSR):
                     rst    = self.get_rst(byte, self._wdly_dq_bitslip_rst),
                     slp    = self.get_slp(byte, self._wdly_dq_bitslip),
                     i      = Cat(*wrdata_mask),
-                    o      = self.ck_dmi_o[byte],
+                    o      = self.out.dmi_o[byte],
                 )
 
         # Read Control Path ------------------------------------------------------------------------
