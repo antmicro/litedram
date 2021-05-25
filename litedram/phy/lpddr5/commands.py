@@ -15,6 +15,125 @@ class BankOrganization(enum.IntEnum):
     B8 = 0b01   # 8 banks, no bank groups  (all data rates, BL32 only)
     B16 = 0b10  # 16 banks, no bank groups (<=3200 Mbps)
 
+@enum.unique
+class SpecialCmd(enum.IntEnum):
+    """Codes for special commands encoded in DFI ZQC command
+
+    The number of possible commands in LPDDR5 is too big to encode them
+    in DFI in the regular way. DFI ZQC command is used to encode several
+    special commands depending on the value of DFI.bank using DFI.address
+    for additional data.
+    """
+    MPC = 0
+    MRR = 1
+
+@enum.unique
+class MPC(enum.IntEnum):
+    """Op codes for LPDDR5 multipurpose command
+
+    DFI ZQC command is used to send LPDDR5 MPC. DFI address A[7:0] is translated
+    to MPC operand OP[7:0]. DFI bank address BA should be equal to SpecialCmd.MPC.
+    """
+    WCK2DQI_START = 0b10000001
+    WCK2DQI_STOP  = 0b10000010
+    WCK2DQO_START = 0b10000011
+    WCK2DQO_STOP  = 0b10000100
+    ZQC_START     = 0b10000101
+    ZQC_LATCH     = 0b10000110
+    # all others reserved
+
+
+class DFIPhaseAdapter(Module):
+    """Translates DFI phase into LPDDR5 command (2 or 4 CK edges)
+
+    In LPDDR5 a "full command" may consist of 1 or 2 commands. Each command then consists
+    of values for 2 consecutive clock edges. For DFI commands that require only 1 LPDDR5
+    command, a NOP is inserted in on the first 2 CK edges to simplify timing calculations.
+
+    Parameters
+    ----------
+    dfi_phase : Record(dfi.phase_description), in
+        Input from a single DFI phase.
+    masked_write : bool or Signal(1)
+        Specifies how DFI write command (cas_n=0, ras_n=1, we_n=0) is interpreted, either
+        as LPDDR5 WRITE16 or MASKE-WRITE.
+
+    Attributes
+    ----------
+    cs : Signal(4), out
+        Values of CS on 4 subsequent DRAM DDR clock edges.
+    ca : Array(4, Signal(6)), out
+        Values of CA[6:0] on 4 subsequent DRAM DDR clock edges.
+    valid : Signal, out
+        Indicates that a valid command is presented on the `cs` and `ca` outputs.
+    """
+    def __init__(self, dfi_phase, masked_write=True):
+        assert isinstance(masked_write, (bool, Signal)), "Use boolean (static) or Signal (dynamic)"
+        if isinstance(masked_write, bool):
+            masked_write = int(masked_write)
+        else:
+            assert len(masked_write) == 1
+
+        self.cs = Signal(4)
+        self.ca = Array([Signal(7) for _ in range(4)])
+        self.valid = Signal()
+
+        # # #
+
+        self.submodules.cmd1 = Command(dfi_phase)
+        self.submodules.cmd2 = Command(dfi_phase)
+        self.comb += [
+            self.cs[:2].eq(self.cmd1.cs),
+            self.cs[2:].eq(self.cmd2.cs),
+            self.ca[0].eq(self.cmd1.ca[0]),
+            self.ca[1].eq(self.cmd1.ca[1]),
+            self.ca[2].eq(self.cmd2.ca[0]),
+            self.ca[3].eq(self.cmd2.ca[1]),
+        ]
+
+
+        dfi_cmd = Signal(3)
+        self.comb += dfi_cmd.eq(Cat(~dfi_phase.we_n, ~dfi_phase.ras_n, ~dfi_phase.cas_n)),
+        _cmd = {  # cas, ras, we
+            "NOP": 0b000,
+            "ACT": 0b010,
+            "RD":  0b100,
+            "WR":  0b101,
+            "PRE": 0b011,
+            "REF": 0b110,
+            "ZQC": 0b001,
+            "MRS": 0b111,
+        }
+
+        def cmds(*cmd, valid=1):
+            ops = {
+                1: self.cmd1.set("NOP") + self.cmd2.set(cmd[0]),
+                2: self.cmd1.set(cmd[0]) + self.cmd2.set(cmd[1]),
+            }[len(cmd)]
+            return ops + [self.valid.eq(valid)]
+
+        deselect = cmds("DES", "DES", valid=0)
+        self.comb += If(dfi_phase.cs_n == 0,
+            Case(dfi_cmd, {
+                _cmd["ACT"]: cmds("ACTIVATE-1", "ACTIVATE-2"),
+                _cmd["RD"]: cmds("RD16"),
+                _cmd["WR"]:  Case(masked_write, {
+                    0: cmds("WR16"),
+                    1: cmds("MWR"),
+                }),
+                _cmd["PRE"]: cmds("PRE"),
+                _cmd["REF"]: cmds("REF"),
+                _cmd["ZQC"]: Case(dfi_phase.bank, {
+                    SpecialCmd.MPC: cmds("MPC"),
+                    SpecialCmd.MRR: cmds("MRR"),
+                    "default": deselect,
+                }),
+                _cmd["MRS"]: cmds("MRW-1", "MRW-2"),
+                "default": deselect,
+            })
+        )
+
+
 class Command(Module):
     """LPDDR5 command decoder
 
@@ -61,15 +180,15 @@ class Command(Module):
     }
 
     def _parse_truth_table(self):
-        # transform to a form: {name: (['H', 'H', ...], [...]), ...}
+        # transform TRUTH_TABLE to a form: {name: (['H', 'R1', 'R2', ...], [...]), ...}
         tt = {}
         for cmd, desc in self.TRUTH_TABLE.items():
             edges = desc.strip().split("|")
             assert len(edges) == 2, (cmd, desc)
             edges = map(self._parse_ranges, edges)
             pos_edge, neg_edge = map(lambda e: e.strip().split(), edges)
-            assert len(pos_edge) == 7, (cmd, desc)
-            assert len(neg_edge) == 7, (cmd, desc)
+            for e in (pos_edge, neg_edge):
+                assert len(neg_edge) == 7, (cmd, desc)
             tt[cmd] = (pos_edge, neg_edge)
         return tt
 
@@ -80,20 +199,19 @@ class Command(Module):
             return " ".join(f"{name}{num}" for num in range(start, end+1))
 
         pattern = re.compile(r"([A-Z]+)(\d+)-(\d+)")
-        print(f'"{string.strip()}" => "{pattern.sub(replace, string).strip()}"')
         return pattern.sub(replace, string)
 
     def __init__(self, dfi_phase, bank_organization=BankOrganization.B16):
         if bank_organization != BankOrganization.B16:
             raise NotImplementedError(f"Unsupported: {bank_organization}")
-        self.tt = self._parse_truth_table()
+        self.truth_table = self._parse_truth_table()
         self.cs = Signal(2)
         self.ca = Array([Signal(7), Signal(7)])
         self.dfi = dfi_phase
 
     def set(self, cmd):
         ops = []
-        for edge, bits in enumerate(self.tt[cmd]):
+        for edge, bits in enumerate(self.truth_table[cmd]):
             for bit, bit_desc in enumerate(bits):
                 ops.append(self.ca[edge][bit].eq(self.parse_bit(bit)))
         if cmd != "DES":  # only DESELECT has CS low
@@ -101,21 +219,37 @@ class Command(Module):
         return ops
 
     def parse_bit(self, bit):
+        assert len(self.dfi.bank) >= 7, "At least 7 DFI addressbits needed for Mode Register address"
         assert len(self.dfi.address) >= 18, "At least 18 DFI addressbits needed for row address"
+
         rules = {
             "H":       lambda: 1,  # high
             "L":       lambda: 0,  # low
             "V":       lambda: 0,  # defined logic
             "X":       lambda: 0,  # don't care
-            # "BL":      lambda: 0,  # on-the-fly burst length, not using
-            # "AP":      lambda: self.dfi.address[10],  # auto precharge
-            # "AB":      lambda: self.dfi.address[10],  # all banks
-            "BA(\d+)": lambda i: self.dfi.bank[i],
+            "AB":      lambda: self.dfi.address[10],  # all banks
+            "AP":      lambda: self.dfi.address[10],  # auto precharge
+
+            "RFM":     lambda: 0,  # TODO: 1=RFM, 0=REF (Refresh Managemenent, only if r/o MR[27][0]=1, else always REF)
+            "SB(\d+)": lambda i: 0,  # sub-bank selection related to RFM
+
+            # TODO: CAS command fields
+            "WS_WR":   lambda: None,  # WCK2CK SYNC
+            "WS_RD":   lambda: None,  # WCK2CK SYNC
+            "WS_FS":   lambda: None,  # FAST SYNC
+            "DC(\d+)": lambda i: None,  # ?
+            "WRX":     lambda: None,  # ?
+            "WXSA":    lambda: None,  # ?
+            "WXSB":    lambda: None,  # ?
+
+            "BA(\d+)": lambda i: self.dfi.bank[i],  # only BA0-2 is used, in BG/B16 modes we always refresh banks (x, x+8)
             "R(\d+)":  lambda i: self.dfi.address[i],  # row
             "C(\d+)":  lambda i: self.dfi.address[i],  # column
-            # "MA(\d+)": lambda i: mr_address[i],  # mode register address
+
+            "MA(\d+)": lambda i: self.dfi.bank[i],  # mode register address
             "OP(\d+)": lambda i: self.dfi.address[i],  # mode register value, or operand for MPC
         }
+
         for pattern, value in rules.items():
             m = re.match(pattern, bit)
             if m:
