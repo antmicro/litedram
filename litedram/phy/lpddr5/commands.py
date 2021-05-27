@@ -75,8 +75,8 @@ class DFIPhaseAdapter(Module):
 
     Attributes
     ----------
-    cs : Signal(4), out
-        Values of CS on 4 subsequent DRAM DDR clock edges.
+    cs : Signal(2), out
+        Values of CS on 2 subsequent DRAM SDR CK cycles.
     ca : Array(4, Signal(6)), out
         Values of CA[6:0] on 4 subsequent DRAM DDR clock edges.
     valid : Signal, out
@@ -89,7 +89,7 @@ class DFIPhaseAdapter(Module):
         else:
             assert len(masked_write) == 1
 
-        self.cs = Signal(4)
+        self.cs = Signal(2)
         self.ca = Array([Signal(7) for _ in range(4)])
         self.valid = Signal()
 
@@ -98,8 +98,8 @@ class DFIPhaseAdapter(Module):
         self.submodules.cmd1 = Command(dfi_phase)
         self.submodules.cmd2 = Command(dfi_phase)
         self.comb += [
-            self.cs[:2].eq(self.cmd1.cs),
-            self.cs[2:].eq(self.cmd2.cs),
+            self.cs[0].eq(self.cmd1.cs),
+            self.cs[1].eq(self.cmd2.cs),
             self.ca[0].eq(self.cmd1.ca[0]),
             self.ca[1].eq(self.cmd1.ca[1]),
             self.ca[2].eq(self.cmd2.ca[0]),
@@ -138,8 +138,9 @@ class DFIPhaseAdapter(Module):
 class Command(Module):
     """LPDDR5 command decoder
 
-    Decode commands from a DFI phase into LPDDR5 command consisting of 2 CS values
-    and 2 CA[6:0] values. These values are then to be sent over 2 CK edges (DDR).
+    Decode commands from a DFI phase into LPDDR5 command consisting of 1 CS value
+    and 2 CA[6:0] values. CA values are then to be sent over 2 CK edges (DDR),
+    while CS is an SDR signal.
 
     Some LPDDR5 commands may consist of 2 separate "small commands", resulting in
     the command being actually sent over 2 CK cycles = 4 edges (e.g. ACT consists
@@ -149,8 +150,8 @@ class Command(Module):
     ----------
     dfi : Record(dfi.phase_description), in
         Input from single DFI phase.
-    cs : Signal(2), out
-        CS values over 2 subsequent DRAM DDR clock edges.
+    cs : Signal(), out
+        CS value for that CK SDR cycle
     ca : Array(2, Signal(7)), out
         CA[6:0] values over 2 subsequent DRAM DDR clock edges.
     """
@@ -206,7 +207,7 @@ class Command(Module):
         if bank_organization != BankOrganization.B16:
             raise NotImplementedError(f"Unsupported: {bank_organization}")
         self.truth_table = self._parse_truth_table()
-        self.cs = Signal(2)
+        self.cs = Signal()
         self.ca = Array([Signal(7), Signal(7)])
         self.dfi = dfi_phase
 
@@ -216,7 +217,7 @@ class Command(Module):
             for bit, bit_desc in enumerate(bits):
                 ops.append(self.ca[edge][bit].eq(self.parse_bit(bit)))
         if cmd != "DES":  # only DESELECT has CS low
-            ops.append(self.cs[0].eq(1))
+            ops.append(self.cs.eq(1))
         return ops
 
     def parse_bit(self, bit):
