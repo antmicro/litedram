@@ -4,11 +4,14 @@
 # Copyright (c) 2021 Antmicro <www.antmicro.com>
 # SPDX-License-Identifier: BSD-2-Clause
 
+from operator import or_
+from functools import reduce
 from typing import Tuple
 from dataclasses import dataclass
 
 from migen import *
 
+from litedram.phy.utils import CommandsPipeline
 from litedram.phy.lpddr5.commands import DFIPhaseAdapter
 
 
@@ -16,7 +19,7 @@ class LPDDR5Output:
     """Unserialized output of LPDDR5PHY. Has to be serialized by concrete implementation."""
     def __init__(self, nphases, databits):
         assert databits % 8 == 0
-        self.reset_n = Signal()
+        self.reset_n = Signal()  # no need to change reset fast, so just use 1 bit
         self.ck      = Signal(nphases)
         self.cs      = Signal(nphases//2)  # CK SDR
         self.ca      = [Signal(nphases)   for _ in range(7)]  # CK DDR
@@ -96,7 +99,8 @@ class LPDDR5PHY(Module, AutoCSR):
     #         * OSERDESE2 DDR @ sys2x->sys8x (8:1)
     #         * DQ/DMI serialized normally
     # * controller timings might be a bit more complicated to get right
-    def __init__(self, pads, *, sys_clk_freq, phytype, cmd_delay, masked_write=True):
+    def __init__(self, pads, *, sys_clk_freq, phytype, cmd_delay, masked_write=True,
+            extended_overlaps_check=False):
         self.pads        = pads
         self.memtype     = memtype     = "LPDDR5"
         self.nranks      = nranks      = 1 if not hasattr(pads, "cs_n") else len(pads.cs_n)
@@ -147,3 +151,18 @@ class LPDDR5PHY(Module, AutoCSR):
             self.comb += wck.eq(bitpattern("-_-_-_-_" * 2))
         self.comb += self.out.wck_oe.eq(1)  # TODO: enable only on burst
 
+        # Commands ---------------------------------------------------------------------------------
+        # Commands are sent with SDR CS and DDR CA[6:0] clocked by CK. DFI command can translate to
+        # 1 or 2 LPDDR5 commands. For this reason there could be an overlap if e.g. ACT is presented
+        # on two following DFI phases. This should not happen, guaranteed by module timings but we
+        # include a check here too.
+        self.submodules.commands = CommandsPipeline(adapters,
+            cs_ser_width = len(self.out.cs),
+            ca_ser_width = len(self.out.ca[0]),
+            ca_nbits     = len(self.out.ca),
+            cmd_nphases_span = 2,
+            extended_overlaps_check = extended_overlaps_check
+        )
+
+        # reset_n=0 on any phase will result in reset
+        self.comb += self.out.reset_n.eq(reduce(and_, [p.reset_n for p in self.dfi.phases]))
