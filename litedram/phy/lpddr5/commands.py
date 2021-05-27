@@ -43,6 +43,21 @@ class MPC(enum.IntEnum):
     # all others reserved
 
 
+def dfi_cmd(dfi_phase):
+    return Cat(~dfi_phase.we_n, ~dfi_phase.ras_n, ~dfi_phase.cas_n)
+
+CMD = {  # cas, ras, we
+    "NOP": 0b000,
+    "ACT": 0b010,
+    "RD":  0b100,
+    "WR":  0b101,
+    "PRE": 0b011,
+    "REF": 0b110,
+    "ZQC": 0b001,
+    "MRS": 0b111,
+}
+
+
 class DFIPhaseAdapter(Module):
     """Translates DFI phase into LPDDR5 command (2 or 4 CK edges)
 
@@ -91,20 +106,6 @@ class DFIPhaseAdapter(Module):
             self.ca[3].eq(self.cmd2.ca[1]),
         ]
 
-
-        dfi_cmd = Signal(3)
-        self.comb += dfi_cmd.eq(Cat(~dfi_phase.we_n, ~dfi_phase.ras_n, ~dfi_phase.cas_n)),
-        _cmd = {  # cas, ras, we
-            "NOP": 0b000,
-            "ACT": 0b010,
-            "RD":  0b100,
-            "WR":  0b101,
-            "PRE": 0b011,
-            "REF": 0b110,
-            "ZQC": 0b001,
-            "MRS": 0b111,
-        }
-
         def cmds(*cmd, valid=1):
             ops = {
                 1: self.cmd1.set("NOP") + self.cmd2.set(cmd[0]),
@@ -114,21 +115,21 @@ class DFIPhaseAdapter(Module):
 
         deselect = cmds("DES", "DES", valid=0)
         self.comb += If(dfi_phase.cs_n == 0,
-            Case(dfi_cmd, {
-                _cmd["ACT"]: cmds("ACTIVATE-1", "ACTIVATE-2"),
-                _cmd["RD"]: cmds("RD16"),
-                _cmd["WR"]:  Case(masked_write, {
-                    0: cmds("WR16"),
-                    1: cmds("MWR"),
+            Case(dfi_cmd(dfi_phase), {
+                CMD["ACT"]: cmds("ACTIVATE-1", "ACTIVATE-2"),
+                CMD["RD"]: cmds("CAS", "RD16"),
+                CMD["WR"]:  Case(masked_write, {
+                    0: cmds("CAS", "WR16"),
+                    1: cmds("CAS", "MWR"),
                 }),
-                _cmd["PRE"]: cmds("PRE"),
-                _cmd["REF"]: cmds("REF"),
-                _cmd["ZQC"]: Case(dfi_phase.bank, {
+                CMD["PRE"]: cmds("PRE"),
+                CMD["REF"]: cmds("REF"),
+                CMD["ZQC"]: Case(dfi_phase.bank, {
                     SpecialCmd.MPC: cmds("MPC"),
-                    SpecialCmd.MRR: cmds("MRR"),
+                    SpecialCmd.MRR: cmds("CAS", "MRR"),
                     "default": deselect,
                 }),
-                _cmd["MRS"]: cmds("MRW-1", "MRW-2"),
+                CMD["MRS"]: cmds("MRW-1", "MRW-2"),
                 "default": deselect,
             })
         )
@@ -222,6 +223,8 @@ class Command(Module):
         assert len(self.dfi.bank) >= 7, "At least 7 DFI addressbits needed for Mode Register address"
         assert len(self.dfi.address) >= 18, "At least 18 DFI addressbits needed for row address"
 
+        cmd = dfi_cmd(self.dfi)
+
         rules = {
             "H":       lambda: 1,  # high
             "L":       lambda: 0,  # low
@@ -229,23 +232,18 @@ class Command(Module):
             "X":       lambda: 0,  # don't care
             "AB":      lambda: self.dfi.address[10],  # all banks
             "AP":      lambda: self.dfi.address[10],  # auto precharge
-
             "RFM":     lambda: 0,  # TODO: 1=RFM, 0=REF (Refresh Managemenent, only if r/o MR[27][0]=1, else always REF)
             "SB(\d+)": lambda i: 0,  # sub-bank selection related to RFM
-
-            # TODO: CAS command fields
-            "WS_WR":   lambda: None,  # WCK2CK SYNC
-            "WS_RD":   lambda: None,  # WCK2CK SYNC
-            "WS_FS":   lambda: None,  # FAST SYNC
-            "DC(\d+)": lambda i: None,  # ?
-            "WRX":     lambda: None,  # ?
-            "WXSA":    lambda: None,  # ?
-            "WXSB":    lambda: None,  # ?
-
+            "WS_WR":   lambda: cmd == CMD["WR"],  # Write WCK2CK SYNC
+            "WS_RD":   lambda: cmd == CMD["RD"],  # Read WCK2CK SYNC
+            "WS_FS":   lambda: (cmd != CMD["WR"]) & (cmd != CMD["RD"]),  # FAST SYNC
+            "DC(\d+)": lambda i: 0,  # Data Copy, unimplemented
+            "WRX":     lambda: 0,  # Write X function, unimplemented
+            "WXSA":    lambda: 0,  # Write X function, unimplemented
+            "WXSB":    lambda: 0,  # Write X function, unimplemented
             "BA(\d+)": lambda i: self.dfi.bank[i],  # only BA0-2 is used, in BG/B16 modes we always refresh banks (x, x+8)
             "R(\d+)":  lambda i: self.dfi.address[i],  # row
             "C(\d+)":  lambda i: self.dfi.address[i],  # column
-
             "MA(\d+)": lambda i: self.dfi.bank[i],  # mode register address
             "OP(\d+)": lambda i: self.dfi.address[i],  # mode register value, or operand for MPC
         }
