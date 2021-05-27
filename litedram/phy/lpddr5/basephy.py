@@ -9,24 +9,28 @@ from dataclasses import dataclass
 
 from migen import *
 
+from litedram.phy.lpddr5.commands import DFIPhaseAdapter
+
 
 class LPDDR5Output:
     """Unserialized output of LPDDR5PHY. Has to be serialized by concrete implementation."""
     def __init__(self, nphases, databits):
         assert databits % 8 == 0
         self.reset_n = Signal()
-        self.clk     = Signal(2*nphases)
-        self.cs      = Signal(nphases)
-        self.ca      = [Signal(2*nphases)   for _ in range(7)]
+        self.ck      = Signal(nphases)
+        self.cs      = Signal(nphases//2)  # CK SDR
+        self.ca      = [Signal(nphases)   for _ in range(7)]  # CK DDR
+        # WCK DDR
         self.dq_o    = [Signal(2*nphases) for _ in range(databits)]
         self.dq_i    = [Signal(2*nphases) for _ in range(databits)]
         self.dq_oe   = Signal()
-        self.wck     = [Signal(2*2*nphases)   for _ in range(databits//8)]
-        self.rdqs_o  = [Signal(2*2*nphases)   for _ in range(databits//8)]
-        self.rdqs_i  = [Signal(2*2*nphases)   for _ in range(databits//8)]
+        self.wck     = [Signal(2*nphases)   for _ in range(databits//8)]
+        self.wck_oe  = Signal()
+        self.rdqs_o  = [Signal(2*nphases)   for _ in range(databits//8)]
+        self.rdqs_i  = [Signal(2*nphases)   for _ in range(databits//8)]
         self.rdqs_oe = Signal()
-        self.dmi_o   = [Signal(2*2*nphases) for _ in range(databits//8)]
-        self.dmi_i   = [Signal(2*2*nphases) for _ in range(databits//8)]
+        self.dmi_o   = [Signal(2*nphases) for _ in range(databits//8)]
+        self.dmi_i   = [Signal(2*nphases) for _ in range(databits//8)]
         self.dmi_oe  = Signal()
 
 
@@ -39,7 +43,7 @@ class FreqRange:
     t_wckpre_static:    int
     t_wckpre_toggle_wr: int
     rl:                 Tuple[int, int, int] # (Set 0, Set 1, Set 2)
-    t_wckenl_rd: int
+    t_wckenl_rd:        int
     t_wckpre_toggle_rd: int
     n_rbtp:             int
 
@@ -59,6 +63,16 @@ FREQUENCY_RANGES = [
     FreqRange(0b0100, (2133, 2750), (8,  14), (1, 7), 4, 4, 16, 3, 10, 2),
     FreqRange(0b0101, (2750, 3200), (10, 16), (3, 9), 4, 4, 18, 5, 10, 2),
 ]
+
+def get_cl_cwl(tck, wl_set, rl_set):
+    data_rate = 2 * 1/tck
+    for frange in FREQUENCY_RANGES.items():
+        dr_min, dr_max = frange.data_rate
+        if dr_min < data_rate <= dr_max:
+            cl = frange.rl[rl_set]
+            cwl = frange.wl[{'A': 0, 'B': 1}[wl_set]]
+            return cl, cwl
+    raise ValueError
 
 
 class LPDDR5PHY(Module, AutoCSR):
@@ -94,19 +108,42 @@ class LPDDR5PHY(Module, AutoCSR):
         assert databits % 8 == 0
 
         # Parameters -------------------------------------------------------------------------------
-        def get_cl_cw(memtype, tck):
-            # MT53E256M16D1, No DBI, Set A
-            f_to_cl_cwl = OrderedDict()
-            f_to_cl_cwl[ 532e6] = ( 6,  4)
-            f_to_cl_cwl[1066e6] = (10,  6)
-            f_to_cl_cwl[1600e6] = (14,  8)
-            f_to_cl_cwl[2132e6] = (20, 10)
-            f_to_cl_cwl[2666e6] = (24, 12)
-            f_to_cl_cwl[3200e6] = (28, 14)
-            f_to_cl_cwl[3732e6] = (32, 16)
-            f_to_cl_cwl[4266e6] = (36, 18)
-            for f, (cl, cwl) in f_to_cl_cwl.items():
-                if tck >= 2/f:
-                    return cl, cwl
-            raise ValueError
+        # TODO
+
+        # Registers --------------------------------------------------------------------------------
+        self._rst             = CSRStorage()
+
+        self._wlevel_en     = CSRStorage()
+        self._wlevel_strobe = CSR()
+
+        self._dly_sel = CSRStorage(databits//8)
+
+        self._rdly_dq_bitslip_rst = CSR()
+        self._rdly_dq_bitslip     = CSR()
+
+        self._wdly_dq_bitslip_rst = CSR()
+        self._wdly_dq_bitslip     = CSR()
+
+        self._rdphase = CSRStorage(log2_int(nphases), reset=rdphase)
+        self._wrphase = CSRStorage(log2_int(nphases), reset=wrphase)
+
+        # PHY settings -----------------------------------------------------------------------------
+        # TODO
+
+        # DFI Interface ----------------------------------------------------------------------------
+        # DDR 8 phases to be able to process whole 16n burst in a single controller clock cycle.
+        self.dfi = dfi = Interface(addressbits, bankbits, nranks, 2*databits, nphases=8)
+
+        # # #
+
+        adapters = [DFIPhaseAdapter(phase, masked_write=masked_write) for phase in self.dfi.phases]
+        self.submodules += adapters
+
+        self.out = LPDDR5Output(nphases, databits)
+
+        # Clocks -----------------------------------------------------------------------------------
+        self.comb += self.out.ck.eq(bitpattern("-_-_-_-_"))
+        for wck in self.out.wck:
+            self.comb += wck.eq(bitpattern("-_-_-_-_" * 2))
+        self.comb += self.out.wck_oe.eq(1)  # TODO: enable only on burst
 
