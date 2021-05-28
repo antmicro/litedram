@@ -28,7 +28,6 @@ class LPDDR5Output:
         self.dq_i    = [Signal(2*nphases) for _ in range(databits)]
         self.dq_oe   = Signal()
         self.wck     = [Signal(2*nphases)   for _ in range(databits//8)]
-        self.wck_oe  = Signal()
         self.rdqs_o  = [Signal(2*nphases)   for _ in range(databits//8)]
         self.rdqs_i  = [Signal(2*nphases)   for _ in range(databits//8)]
         self.rdqs_oe = Signal()
@@ -147,9 +146,10 @@ class LPDDR5PHY(Module, AutoCSR):
 
         # Clocks -----------------------------------------------------------------------------------
         self.comb += self.out.ck.eq(bitpattern("-_-_-_-_"))
+        wck_oe = Signal()
         for wck in self.out.wck:
-            self.comb += wck.eq(bitpattern("-_-_-_-_" * 2))
-        self.comb += self.out.wck_oe.eq(1)  # TODO: enable only on burst
+            self.comb += If(wck_oe, wck.eq(bitpattern("-_-_-_-_" * 2))).Else(wck.eq(0))
+        self.comb += wck_oe.eq(1)  # TODO: enable only on burst
 
         # Commands ---------------------------------------------------------------------------------
         # Commands are sent with SDR CS and DDR CA[6:0] clocked by CK. DFI command can translate to
