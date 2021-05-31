@@ -46,7 +46,7 @@ class MPC(enum.IntEnum):
 def dfi_cmd(dfi_phase):
     return Cat(~dfi_phase.we_n, ~dfi_phase.ras_n, ~dfi_phase.cas_n)
 
-CMD = {  # cas, ras, we
+CMD = {  # cas, ras, we (2, 1, 0)
     "NOP": 0b000,
     "ACT": 0b010,
     "RD":  0b100,
@@ -108,7 +108,7 @@ class DFIPhaseAdapter(Module):
 
         def cmds(*cmd, valid=1):
             if len(cmd) == 1:
-                ops = self.cmd1.set("NOP") + self.cmd2.set(cmd[0])
+                ops = self.cmd1.set("DES") + self.cmd2.set(cmd[0])
             elif len(cmd) == 2:
                 ops = self.cmd1.set(cmd[0]) + self.cmd2.set(cmd[1])
             else:

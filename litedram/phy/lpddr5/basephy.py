@@ -23,19 +23,19 @@ class LPDDR5Output:
     def __init__(self, nphases, databits):
         assert databits % 8 == 0
         self.reset_n = Signal()  # no need to change reset fast, so just use 1 bit
-        self.ck      = Signal(nphases)
-        self.cs      = Signal(nphases//2)  # CK SDR
-        self.ca      = [Signal(nphases)   for _ in range(7)]  # CK DDR
+        self.ck      = Signal(2*nphases)
+        self.cs      = Signal(nphases)  # CK SDR
+        self.ca      = [Signal(2*nphases)   for _ in range(7)]  # CK DDR
         # WCK DDR
-        self.dq_o    = [Signal(2*nphases) for _ in range(databits)]
-        self.dq_i    = [Signal(2*nphases) for _ in range(databits)]
+        self.dq_o    = [Signal(2*2*nphases) for _ in range(databits)]
+        self.dq_i    = [Signal(2*2*nphases) for _ in range(databits)]
         self.dq_oe   = Signal()
-        self.wck     = [Signal(2*nphases)   for _ in range(databits//8)]
-        self.rdqs_o  = [Signal(2*nphases)   for _ in range(databits//8)]
-        self.rdqs_i  = [Signal(2*nphases)   for _ in range(databits//8)]
+        self.wck     = [Signal(2*2*nphases)   for _ in range(databits//8)]
+        self.rdqs_o  = [Signal(2*2*nphases)   for _ in range(databits//8)]
+        self.rdqs_i  = [Signal(2*2*nphases)   for _ in range(databits//8)]
         self.rdqs_oe = Signal()
-        self.dmi_o   = [Signal(2*nphases) for _ in range(databits//8)]
-        self.dmi_i   = [Signal(2*nphases) for _ in range(databits//8)]
+        self.dmi_o   = [Signal(2*2*nphases) for _ in range(databits//8)]
+        self.dmi_i   = [Signal(2*2*nphases) for _ in range(databits//8)]
         self.dmi_oe  = Signal()
 
 
@@ -109,11 +109,14 @@ class LPDDR5PHY(Module, AutoCSR):
         self.databits    = databits    = len(pads.dq)
         self.addressbits = addressbits = 18  # for activate row address
         self.bankbits    = bankbits    = 7  # 4, but 7 bits needed for Mode Register address
-        self.nphases     = nphases     = 8
+        self.nphases     = nphases     = 4
         self.tck         = tck         = 1 / (nphases*sys_clk_freq)
         assert databits % 8 == 0
 
         # Parameters -------------------------------------------------------------------------------
+        self.ser_latency = ser_latency
+        self.des_latency = des_latency
+
         # TODO
 
         # Registers --------------------------------------------------------------------------------
@@ -137,8 +140,10 @@ class LPDDR5PHY(Module, AutoCSR):
         # TODO
 
         # DFI Interface ----------------------------------------------------------------------------
-        # DDR 8 phases to be able to process whole 16n burst in a single controller clock cycle.
-        self.dfi = dfi = DFIInterface(addressbits, bankbits, nranks, 2*databits, nphases=8)
+        # We are using 16n WCK:CK=2:1, so during a period of single data burst there can be 4
+        # "full" commands issued (= 4 DFI commands). For this reason we use 4 phases and extend
+        # per-phase data width to be able to transfer all the data for WCK.
+        self.dfi = dfi = DFIInterface(addressbits, bankbits, nranks, 4*databits, nphases=4)
 
         # # #
 
