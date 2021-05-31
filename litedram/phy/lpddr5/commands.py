@@ -107,16 +107,18 @@ class DFIPhaseAdapter(Module):
         ]
 
         def cmds(*cmd, valid=1):
-            ops = {
-                1: self.cmd1.set("NOP") + self.cmd2.set(cmd[0]),
-                2: self.cmd1.set(cmd[0]) + self.cmd2.set(cmd[1]),
-            }[len(cmd)]
+            if len(cmd) == 1:
+                ops = self.cmd1.set("NOP") + self.cmd2.set(cmd[0])
+            elif len(cmd) == 2:
+                ops = self.cmd1.set(cmd[0]) + self.cmd2.set(cmd[1])
+            else:
+                raise ValueError(cmd)
             return ops + [self.valid.eq(valid)]
 
         deselect = cmds("DES", "DES", valid=0)
         self.comb += If(dfi_phase.cs_n == 0,
             Case(dfi_cmd(dfi_phase), {
-                CMD["ACT"]: cmds("ACTIVATE-1", "ACTIVATE-2"),
+                CMD["ACT"]: cmds("ACT-1", "ACT-2"),
                 CMD["RD"]: cmds("CAS", "RD16"),
                 CMD["WR"]:  Case(masked_write, {
                     0: cmds("CAS", "WR16"),
@@ -215,7 +217,7 @@ class Command(Module):
         ops = []
         for edge, bits in enumerate(self.truth_table[cmd]):
             for bit, bit_desc in enumerate(bits):
-                ops.append(self.ca[edge][bit].eq(self.parse_bit(bit)))
+                ops.append(self.ca[edge][bit].eq(self.parse_bit(bit_desc)))
         if cmd != "DES":  # only DESELECT has CS low
             ops.append(self.cs.eq(1))
         return ops

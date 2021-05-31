@@ -4,14 +4,17 @@
 # Copyright (c) 2021 Antmicro <www.antmicro.com>
 # SPDX-License-Identifier: BSD-2-Clause
 
-from operator import or_
+from operator import or_, and_
 from functools import reduce
 from typing import Tuple
 from dataclasses import dataclass
 
 from migen import *
 
-from litedram.phy.utils import CommandsPipeline
+from litex.soc.interconnect.csr import AutoCSR, CSRStorage, CSR
+
+from litedram.phy.dfi import Interface as DFIInterface
+from litedram.phy.utils import CommandsPipeline, bitpattern
 from litedram.phy.lpddr5.commands import DFIPhaseAdapter
 
 
@@ -98,13 +101,13 @@ class LPDDR5PHY(Module, AutoCSR):
     #         * OSERDESE2 DDR @ sys2x->sys8x (8:1)
     #         * DQ/DMI serialized normally
     # * controller timings might be a bit more complicated to get right
-    def __init__(self, pads, *, sys_clk_freq, phytype, cmd_delay, masked_write=True,
-            extended_overlaps_check=False):
+    def __init__(self, pads, *, sys_clk_freq, phytype, ser_latency, des_latency, cmd_delay=None,
+            masked_write=True, extended_overlaps_check=False):
         self.pads        = pads
         self.memtype     = memtype     = "LPDDR5"
         self.nranks      = nranks      = 1 if not hasattr(pads, "cs_n") else len(pads.cs_n)
         self.databits    = databits    = len(pads.dq)
-        self.addressbits = addressbits = 17  # for activate row address
+        self.addressbits = addressbits = 18  # for activate row address
         self.bankbits    = bankbits    = 7  # 4, but 7 bits needed for Mode Register address
         self.nphases     = nphases     = 8
         self.tck         = tck         = 1 / (nphases*sys_clk_freq)
@@ -127,15 +130,15 @@ class LPDDR5PHY(Module, AutoCSR):
         self._wdly_dq_bitslip_rst = CSR()
         self._wdly_dq_bitslip     = CSR()
 
-        self._rdphase = CSRStorage(log2_int(nphases), reset=rdphase)
-        self._wrphase = CSRStorage(log2_int(nphases), reset=wrphase)
+        # self._rdphase = CSRStorage(log2_int(nphases), reset=rdphase)
+        # self._wrphase = CSRStorage(log2_int(nphases), reset=wrphase)
 
         # PHY settings -----------------------------------------------------------------------------
         # TODO
 
         # DFI Interface ----------------------------------------------------------------------------
         # DDR 8 phases to be able to process whole 16n burst in a single controller clock cycle.
-        self.dfi = dfi = Interface(addressbits, bankbits, nranks, 2*databits, nphases=8)
+        self.dfi = dfi = DFIInterface(addressbits, bankbits, nranks, 2*databits, nphases=8)
 
         # # #
 
@@ -166,3 +169,8 @@ class LPDDR5PHY(Module, AutoCSR):
 
         # reset_n=0 on any phase will result in reset
         self.comb += self.out.reset_n.eq(reduce(and_, [p.reset_n for p in self.dfi.phases]))
+
+        self.comb += self.out.cs.eq(self.commands.cs)
+        for bit in range(7):
+            self.comb += self.out.ca[bit].eq(self.commands.ca[bit])
+
