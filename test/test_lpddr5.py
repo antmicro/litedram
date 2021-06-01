@@ -113,3 +113,32 @@ class LPDDR5Tests(unittest.TestCase):
             }},
         )
 
+    def test_lpddr5_ca_sequencing(self):
+        # Test proper serialization of commands to CA pads and that overlapping commands are handled
+        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        cs_latency = '0' * (4 + phy.ser_latency.sys4x)
+        ca_latency = '0' * (8 + phy.ser_latency.sys8x)
+        read = dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)  # CAS+RD16
+        precharge = dict(cs_n=0, cas_n=1, ras_n=0, we_n=0)
+        self.run_test(phy,
+            dfi_sequence = [
+                {0: read, 3: read},
+                {0: read, 2: read},  # p0 ignored
+                {1: precharge},
+            ],
+            pad_checkers = {
+                "sys4x_90": {
+                    'cs':  cs_latency + '1 1 0 1  1 0 1 1  0 0 1 0 ', },
+                "sys4x_90_ddr": {
+                    'ca0': ca_latency + '00100000 10000010 00000000',
+                    'ca1': ca_latency + '00000000 00000000 00000000',
+                    'ca2': ca_latency + '10000010 00001000 00000000',
+                    'ca3': ca_latency + '10000010 00001000 00001000',
+                    'ca4': ca_latency + '00000000 00000000 00001000',
+                    'ca5': ca_latency + '10000010 00001000 00001000',
+                    'ca6': ca_latency + '00000000 00000000 00001000',
+                }
+            },
+            vcd_name='sim.vcd'
+        )
+

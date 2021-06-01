@@ -217,16 +217,17 @@ class Command(Module):
         ops = []
         for edge, bits in enumerate(self.truth_table[cmd]):
             for bit, bit_desc in enumerate(bits):
-                ops.append(self.ca[edge][bit].eq(self.parse_bit(bit_desc)))
+                ops.append(self.ca[edge][bit].eq(self.parse_bit(bit_desc, is_mrw=cmd.startswith("MRW"))))
         if cmd != "DES":  # only DESELECT has CS low
             ops.append(self.cs.eq(1))
         return ops
 
-    def parse_bit(self, bit):
+    def parse_bit(self, bit, is_mrw):
         assert len(self.dfi.bank) >= 7, "At least 7 DFI addressbits needed for Mode Register address"
         assert len(self.dfi.address) >= 18, "At least 18 DFI addressbits needed for row address"
 
         cmd = dfi_cmd(self.dfi)
+        mr_address = self.dfi.bank if is_mrw else self.dfi.address
 
         rules = {
             "H":       lambda: 1,  # high
@@ -247,7 +248,7 @@ class Command(Module):
             "BA(\d+)": lambda i: self.dfi.bank[i],  # only BA0-2 is used, in BG/B16 modes we always refresh banks (x, x+8)
             "R(\d+)":  lambda i: self.dfi.address[i],  # row
             "C(\d+)":  lambda i: self.dfi.address[i],  # column
-            "MA(\d+)": lambda i: self.dfi.bank[i],  # mode register address
+            "MA(\d+)": lambda i: mr_address[i],  # mode register address
             "OP(\d+)": lambda i: self.dfi.address[i],  # mode register value, or operand for MPC
         }
 
