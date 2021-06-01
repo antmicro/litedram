@@ -139,6 +139,46 @@ class LPDDR5Tests(unittest.TestCase):
                     'ca6': ca_latency + '00000000 00000000 00001000',
                 }
             },
-            vcd_name='sim.vcd'
         )
 
+    def test_lpddr5_ca_addressing(self):
+        # Test that bank/address for different commands are correctly serialized to CA pads
+        # LPDDR5 has only 64 columns, but uses optional 4-bit "burst address"
+        read       = dict(cs_n=0, cas_n=0, ras_n=1, we_n=1, bank=0b1111, address=0b110101)
+        write_ap   = dict(cs_n=0, cas_n=0, ras_n=1, we_n=0, bank=0b1010, address=0b10000000000)
+        activate   = dict(cs_n=0, cas_n=1, ras_n=0, we_n=1, bank=0b0010, address=0b111110000111100001)
+        refresh_ab = dict(cs_n=0, cas_n=0, ras_n=0, we_n=1, bank=0b1001, address=0b10000000000)
+        precharge  = dict(cs_n=0, cas_n=1, ras_n=0, we_n=0, bank=0b0111, address=0)
+        mrw        = dict(cs_n=0, cas_n=0, ras_n=0, we_n=0, bank=0b1010011, address=0b10101010)  # bank=7-bit address, address=8-bit op code
+        mrr        = dict(cs_n=0, cas_n=1, ras_n=1, we_n=0, bank=1,     address=0b1101101)  # 7-bit address (bank=1 selects MRR)
+        zqc_start  = dict(cs_n=0, cas_n=1, ras_n=1, we_n=0, bank=0,     address=0b10000101)  # MPC with ZQCAL START operand
+        zqc_latch  = dict(cs_n=0, cas_n=1, ras_n=1, we_n=0, bank=0,     address=0b10000110)  # MPC with ZQCAL LATCH operand
+
+        for masked_write in [True, False]:
+            with self.subTest(masked_write=masked_write):
+                phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, masked_write=masked_write)
+                cs_latency = '0' * (4 + phy.ser_latency.sys4x)
+                ca_latency = '0' * (8 + phy.ser_latency.sys8x)
+                mw = f"10{int(not masked_write)}0"
+                self.run_test(phy,
+                    dfi_sequence = [
+                        {0: read, 2: write_ap},
+                        {0: activate, 2: refresh_ab},
+                        {0: precharge, 2: mrw},
+                        {0: mrr},
+                        {0: zqc_start, 2: zqc_latch},
+                    ],
+                    pad_checkers = {
+                        "sys4x_90": {
+                            'cs':  cs_latency + '1 1  1 1  1 1  0 1  0 1  1 1  1 1  0 0  0 1  0 1 ', },
+                        "sys4x_90_ddr": {
+                            'ca0': ca_latency + '0011 0000 1011 0001 0001 0100 0001 0000 0001 0000',
+                            'ca1': ca_latency + '0001 0011 1110 0000 0001 0101 0000 0000 0000 0001',
+                            'ca2': ca_latency +f'1001 {mw} 1000 0000 0001 0000 1001 0000 0001 0001',
+                            'ca3': ca_latency + '1011 1001 1010 0010 0010 1011 1011 0000 0000 0000',
+                            'ca4': ca_latency + '0000 1000 1010 0010 001x 1100 0010 0000 0010 0010',
+                            'ca5': ca_latency + '1011 0000 1001 0010 001x 0001 0001 0000 0010 0010',
+                            'ca6': ca_latency + '0010 0001 1101 0001 0010 1110 1001 0000 0010 0010',
+                        }
+                    },
+                )
