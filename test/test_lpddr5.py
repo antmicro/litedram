@@ -33,19 +33,18 @@ def run_simulation(dut, generators, **kwargs):
     _run_simulation(dut, generators, CLOCKS, **kwargs)
 
 
-def latency(phy, clk, fill="0"):
-    match = re.match(r"sys(\d+)x", clk)
-    n = int(match.group(1)) if match else 1
-    return fill * (n + getattr(phy.ser_latency, clk))
-
-def dq_pattern(i, dfi_data, dfi_name):
-    return ''.join(str(v) for v in dfi_data_to_dq(i, dfi_data, dfi_name))
+dfi_data_to_dq = partial(test.phy_common.dfi_data_to_dq, databits=16, nphases=4, burst=16)
+dq_pattern = partial(test.phy_common.dq_pattern, databits=16, nphases=4, burst=16)
 
 def cs_latency(phy):
     return "0" * (4 + phy.ser_latency.sys4x)
 
 def ca_latency(phy):
     return "0" * (8 + phy.ser_latency.sys8x)
+
+def dq_latency(phy):
+    return "0" * (2*8 + phy.ser_latency.sys16x)  # sys8x ddr
+
 
 
 class LPDDR5Tests(unittest.TestCase):
@@ -207,3 +206,20 @@ class LPDDR5Tests(unittest.TestCase):
             }},
         )
 
+    def test_lpddr5_dq_out(self):
+        # Test serialization of dfi wrdata to DQ pads
+        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        dfi_data = {
+            0: dict(wrdata=0x1111222233334444),
+            1: dict(wrdata=0x5555666677778888),
+            2: dict(wrdata=0x9999aaaabbbbcccc),
+            3: dict(wrdata=0xddddeeeeffff0000),
+        }
+        dfi_wrdata_en = {0: dict(wrdata_en=1)}  # wrdata_en=1 required on any single phase
+        sys_cyc = "0" * 2*8
+        self.run_test(phy,
+            dfi_sequence = [dfi_wrdata_en, {}, dfi_data],
+            pad_checkers = {"sys8x_90_ddr": {
+                f'dq{i}': sys_cyc*2 + dq_latency(phy) + dq_pattern(i, dfi_data, "wrdata") + sys_cyc*4 for i in range(16)
+            }},
+        )
