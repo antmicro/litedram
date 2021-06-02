@@ -50,7 +50,7 @@ class LPDDR5SimPHY(SimSerDesMixin, LPDDR5PHY):
             ddr_ck["reset_cnt"] = 0
             ddr_wck["reset_cnt"] = 0
 
-        self.comb += self.pads.reset_n.eq(self.out.reset_n)
+        self.ser(i=self.out.reset_n, o=self.pads.reset_n, name='reset_n', **sdr_ck)
 
         # CK signals
         # CK is shifted by 90 deg just by inversion

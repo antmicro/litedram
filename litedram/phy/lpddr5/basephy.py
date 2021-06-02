@@ -14,7 +14,7 @@ from migen import *
 from litex.soc.interconnect.csr import AutoCSR, CSRStorage, CSR
 
 from litedram.phy.dfi import Interface as DFIInterface
-from litedram.phy.utils import CommandsPipeline, bitpattern
+from litedram.phy.utils import CommandsPipeline, bitpattern, delayed
 from litedram.phy.lpddr5.commands import DFIPhaseAdapter
 
 
@@ -22,7 +22,7 @@ class LPDDR5Output:
     """Unserialized output of LPDDR5PHY. Has to be serialized by concrete implementation."""
     def __init__(self, nphases, databits):
         assert databits % 8 == 0
-        self.reset_n = Signal()  # no need to change reset fast, so just use 1 bit
+        self.reset_n = Signal(nphases)
         self.ck      = Signal(2*nphases)
         self.cs      = Signal(nphases)  # CK SDR
         self.ca      = [Signal(2*nphases)   for _ in range(7)]  # CK DDR
@@ -173,7 +173,7 @@ class LPDDR5PHY(Module, AutoCSR):
         )
 
         # reset_n=0 on any phase will result in reset
-        self.comb += self.out.reset_n.eq(reduce(and_, [p.reset_n for p in self.dfi.phases]))
+        self.comb += self.out.reset_n.eq(delayed(self, Cat(p.reset_n for p in self.dfi.phases)))
 
         self.comb += self.out.cs.eq(self.commands.cs)
         for bit in range(7):
