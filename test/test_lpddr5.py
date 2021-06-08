@@ -220,6 +220,50 @@ class LPDDR5Tests(unittest.TestCase):
         self.run_test(phy,
             dfi_sequence = [dfi_wrdata_en, {}, dfi_data],
             pad_checkers = {"sys8x_90_ddr": {
-                f'dq{i}': sys_cyc*2 + dq_latency(phy) + dq_pattern(i, dfi_data, "wrdata") + sys_cyc*4 for i in range(16)
+                f'dq{i}': sys_cyc*2 + dq_latency(phy) + dq_pattern(i, dfi_data, "wrdata") + sys_cyc for i in range(16)
             }},
+        )
+
+    def test_lpddr5_dq_only_1st_cycle(self):
+        # Test serialization of dfi wrdata to DQ pads
+        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        dfi_data = {
+            0: dict(wrdata=0x1111222233334444),
+            1: dict(wrdata=0x5555666677778888),
+            2: dict(wrdata=0x9999aaaabbbbcccc),
+            3: dict(wrdata=0xddddeeeeffff0000),
+        }
+        dfi_wrdata_en = {0: dict(wrdata_en=1)}  # wrdata_en=1 required on any single phase
+        sys_cyc = "0" * 2*8
+        self.run_test(phy,
+            dfi_sequence = [dfi_wrdata_en, dfi_data, dfi_data],
+            pad_checkers = {"sys8x_90_ddr": {
+                f'dq{i}': sys_cyc*2 + dq_latency(phy) + dq_pattern(i, dfi_data, "wrdata") + sys_cyc for i in range(16)
+            }},
+        )
+
+    def test_lpddr5_wck_sync(self):
+        # Test that correct WCK sequence is generated during WCK sync before burst
+        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        sys_cyc = "0" * 2*8
+        self.run_test(phy,
+            dfi_sequence = [
+                {0: dict(wrdata_en=1)},
+                {},
+                {  # `10101010...` pattern on dq0 and `11111...` on others
+                    0: dict(wrdata=0xfffefffffffeffff),
+                    1: dict(wrdata=0xfffefffffffeffff),
+                    2: dict(wrdata=0xfffefffffffeffff),
+                    3: dict(wrdata=0xfffefffffffeffff),
+                },
+            ],
+            pad_checkers = {
+                "sys8x_90_ddr": {  # DQ just for reference
+                    "dq0":  sys_cyc*2 + dq_latency(phy) + "10101010 10101010" + sys_cyc,
+                    "dq1":  sys_cyc*2 + dq_latency(phy) + "11111111 11111111" + sys_cyc,
+                },
+                "sys8x_ddr": {
+                    "wck0": dq_latency(phy) + "00000000 00000000 00000000 00000000 10101010 10101010" + sys_cyc,
+                },
+            },
         )

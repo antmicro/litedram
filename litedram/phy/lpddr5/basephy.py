@@ -61,7 +61,7 @@ class FreqRange:
 # Taken from Tables 182, 183, 201 of JEDEC specification for LPDDR5
 # WCK:CK=2:1, DVFSC diabled, Read Link ECC off
 FREQUENCY_RANGES = [
-    #         MR       WL                                   RL         nRBTP
+    #         MR       DR            WL                     RL         nRBTP
     FreqRange(0b0000, (40,   533),  (4,  4),  (1, 1), 1, 3, ( 6,  6,  6), 0,  6, 0),
     FreqRange(0b0001, (533,  1067), (4,  6),  (0, 2), 2, 3, ( 8,  8,  8), 0,  7, 0),
     FreqRange(0b0010, (1067, 1600), (6,  8),  (1, 3), 2, 4, (10, 10, 10), 1,  8, 0),
@@ -69,6 +69,7 @@ FREQUENCY_RANGES = [
     FreqRange(0b0100, (2133, 2750), (8,  14), (1, 7), 4, 4, (16, 16, 16), 3, 10, 2),
     FreqRange(0b0101, (2750, 3200), (10, 16), (3, 9), 4, 4, (18, 20, 20), 5, 10, 2),
 ]
+
 
 def get_cl_cwl(tck, wl_set, rl_set):
     data_rate = 2 * 1/tck
@@ -79,6 +80,15 @@ def get_cl_cwl(tck, wl_set, rl_set):
             cwl = frange.wl[{'A': 0, 'B': 1}[wl_set]]
             return cl, cwl
     raise ValueError
+
+def get_frange(tck):
+    data_rate = 2 * 1/tck
+    for frange in FREQUENCY_RANGES:
+        dr_min, dr_max = frange.data_rate
+        if dr_min < data_rate/1e6 <= dr_max:
+            return frange
+    raise ValueError
+
 
 
 class LPDDR5PHY(Module, AutoCSR):
@@ -117,7 +127,10 @@ class LPDDR5PHY(Module, AutoCSR):
         assert databits % 8 == 0
 
         # Parameters -------------------------------------------------------------------------------
-        # TODO
+        frange = get_frange(tck)
+        wl_set = "A"
+        rl_set = 0
+
         # Bitslip introduces latency from 1 up to `cycles + 1` (sys)
         bitslip_cycles  = 1
         bitslip_range   = 1
@@ -126,7 +139,7 @@ class LPDDR5PHY(Module, AutoCSR):
         # Commands are sent over 2 CK (sys4x) and we count cl/cwl from last bit
         cmd_latency     = 2
 
-        cl, cwl         = get_cl_cwl(tck, wl_set="A", rl_set=0)  # measured with respect to CK
+        cl, cwl = frange.rl[rl_set], frange.wl[{'A': 0, 'B': 1}[wl_set]]  # measured with respect to CK
         cl_sys_latency  = get_sys_latency(nphases, cl)
         cwl_sys_latency = get_sys_latency(nphases, cwl)
         # For reads we need to account for ser+des latency to make sure we get the data in-phase with sys clock
@@ -201,12 +214,8 @@ class LPDDR5PHY(Module, AutoCSR):
 
         self.out = LPDDR5Output(nphases, databits)
 
-        # Clocks -----------------------------------------------------------------------------------
+        # CK ---------------------------------------------------------------------------------------
         self.comb += self.out.ck.eq(bitpattern("-_-_-_-_"))
-        wck_oe = Signal()
-        for wck in self.out.wck:
-            self.comb += If(wck_oe, wck.eq(bitpattern("-_-_-_-_" * 2))).Else(wck.eq(0))
-        self.comb += wck_oe.eq(1)  # TODO: enable only on burst
 
         # Commands ---------------------------------------------------------------------------------
         # Commands are sent with SDR CS and DDR CA[6:0] clocked by CK. DFI command can translate to
@@ -231,8 +240,36 @@ class LPDDR5PHY(Module, AutoCSR):
         for bit in range(7):
             self.comb += self.out.ca[bit].eq(self.commands.ca[bit])
 
-        # DQ ---------------------------------------------------------------------------------------
+        # Write Control Path -----------------------------------------------------------------------
+        wrtap = cwl_sys_latency - 1
+        assert wrtap >= 0
+
+        # Create a delay line of write commands coming from the DFI interface. This taps are used to
+        # control DQ/DQS tristates.
+        wrdata_en = TappedDelayLine(
+            signal = reduce(or_, [dfi.phases[i].wrdata_en for i in range(nphases)]),
+            ntaps  = wrtap + 2
+        )
+        self.submodules += wrdata_en
+
         dq_oe = Signal()
+        wck_sync = Signal()
+        self.comb += dq_oe.eq(wrdata_en.taps[wrtap])
+        # # Always enabled in write leveling mode, else during transfers
+        # self.comb += dqs_oe.eq(self._wlevel_en.storage | (dqs_preamble | dq_oe | dqs_postamble))
+
+        # # Write DQS Postamble/Preamble Control Path ------------------------------------------------
+        # # Generates DQS Preamble 1 cycle before the first write and Postamble 1 cycle after the last
+        # # write. During writes, DQS tristate is configured as output for at least 3 sys_clk cycles:
+        # # 1 for Preamble, 1 for the Write and 1 for the Postamble.
+        # def wrdata_en_tap(i):  # allows to have wrtap == 0
+        #     return wrdata_en.input if i == -1 else wrdata_en.taps[i]
+        # self.comb += dqs_preamble.eq( wrdata_en_tap(wrtap - 1)  & ~wrdata_en_tap(wrtap + 0))
+        # self.comb += dqs_postamble.eq(wrdata_en_tap(wrtap + 1)  & ~wrdata_en_tap(wrtap + 0))
+
+
+
+        # DQ ---------------------------------------------------------------------------------------
         self.comb += self.out.dq_oe.eq(delayed(self, dq_oe))
 
         for bit in range(self.databits):
@@ -263,30 +300,27 @@ class LPDDR5PHY(Module, AutoCSR):
             for i in range(2*2*nphases):
                 self.comb += self.dfi.phases[i//4].rddata[i%4 * self.databits + bit].eq(dq_i_bs[i])
 
-        # # DQS --------------------------------------------------------------------------------------
-        # dqs_oe        = Signal()
-        # dqs_preamble  = Signal()
-        # dqs_postamble = Signal()
-        # dqs_pattern   = DQSPattern(
-        #     preamble      = dqs_preamble,
-        #     postamble     = dqs_postamble,
-        #     wlevel_en     = self._wlevel_en.storage,
-        #     wlevel_strobe = self._wlevel_strobe.re)
-        # self.submodules += dqs_pattern
-        # self.comb += [
-        #     self.out.dqs_oe.eq(delayed(self, dqs_oe, cycles=1)),
-        # ]
-        #
-        # for byte in range(self.databits//8):
-        #     # output
-        #     self.submodules += BitSlip(
-        #         dw     = 2*nphases,
-        #         cycles = bitslip_cycles,
-        #         rst    = self.get_rst(byte, self._wdly_dq_bitslip_rst.re),
-        #         slp    = self.get_inc(byte, self._wdly_dq_bitslip.re),
-        #         i      = dqs_pattern.o,
-        #         o      = self.out.dqs_o[byte],
-        #     )
+        # WCK --------------------------------------------------------------------------------------
+        # WCK can be enabled/disabled. When enabling, it has to be synchronized with CK. To do so,
+        # CAS (alone or followed by WR/RD) must be issued. Synchronization is done after tCKSENL_x
+        # after CAS command (CK rising edge), by keeping WCK static for tWCKPRE_Static, then
+        # toggling it for tWCKPRE_Toggle_x. If using WCK:CK=4:1, then the first CK of toggling
+        # should be with half WCK frequency.
+        # Timings are in relation to WL and RL as:
+        # WL = tWCKENL_WR - 1 + tWCKPRE_Static + tWCKPRE_Toggle_WR
+        wck_oe = Signal()
+        wck = Signal(2*2*nphases)
+        wck_pattern = {
+            "disabled":    bitpattern("________"),  # could be High-Z
+            "static":      bitpattern("--------"),
+            "toggle_half": bitpattern("--__--__"),
+            "toggle_full": bitpattern("-_-_-_-_"),
+        }
+        wck_sync_timeline = [
+            (frange.t_wckenl_wr, wck_pattern["disabled"]),
+            (frange.t_wckpre_static, wck_pattern["static"]),
+            (frange.t_wckpre_toggle_wr, wck_pattern["toggle_half"]),
+        ]
 
         # # DMI --------------------------------------------------------------------------------------
         # # DMI signal is used for Data Mask or Data Bus Invertion depending on Mode Registers values.
@@ -329,35 +363,10 @@ class LPDDR5PHY(Module, AutoCSR):
         #     for phase in dfi.phases
         # ]
 
-        # Write Control Path -----------------------------------------------------------------------
-        wrtap = cwl_sys_latency - 1
-        assert wrtap >= 0
-
-        # Create a delay line of write commands coming from the DFI interface. This taps are used to
-        # control DQ/DQS tristates.
-        wrdata_en = TappedDelayLine(
-            signal = reduce(or_, [dfi.phases[i].wrdata_en for i in range(nphases)]),
-            ntaps  = wrtap + 2
-        )
-        self.submodules += wrdata_en
-
-        self.comb += dq_oe.eq(wrdata_en.taps[wrtap])
-        # # Always enabled in write leveling mode, else during transfers
-        # self.comb += dqs_oe.eq(self._wlevel_en.storage | (dqs_preamble | dq_oe | dqs_postamble))
-
-        # # Write DQS Postamble/Preamble Control Path ------------------------------------------------
-        # # Generates DQS Preamble 1 cycle before the first write and Postamble 1 cycle after the last
-        # # write. During writes, DQS tristate is configured as output for at least 3 sys_clk cycles:
-        # # 1 for Preamble, 1 for the Write and 1 for the Postamble.
-        # def wrdata_en_tap(i):  # allows to have wrtap == 0
-        #     return wrdata_en.input if i == -1 else wrdata_en.taps[i]
-        # self.comb += dqs_preamble.eq( wrdata_en_tap(wrtap - 1)  & ~wrdata_en_tap(wrtap + 0))
-        # self.comb += dqs_postamble.eq(wrdata_en_tap(wrtap + 1)  & ~wrdata_en_tap(wrtap + 0))
-
-
     def get_rst(self, byte, rst):
         return (self._dly_sel.storage[byte] & rst) | self._rst.storage
 
     def get_inc(self, byte, inc):
         return self._dly_sel.storage[byte] & inc
+
 
