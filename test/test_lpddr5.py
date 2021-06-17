@@ -15,26 +15,45 @@ from litedram.phy.lpddr5.simphy import LPDDR5SimPHY
 
 from test.phy_common import DFISequencer, PadChecker, run_simulation as _run_simulation
 
+
+def generate_clocks(max):
+    def phase(ck, phase):
+        assert ck % 2 == 0
+        assert phase % 90 == 0 and 0 <= phase < 360
+        if phase in [90, 270]:
+            assert ck % 4 == 0
+        p = ck // 2 - 1
+        p -= (ck // 4) * phase//90
+        p %= ck
+        assert 1 <= p <= ck-1
+        return p
+
+    sys = 8 * max
+    clocks = {
+        "sys": (sys, phase(sys, 0)),
+        "sys_90": (sys, phase(sys, 90)),
+        "sys_180": (sys, phase(sys, 180)),
+        "sys_270": (sys, phase(sys, 270)),
+    }
+
+    for i in range(1, log2_int(max) + 1):
+        n = 2**i
+        assert sys % n == 0
+        clocks[f"sys{n}x"] = (sys // n, phase(sys // n, 0))
+        if n < max or True:
+            clocks[f"sys{n}x_90"] = (sys // n, phase(sys // n, 90))
+            clocks[f"sys{n}x_180"] = (sys // n, phase(sys // n, 180))
+            clocks[f"sys{n}x_270"] = (sys // n, phase(sys // n, 270))
+
+    return clocks
+
+
 # Clocks are set up such that the first rising edge is on tic 1 (not 0), just as in test_lpddr4.
-CLOCKS = {
-    "sys":          (64, 31),
-    "sys2x":        (32, 15),
-    "sys4x":        (16,  7),
-    "sys4x_ddr":    ( 8,  3), # = sys8x
-    "sys4x_90":     (16,  3),
-    "sys4x_90_ddr": ( 8,  7),
-    "sys8x":        ( 8,  3),
-    "sys8x_ddr":    ( 4,  1),
-    "sys8x_90":     ( 8,  1),
-    "sys8x_90_ddr": ( 4,  3),
-}
-
-def run_simulation(dut, generators, **kwargs):
-    _run_simulation(dut, generators, CLOCKS, **kwargs)
+run_simulation = partial(test.phy_common.run_simulation, clocks=generate_clocks(max=8))
 
 
-dfi_data_to_dq = partial(test.phy_common.dfi_data_to_dq, databits=16, nphases=4, burst=16)
-dq_pattern = partial(test.phy_common.dq_pattern, databits=16, nphases=4, burst=16)
+dfi_data_to_dq = partial(test.phy_common.dfi_data_to_dq, databits=16, nphases=1, burst=16)
+dq_pattern = partial(test.phy_common.dq_pattern, databits=16, nphases=1, burst=16)
 
 def cs_latency(phy):
     return "0" * (4 + phy.ser_latency.sys4x)
@@ -50,7 +69,7 @@ def dq_latency(phy):
 class LPDDR5Tests(unittest.TestCase):
     SYS_CLK_FREQ = 100e6
 
-    def run_test(self, dut, dfi_sequence, pad_checkers: Mapping[str, Mapping[str, str]], pad_generators=None, **kwargs):
+    def run_test(self, dut, dfi_sequence, pad_checkers: Mapping[str, Mapping[str, str]], pad_generators=None, chunk_size=8, **kwargs):
         # pad_checkers: {clock: {sig: values}}
         dfi = DFISequencer(dfi_sequence)
         checkers = {clk: PadChecker(dut.pads, pad_signals) for clk, pad_signals in pad_checkers.items()}
@@ -65,91 +84,178 @@ class LPDDR5Tests(unittest.TestCase):
             for gen in gens:
                 generators[clock].append(gen(dut.pads))
         run_simulation(dut, generators, **kwargs)
-        PadChecker.assert_ok(self, checkers)
+        PadChecker.assert_ok(self, checkers, chunk_size=chunk_size)
         dfi.assert_ok(self)
 
-    def test_lpddr5_cs_phase_0(self):
-        # Test that CS is serialized correctly when sending command on phase 0
+    def test_lpddr5_reset_n(self):
+        # Test serialization of DFI reset_n
+        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        read = dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)
+        self.run_test(phy,
+            dfi_sequence = [
+                {0: dict(reset_n=1, **read)},
+                {},
+                {}, {},
+                {0: dict(reset_n=0, **read)},
+                {},
+                {0: dict(reset_n=0)},
+                {0: dict(reset_n=0)},
+            ],
+            pad_checkers = {"sys_90": {
+                "cs":      "0 1100 1100",
+                "reset_n": "x 1111 0100",
+            }},
+        )
+
+    def test_lpddr5_cs(self):
+        # Test that CS is serialized correctly
         phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
         self.run_test(phy,
             dfi_sequence = [
-                {0: dict(cs_n=0, cas_n=1, ras_n=0, we_n=1)},  # p0: ACT
-                {0: dict(cs_n=0, cas_n=1, ras_n=0, we_n=0)},  # p0: PRE
+                {0: dict(cs_n=0, cas_n=1, ras_n=0, we_n=1)},  # ACT
+                {},
+                {0: dict(cs_n=0, cas_n=1, ras_n=0, we_n=0)},  # PRE
+                {},
+                {},
+                {0: dict(cs_n=0, cas_n=1, ras_n=0, we_n=1)},  # ACT
+                {0: dict(cs_n=0, cas_n=1, ras_n=0, we_n=1)},  # ACT (will be ignored)
             ],
-            pad_checkers = {"sys4x_90": {
-                'cs': cs_latency(phy) + '1100 0100',
+            pad_checkers = {"sys_90": { # use 90 phase shift to sample when the data is valid
+                'cs': '0 1101011000',
             }},
         )
 
     def test_lpddr5_ck(self):
-        # Test clock serialization, first few cycles are undefined so ignore them
+        # Test clock serialization, first cycle is undefined so ignore them
         phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
         self.run_test(phy,
             dfi_sequence = [
-                {3: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)},
+                {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)},
             ],
-            pad_checkers = {"sys4x_90_ddr": {
-                'ck': ca_latency(phy).replace("0", "x") + '01010101' * 3,
+            pad_checkers = {"sys2x_90": {  # sampling at DDR CK
+                'ck': 'xx' + '01010101' * 3,
             }},
         )
 
-    def test_lpddr5_cs_multiple_phases(self):
-        # Test that CS is serialized on different phases and that overlapping commands are handled
-        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
-        self.run_test(phy,
-            dfi_sequence = [
-                {0: dict(cs_n=0, cas_n=1, ras_n=0, we_n=0)},  # PRE (1 command)
-                {1: dict(cs_n=0, cas_n=1, ras_n=0, we_n=1)},  # ACT (2 commands)
-                {
-                    0: dict(cs_n=0, cas_n=1, ras_n=0, we_n=1),
-                    1: dict(cs_n=0, cas_n=1, ras_n=0, we_n=1),  # should be ignored
-                },
-                {
-                    0: dict(cs_n=0, cas_n=1, ras_n=0, we_n=1),
-                    2: dict(cs_n=0, cas_n=1, ras_n=0, we_n=1),  # should NOT be ignored
-                },
-                {3: dict(cs_n=0, cas_n=1, ras_n=0, we_n=1)},  # crosses cycle boundaries
-                {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)},  # should be ignored
-                {2: dict(cs_n=1, cas_n=0, ras_n=1, we_n=1)},  # ignored due to cs_n=1
-            ],
-            pad_checkers = {"sys4x_90": {
-                'cs': cs_latency(phy) + ''.join([
-                    '0100',  # p0
-                    '0110',  # p1
-                    '1100',  # p0, p1 ignored
-                    '1111',  # p0, p2 not ignored
-                    '0001',  # p3
-                    '1000',  # p0 ignored
-                    '0000',  # p2 ignored
-                ])
-            }},
-        )
-
-    def test_lpddr5_ca_sequencing(self):
+    def test_lpddr5_ca(self):
         # Test proper serialization of commands to CA pads and that overlapping commands are handled
         phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
-        read = dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)  # CAS+RD16
-        precharge = dict(cs_n=0, cas_n=1, ras_n=0, we_n=0)
+        read = {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)}  # CAS+RD16
+        precharge = {0: dict(cs_n=0, cas_n=1, ras_n=0, we_n=0)}
         self.run_test(phy,
             dfi_sequence = [
-                {0: read, 3: read},
-                {0: read, 2: read},  # p0 ignored
-                {1: precharge},
+                read,
+                {},
+                {},
+                precharge,
+                read,  # ignored
             ],
             pad_checkers = {
-                "sys4x_90": {
-                    'cs':  cs_latency(phy) + '1 1 0 1  1 0 1 1  0 0 1 0 ', },
-                "sys4x_90_ddr": {
-                    'ca0': ca_latency(phy) + '00100000 10000010 00000000',
-                    'ca1': ca_latency(phy) + '00000000 00000000 00000000',
-                    'ca2': ca_latency(phy) + '10000010 00001000 00000000',
-                    'ca3': ca_latency(phy) + '10000010 00001000 00001000',
-                    'ca4': ca_latency(phy) + '00000000 00000000 00001000',
-                    'ca5': ca_latency(phy) + '10000010 00001000 00001000',
-                    'ca6': ca_latency(phy) + '00000000 00000000 00001000',
+                "sys_90": {
+                    'cs':  '0' ' 1 1  0  0 1 ', },
+                "sys2x_180": {  # it is serialized on sys2x_90 so check at _180
+                    'ca0': '00' '0010 00 0000',
+                    'ca1': '00' '0000 00 0000',
+                    'ca2': '00' '1000 00 0000',
+                    'ca3': '00' '1000 00 0010',
+                    'ca4': '00' '0000 00 0010',
+                    'ca5': '00' '1000 00 0010',
+                    'ca6': '00' '0000 00 0010',
                 }
             },
+            chunk_size=4,
         )
+
+    def test_lpddr5_cas_wck_sync_read(self):
+        # Test that WCK sync bit in CAS command is set on first read command
+        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        read = {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)}  # CAS+RD16
+        self.run_test(phy,
+            dfi_sequence = [
+                read,  # with WCK sync
+                {},
+                {},
+                read,  # no WCK sync
+                {},
+                {},
+            ],
+            pad_checkers = {
+                "sys_90": {
+                    'cs':  '0' ' 1 1  0 1  1 0 ', },
+                "sys2x_180": {
+                    'ca0': '00' '0010 0000 1000',
+                    'ca1': '00' '0000 0000 0000',
+                    'ca2': '00' '1000 0010 0000',
+                    'ca3': '00' '1000 0010 0000',
+                    'ca4': '00' '0000 0000 0000',
+                    'ca5': '00' '1000 0000 0000',
+                    'ca6': '00' '0000 0000 0000',
+                }
+            },
+            chunk_size=4,
+        )
+
+    def test_lpddr5_cas_wck_sync_mrr(self):
+        # Test that WCK sync bit in CAS command is set on first MRR command (CAS with WS_RD)
+        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        mrr = {0: dict(cs_n=0, cas_n=1, ras_n=1, we_n=0, bank=1)}  # MRR is ZQC with bank=1
+        self.run_test(phy,
+            dfi_sequence = [
+                mrr,  # with WCK sync
+                {},
+                {},
+                mrr,  # no WCK sync
+                {},
+                {},
+            ],
+            pad_checkers = {
+                "sys_90": {
+                    'cs':  '0' ' 1 1  0 1  1 0 ', },
+                "sys2x_180": {
+                    'ca0': '00' '0000 0000 0000',
+                    'ca1': '00' '0000 0000 0000',
+                    'ca2': '00' '1000 0010 0000',
+                    'ca3': '00' '1010 0010 1000',
+                    'ca4': '00' '0010 0000 1000',
+                    'ca5': '00' '1000 0000 0000',
+                    'ca6': '00' '0000 0000 0000',
+                }
+            },
+            chunk_size=4,
+        )
+
+    def test_lpddr5_cas_wck_sync_write(self):
+        # Test that WCK sync bit in CAS command is set on first write command
+        write = {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=0)}  # CAS+WR16
+        for masked_write in [True, False]:
+            with self.subTest(masked_write=masked_write):
+                phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, masked_write=masked_write)
+                w1 = f"10{int(not masked_write)}0"
+                w2 = f"{int(not masked_write)}000"
+                self.run_test(phy,
+                    dfi_sequence = [
+                        write,  # with WCK sync
+                        {},
+                        {},
+                        write,  # no WCK sync
+                        {},
+                        {},
+                    ],
+                    pad_checkers = {
+                        "sys_90": {
+                            'cs':  '0' ' 1 1  0 1  1 0 ', },
+                        "sys2x_180": {
+                            'ca0': '00' '0000 0000 0000',
+                            'ca1': '00' '0010 0000 1000',
+                            'ca2': '00'f'{w1} 0010 {w2}',
+                            'ca3': '00' '1000 0010 0000',
+                            'ca4': '00' '1000 0000 0000',
+                            'ca5': '00' '0000 0000 0000',
+                            'ca6': '00' '0000 0000 0000',
+                        }
+                    },
+                    chunk_size=4,
+                )
 
     def test_lpddr5_ca_addressing(self):
         # Test that bank/address for different commands are correctly serialized to CA pads
@@ -170,60 +276,120 @@ class LPDDR5Tests(unittest.TestCase):
                 mw = f"10{int(not masked_write)}0"
                 self.run_test(phy,
                     dfi_sequence = [
-                        {0: read, 2: write_ap},
-                        {0: activate, 2: refresh_ab},
-                        {0: precharge, 2: mrw},
-                        {0: mrr},
-                        {0: zqc_start, 2: zqc_latch},
+                        {},
+                        {0: read}, {},  # WCK sync
+                        {0: write_ap}, {},  # no WCK sync
+                        {0: activate}, {},
+                        {0: refresh_ab},{},
+                        {0: precharge}, {},
+                        {0: mrw}, {},
+                        {0: mrr}, {},  # no WCK sync
+                        {0: zqc_start}, {},
+                        {0: zqc_latch}, {},
                     ],
                     pad_checkers = {
-                        "sys4x_90": {
-                            'cs':  cs_latency(phy) + '1 1  1 1  1 1  0 1  0 1  1 1  1 1  0 0  0 1  0 1 ', },
-                        "sys4x_90_ddr": {
-                            'ca0': ca_latency(phy) + '0011 0000 1011 0001 0001 0100 0001 0000 0001 0000',
-                            'ca1': ca_latency(phy) + '0001 0011 1110 0000 0001 0101 0000 0000 0000 0001',
-                            'ca2': ca_latency(phy) +f'1001 {mw} 1000 0000 0001 0000 1001 0000 0001 0001',
-                            'ca3': ca_latency(phy) + '1011 1001 1010 0010 0010 1011 1011 0000 0000 0000',
-                            'ca4': ca_latency(phy) + '0000 1000 1010 0010 001x 1100 0010 0000 0010 0010',
-                            'ca5': ca_latency(phy) + '1011 0000 1001 0010 001x 0001 0001 0000 0010 0010',
-                            'ca6': ca_latency(phy) + '0010 0001 1101 0001 0010 1110 1001 0000 0010 0010',
+                        "sys_90": {  #     RD   WR   ACT  REF  PRE  MRW  MRR  ZQCS ZQCL
+                            'cs':  '0 0 ' '1 1  1 1  1 1  0 1  0 1  1 1  1 1  0 1  0 1 ', },
+                        "sys2x_180": {
+                            'ca0': '0000' '0011 0000 1011 0001 0001 0100 0001 0001 0000',
+                            'ca1': '0000' '0001 0011 1110 0000 0001 0101 0000 0000 0001',
+                            'ca2': '0000'f'1001 {mw} 1000 0000 0001 0000 1001 0001 0001',
+                            'ca3': '0000' '1011 1001 1010 0010 0010 1011 1011 0000 0000',
+                            'ca4': '0000' '0000 0000 1010 0010 001x 1100 0010 0010 0010',
+                            'ca5': '0000' '1011 0000 1001 0010 001x 0001 0001 0010 0010',
+                            'ca6': '0000' '0010 0001 1101 0001 0010 1110 0001 0010 0010',
                         }
                     },
+                    chunk_size=4,
                 )
-
-    def test_lpddr5_reset_n(self):
-        # Test serialization of DFI command pins (cs/cke/odt/reset_n)
-        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
-        read = dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)
-        self.run_test(phy,
-            dfi_sequence = [
-                {1: dict(reset_n=0, **read)},
-                {2: dict(reset_n=0, **read)},
-            ],
-            pad_checkers = {"sys4x_90": {
-                "cs":      cs_latency(phy) + "0110 0011",
-                "reset_n": cs_latency(phy) + "1011 1101",
-            }},
-        )
 
     def test_lpddr5_dq_out(self):
         # Test serialization of dfi wrdata to DQ pads
         phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
         dfi_data = {
-            0: dict(wrdata=0x1111222233334444),
-            1: dict(wrdata=0x5555666677778888),
-            2: dict(wrdata=0x9999aaaabbbbcccc),
-            3: dict(wrdata=0xddddeeeeffff0000),
+            0: dict(wrdata=0x111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000),
         }
-        dfi_wrdata_en = {0: dict(wrdata_en=1)}  # wrdata_en=1 required on any single phase
-        sys_cyc = "0" * 2*8
+        dfi_wrdata_en = {0: dict(wrdata_en=1)}
+        latency = [{}] * (phy.settings.write_latency - 1)
         self.run_test(phy,
-            dfi_sequence = [dfi_wrdata_en, {}, dfi_data],
-            pad_checkers = {"sys8x_90_ddr": {
-                f'dq{i}': sys_cyc*2 + dq_latency(phy) + dq_pattern(i, dfi_data, "wrdata") + sys_cyc for i in range(16)
+            dfi_sequence = [dfi_wrdata_en, *latency, dfi_data],  # made up write latency
+            pad_checkers = {"sys4x_90": {
+                f'dq{i}': "0000"*phy.settings.write_latency + "0000 0000" + dq_pattern(i, dfi_data, "wrdata") + "0000"
+                for i in range(16)
             }},
+            chunk_size=4,
         )
 
+    @unittest.skip("not yet")
+    def test_lpddr5_dq_in_rddata_valid(self):
+        # Test that rddata_valid is set with correct delay
+        read_latency = 9  # settings.read_latency
+        dfi_sequence = [
+            {0: dict(rddata_en=1)},  # command is issued by MC (appears on next cycle)
+            *[{p: dict(rddata_valid=0) for p in range(8)} for _ in range(read_latency - 1)],  # nothing is sent during write latency
+            {p: dict(rddata_valid=1) for p in range(8)},
+            {},
+        ]
+
+        self.run_test(LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ),
+            dfi_sequence = dfi_sequence,
+            pad_checkers = {},
+            pad_generators = {},
+        )
+
+    def test_lpddr5_dq_in_rddata(self):
+        # Test that data on DQ pads is deserialized correctly to DFI rddata.
+        # We assume that when there are no commands, PHY will still still deserialize the data,
+        # which is generally true (tristate oe is 0 whenever we are not writing).
+        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        dfi_data = {
+            0: dict(rddata=0x111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000),
+        }
+
+        def sim_dq(pads):
+            i = 0
+            while not (yield pads.cs):
+                i += 1
+                assert i < 40, "Timeout waiting for RD cmd"
+                yield
+            # RD is registered on the second CS, then wait for RL (everyting in CK domain)
+            for _ in range(4 * (1 + phy.settings.cl)):
+                yield
+            for cyc in range(16):  # send a burst of data on pads
+                for bit in range(16):
+                    yield pads.dq_i[bit].eq(int(dq_pattern(bit, dfi_data, "rddata")[cyc]))
+                yield
+            for bit in range(16):
+                yield pads.dq_i[bit].eq(0)
+            yield
+
+        read_des_delay = 3  # phy.read_des_delay
+        dfi_sequence = [
+            {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1, rddata_en=1)},
+            # {},  # wait 1 sysclk cycle
+            # *[{} for _ in range(read_des_delay)],
+            *[{} for _ in range(phy.settings.read_latency)],
+            dfi_data,
+            {},
+
+            {},
+            {},
+            {},
+            {},
+            {},
+        ]
+
+        self.run_test(phy,
+            dfi_sequence = dfi_sequence,
+            pad_checkers = {},
+            pad_generators = {
+                "sys4x_180": sim_dq,
+            },
+            vcd_name='sim.vcd'
+        )
+
+
+    @unittest.skip("not yet")
     def test_lpddr5_dq_only_1st_cycle(self):
         # Test serialization of dfi wrdata to DQ pads
         phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
@@ -242,6 +408,7 @@ class LPDDR5Tests(unittest.TestCase):
             }},
         )
 
+    @unittest.skip("not yet")
     def test_lpddr5_wck_sync(self):
         # Test that correct WCK sequence is generated during WCK sync before burst
         phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
@@ -267,3 +434,39 @@ class LPDDR5Tests(unittest.TestCase):
                 },
             },
         )
+
+    # def test_debug(self):
+    #     class Dut(Module):
+    #         def __init__(self):
+    #             self.dfi_cmd = Signal()
+    #             self.out_first = Signal()
+    #             self.out_fifo = Signal()
+    #             self.cnt = Signal(8)
+    #
+    #             from litex.soc.interconnect import stream
+    #             buf = stream.PipeValid([("cs", 1), ("ca_p", 7), ("ca_n", 7)])
+    #             self.submodules += buf
+    #             self.comb += [
+    #                 buf.sink.valid.eq(self.dfi_cmd),
+    #                 buf.source.ready.eq(1),
+    #                 self.out_fifo.eq(buf.source.valid),
+    #
+    #                 # self.valid.eq(self.cnt[1]),
+    #             ]
+    #             self.comb += self.out_first.eq(self.dfi_cmd)
+    #             self.sync += self.cnt.eq(self.cnt + 1)
+    #
+    #     def generator(dut):
+    #         for _ in range(2):
+    #             for _ in range(2):
+    #                 yield
+    #             yield dut.dfi_cmd.eq(1)
+    #             yield
+    #             yield
+    #             yield dut.dfi_cmd.eq(0)
+    #             yield
+    #             for _ in range(4):
+    #                 yield
+    #
+    #     dut = Dut()
+    #     test.phy_common.run_simulation(dut, generator(dut), {"sys": (2, 1)}, vcd_name='sim.vcd')
