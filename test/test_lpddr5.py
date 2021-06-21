@@ -320,18 +320,16 @@ class LPDDR5Tests(unittest.TestCase):
             chunk_size=4,
         )
 
-    @unittest.skip("not yet")
     def test_lpddr5_dq_in_rddata_valid(self):
         # Test that rddata_valid is set with correct delay
-        read_latency = 9  # settings.read_latency
+        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
         dfi_sequence = [
             {0: dict(rddata_en=1)},  # command is issued by MC (appears on next cycle)
-            *[{p: dict(rddata_valid=0) for p in range(8)} for _ in range(read_latency - 1)],  # nothing is sent during write latency
-            {p: dict(rddata_valid=1) for p in range(8)},
+            *[{0: dict(rddata_valid=0)} for _ in range(phy.settings.read_latency - 1)],  # nothing is sent during write latency
+            {0: dict(rddata_valid=1)},
             {},
         ]
-
-        self.run_test(LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ),
+        self.run_test(phy,
             dfi_sequence = dfi_sequence,
             pad_checkers = {},
             pad_generators = {},
@@ -339,11 +337,12 @@ class LPDDR5Tests(unittest.TestCase):
 
     def test_lpddr5_dq_in_rddata(self):
         # Test that data on DQ pads is deserialized correctly to DFI rddata.
-        # We assume that when there are no commands, PHY will still still deserialize the data,
-        # which is generally true (tristate oe is 0 whenever we are not writing).
         phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
         dfi_data = {
-            0: dict(rddata=0x111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000),
+            0: dict(
+                rddata=0x111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000,
+                rddata_valid=1
+            ),
         }
 
         def sim_dq(pads):
@@ -354,6 +353,9 @@ class LPDDR5Tests(unittest.TestCase):
                 yield
             # RD is registered on the second CS, then wait for RL (everyting in CK domain)
             for _ in range(4 * (1 + phy.settings.cl)):
+                yield
+            # wait one more cycle, need to verify the latencies on actual hardware
+            for _ in range(4):
                 yield
             for cyc in range(16):  # send a burst of data on pads
                 for bit in range(16):
@@ -366,16 +368,8 @@ class LPDDR5Tests(unittest.TestCase):
         read_des_delay = 3  # phy.read_des_delay
         dfi_sequence = [
             {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1, rddata_en=1)},
-            # {},  # wait 1 sysclk cycle
-            # *[{} for _ in range(read_des_delay)],
-            *[{} for _ in range(phy.settings.read_latency)],
+            *[{} for _ in range(phy.settings.read_latency - 1)],
             dfi_data,
-            {},
-
-            {},
-            {},
-            {},
-            {},
             {},
         ]
 
@@ -385,9 +379,7 @@ class LPDDR5Tests(unittest.TestCase):
             pad_generators = {
                 "sys4x_180": sim_dq,
             },
-            vcd_name='sim.vcd'
         )
-
 
     @unittest.skip("not yet")
     def test_lpddr5_dq_only_1st_cycle(self):

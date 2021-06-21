@@ -349,9 +349,12 @@ class LPDDR5PHY(Module, AutoCSR):
         )
         self.submodules += rddata_converter
 
+        # TODO: check if that -1 is correct, from Migen simulations it seems like it shouldn't
+        # be there, but in LPDDR4 the bitslip_range value was needed
+        rddata_start = read_latency - burst_ck_cycles - 1
         self.comb += [
             rddata_converter.sink.data.eq(rddata_ck),
-            rddata_converter.sink.valid.eq(reduce(or_, rddata_en.taps[read_latency - burst_ck_cycles:read_latency])),
+            rddata_converter.sink.valid.eq(reduce(or_, rddata_en.taps[rddata_start:rddata_start+burst_ck_cycles])),
             rddata_converter.source.ready.eq(1),
             self.dfi.p0.rddata.eq(rddata_converter.source.data),
             self.dfi.p0.rddata_valid.eq(rddata_converter.source.valid),
