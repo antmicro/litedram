@@ -312,7 +312,24 @@ class LPDDR5Tests(unittest.TestCase):
         dfi_wrdata_en = {0: dict(wrdata_en=1)}
         latency = [{}] * (phy.settings.write_latency - 1)
         self.run_test(phy,
-            dfi_sequence = [dfi_wrdata_en, *latency, dfi_data],  # made up write latency
+            dfi_sequence = [dfi_wrdata_en, *latency, dfi_data],
+            pad_checkers = {"sys4x_90": {
+                f'dq{i}': "0000"*phy.settings.write_latency + "0000 0000" + dq_pattern(i, dfi_data, "wrdata") + "0000"
+                for i in range(16)
+            }},
+            chunk_size=4,
+        )
+
+    def test_lpddr5_dq_out_only_1_cycle(self):
+        # Test that only single cycle of wrdata after write_latency gets serialized
+        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        dfi_data = {
+            0: dict(wrdata=0x111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000),
+        }
+        dfi_wrdata_en = {0: dict(wrdata_en=1)}
+        latency = [dfi_data] * (phy.settings.write_latency - 1)
+        self.run_test(phy,
+            dfi_sequence = [dfi_wrdata_en, *latency, dfi_data],
             pad_checkers = {"sys4x_90": {
                 f'dq{i}': "0000"*phy.settings.write_latency + "0000 0000" + dq_pattern(i, dfi_data, "wrdata") + "0000"
                 for i in range(16)
@@ -379,25 +396,6 @@ class LPDDR5Tests(unittest.TestCase):
             pad_generators = {
                 "sys4x_180": sim_dq,
             },
-        )
-
-    @unittest.skip("not yet")
-    def test_lpddr5_dq_only_1st_cycle(self):
-        # Test serialization of dfi wrdata to DQ pads
-        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
-        dfi_data = {
-            0: dict(wrdata=0x1111222233334444),
-            1: dict(wrdata=0x5555666677778888),
-            2: dict(wrdata=0x9999aaaabbbbcccc),
-            3: dict(wrdata=0xddddeeeeffff0000),
-        }
-        dfi_wrdata_en = {0: dict(wrdata_en=1)}  # wrdata_en=1 required on any single phase
-        sys_cyc = "0" * 2*8
-        self.run_test(phy,
-            dfi_sequence = [dfi_wrdata_en, dfi_data, dfi_data],
-            pad_checkers = {"sys8x_90_ddr": {
-                f'dq{i}': sys_cyc*2 + dq_latency(phy) + dq_pattern(i, dfi_data, "wrdata") + sys_cyc for i in range(16)
-            }},
         )
 
     @unittest.skip("not yet")
