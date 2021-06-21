@@ -8,11 +8,13 @@ import re
 import unittest
 from typing import Mapping
 from collections import defaultdict
+from functools import partial
 
 from migen import *
 
 from litedram.phy.lpddr5.simphy import LPDDR5SimPHY
 
+import test.phy_common
 from test.phy_common import DFISequencer, PadChecker, run_simulation as _run_simulation
 
 
