@@ -71,7 +71,7 @@ class FreqRange:
 # Taken from Tables 182, 183, 201 of JEDEC specification for LPDDR5
 # WCK:CK=2:1, DVFSC diabled, Read Link ECC off
 FREQUENCY_RANGES = [
-    #         MR       DR            WL                     RL         nRBTP
+    #         MR       DR            WL                     RL                   nRBTP
     FreqRange(0b0000, (40,   533),  (4,  4),  (1, 1), 1, 3, ( 6,  6,  6), 0,  6, 0),
     FreqRange(0b0001, (533,  1067), (4,  6),  (0, 2), 2, 3, ( 8,  8,  8), 0,  7, 0),
     FreqRange(0b0010, (1067, 1600), (6,  8),  (1, 3), 2, 4, (10, 10, 10), 1,  8, 0),
@@ -241,12 +241,13 @@ class LPDDR5PHY(Module, AutoCSR):
         # should be with half WCK frequency.
         # Timings are in relation to WL and RL as:
         # WL = tWCKENL_WR - 1 + tWCKPRE_Static + tWCKPRE_Toggle_WR
+        # RL = tWCKENL_RD - 1 + tWCKPRE_Static + tWCKPRE_Toggle_RD  (without Byte Mode, nor Read DBI/Read Data Copy)
         wck_sync_done = Signal()
-        self.sync += If(self.adapter.wck_sync, wck_sync_done.eq(1))
+        self.sync += If(self.adapter.wck_sync != 0, wck_sync_done.eq(1))
         self.comb += self.adapter.wck_sync_done.eq(wck_sync_done)
 
         wck_sync = TappedDelayLine(
-            signal = self.adapter.wck_sync & ~wck_sync_done,
+            signal = (self.adapter.wck_sync != 0) & ~wck_sync_done,
             ntaps  = max(
                 frange.t_wckenl_wr + frange.t_wckpre_static + frange.t_wckpre_toggle_wr,
                 frange.t_wckenl_rd + frange.t_wckpre_static + frange.t_wckpre_toggle_rd,

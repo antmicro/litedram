@@ -58,6 +58,14 @@ CMD = {  # cas, ras, we (2, 1, 0)
 }
 
 
+@enum.unique
+class WCKSyncType(enum.IntEnum):
+    """Corresponds to CAS WCK sync flags"""
+    WR = 1
+    RD = 2
+    FS = 3
+
+
 class DFIPhaseAdapter(Module):
     """Translates DFI phase into LPDDR5 command (2 or 4 CK edges)
 
@@ -84,9 +92,10 @@ class DFIPhaseAdapter(Module):
     wck_sync_done: Signal, in
         Indicates whether WCK synchronization has already been done. PHY must drive
         this signal to control if CAS commands are sent with WCK sync bits.
-    wck_sync: Signal, out
+    wck_sync: Signal(2), out
         Indicates that a CAS command with WCK sync is being sent in this cycle.
-        PHY must use this signal to update `wck_sync_done`.
+        PHY must use this signal to update `wck_sync_done`. The value is one of
+        `WCKSyncType` enum, 0 means no WCK sync.
     """
     def __init__(self, dfi_phase, masked_write=True):
         assert isinstance(masked_write, (bool, Signal)), "Use boolean (static) or Signal (dynamic)"
@@ -99,12 +108,12 @@ class DFIPhaseAdapter(Module):
         self.ca = Array([Signal(7) for _ in range(4)])
         self.valid = Signal()
         self.wck_sync_done = Signal()
-        self.wck_sync = Signal()
+        self.wck_sync = Signal(max=len(WCKSyncType))
 
         # # #
 
-        self.submodules.cmd1 = Command(dfi_phase)
-        self.submodules.cmd2 = Command(dfi_phase)
+        self.submodules.cmd1 = Command(dfi_phase, self.wck_sync)
+        self.submodules.cmd2 = Command(dfi_phase, self.wck_sync)
         self.comb += [
             self.cs[0].eq(self.cmd1.cs),
             self.cs[1].eq(self.cmd2.cs),
@@ -112,11 +121,12 @@ class DFIPhaseAdapter(Module):
             self.ca[1].eq(self.cmd1.ca[1]),
             self.ca[2].eq(self.cmd2.ca[0]),
             self.ca[3].eq(self.cmd2.ca[1]),
-            self.cmd1.wck_sync.eq(self.wck_sync),
-            self.cmd2.wck_sync.eq(self.wck_sync),
         ]
 
-        wck_sync = self.wck_sync.eq(self.wck_sync_done == 0)
+        def wck_sync(type):
+            return If(self.wck_sync_done == 0,
+                self.wck_sync.eq(getattr(WCKSyncType, type.upper())),
+            )
 
         def cmds(*cmd, valid=1):
             if len(cmd) == 1:
@@ -133,16 +143,16 @@ class DFIPhaseAdapter(Module):
         self.comb += If(dfi_phase.cs_n == 0,
             Case(dfi_cmd(dfi_phase), {
                 CMD["ACT"]: cmds("ACT-1", "ACT-2"),
-                CMD["RD"]: [*cmds("CAS", "RD16"), wck_sync],
+                CMD["RD"]: [*cmds("CAS", "RD16"), wck_sync("RD")],
                 CMD["WR"]:  Case(masked_write, {
-                    0: [*cmds("CAS", "WR16"), wck_sync],
-                    1: [*cmds("CAS", "MWR"), wck_sync],
+                    0: [*cmds("CAS", "WR16"), wck_sync("WR")],
+                    1: [*cmds("CAS", "MWR"), wck_sync("WR")],
                 }),
                 CMD["PRE"]: cmds("PRE"),
                 CMD["REF"]: cmds("REF"),
                 CMD["ZQC"]: Case(dfi_phase.bank, {
                     SpecialCmd.MPC: cmds("MPC"),
-                    SpecialCmd.MRR: [*cmds("CAS", "MRR"), wck_sync],
+                    SpecialCmd.MRR: [*cmds("CAS", "MRR"), wck_sync("RD")],
                     "default": deselect,
                 }),
                 CMD["MRS"]: cmds("MRW-1", "MRW-2"),
@@ -170,8 +180,8 @@ class Command(Module):
         CS value for that CK SDR cycle
     ca : Array(2, Signal(7)), out
         CA[6:0] values over 2 subsequent DRAM DDR clock edges.
-    wck_sync : Signal(), in
-        If 1, then CAS command will have a WCK sync bit set.
+    wck_sync : Signal(2), in
+        One of `WCKSyncType`, determines WCK sync bit in CAS.
     """
 
     TRUTH_TABLE = {
@@ -221,13 +231,13 @@ class Command(Module):
         pattern = re.compile(r"([A-Z]+)(\d+)-(\d+)")
         return pattern.sub(replace, string)
 
-    def __init__(self, dfi_phase, bank_organization=BankOrganization.B16):
+    def __init__(self, dfi_phase, wck_sync, bank_organization=BankOrganization.B16):
         if bank_organization != BankOrganization.B16:
             raise NotImplementedError(f"Unsupported: {bank_organization}")
         self.truth_table = self._parse_truth_table()
         self.cs = Signal()
         self.ca = Array([Signal(7), Signal(7)])
-        self.wck_sync = Signal()
+        self.wck_sync = wck_sync
         self.dfi = dfi_phase
 
     def set(self, cmd):
@@ -246,10 +256,6 @@ class Command(Module):
         cmd = dfi_cmd(self.dfi)
         mr_address = self.dfi.bank if is_mrw else self.dfi.address
 
-        wck_wr = (cmd == CMD["WR"])
-        wck_rd = (cmd == CMD["RD"]) | ((cmd == CMD["ZQC"]) & (self.dfi.bank == SpecialCmd.MRR))
-        wck_fs = ~wck_wr & ~wck_rd
-
         rules = {
             "H":       lambda: 1,  # high
             "L":       lambda: 0,  # low
@@ -259,9 +265,9 @@ class Command(Module):
             "AP":      lambda: self.dfi.address[10],  # auto precharge
             "RFM":     lambda: 0,  # TODO: 1=RFM, 0=REF (Refresh Managemenent, only if r/o MR[27][0]=1, else always REF)
             "SB(\d+)": lambda i: 0,  # sub-bank selection related to RFM
-            "WS_WR":   lambda: self.wck_sync & wck_wr,  # Write WCK2CK SYNC
-            "WS_RD":   lambda: self.wck_sync & wck_rd,  # Read WCK2CK SYNC
-            "WS_FS":   lambda: self.wck_sync & wck_fs,  # FAST SYNC
+            "WS_WR":   lambda: self.wck_sync == WCKSyncType.WR,  # Write WCK2CK SYNC
+            "WS_RD":   lambda: self.wck_sync == WCKSyncType.RD,  # Read WCK2CK SYNC
+            "WS_FS":   lambda: self.wck_sync == WCKSyncType.FS,  # FAST SYNC
             "DC(\d+)": lambda i: 0,  # Data Copy, unimplemented
             "WRX":     lambda: 0,  # Write X function, unimplemented
             "WXSA":    lambda: 0,  # Write X function, unimplemented
