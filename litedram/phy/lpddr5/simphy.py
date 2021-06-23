@@ -49,7 +49,7 @@ class LPDDR5SimPHY(SimSerDesMixin, LPDDR5PHY):
         ddr_ck     = dict(clkdiv="sys", clk="sys2x")
         ddr_ck_90  = dict(clkdiv="sys", clk="sys2x_90")
         ddr_wck    = dict(clkdiv="sys", clk={2: "sys4x", 4: "sys8x"}[wck_ck_ratio])
-        ddr_wck_90 = dict(clkdiv="sys", clk={2: "sys4x", 4: "sys8x"}[wck_ck_ratio])
+        ddr_wck_90 = dict(clkdiv="sys", clk={2: "sys4x_90", 4: "sys8x_90"}[wck_ck_ratio])
 
         if aligned_reset_zero:
             ddr_ck["reset_cnt"] = 0

@@ -4,6 +4,7 @@
 # Copyright (c) 2021 Antmicro <www.antmicro.com>
 # SPDX-License-Identifier: BSD-2-Clause
 
+import copy
 from operator import or_, and_
 from functools import reduce
 from typing import Tuple
@@ -59,6 +60,14 @@ class FreqRange:
         low, high = self.data_rate
         return (round(low / 4), round(hi / 4))
 
+    def for_set(self, wl_set, rl_set):
+        new = copy.copy(self)
+        wl_set = {"A": 0, "B": 1}[wl_set]
+        new.wl = self.wl[wl_set]
+        new.t_wckenl_wr = self.t_wckenl_wr[wl_set]
+        new.rl = self.rl[rl_set]
+        return new
+
 # Taken from Tables 182, 183, 201 of JEDEC specification for LPDDR5
 # WCK:CK=2:1, DVFSC diabled, Read Link ECC off
 FREQUENCY_RANGES = [
@@ -79,7 +88,6 @@ def get_frange(twck):
         if dr_min < data_rate/1e6 <= dr_max:
             return frange
     raise ValueError
-
 
 
 class LPDDR5PHY(Module, AutoCSR):
@@ -119,9 +127,7 @@ class LPDDR5PHY(Module, AutoCSR):
 
         # Parameters -------------------------------------------------------------------------------
         assert wck_ck_ratio == 2, "Need to add params for 4:1"
-        frange = get_frange(twck)
-        wl_set = "A"
-        rl_set = 0
+        frange = get_frange(twck).for_set(wl_set="A", rl_set=0)
 
         burst_len = 16
         burst_ck_cycles = burst_len // (2*wck_ck_ratio)
@@ -134,7 +140,7 @@ class LPDDR5PHY(Module, AutoCSR):
         # Commands are sent over 2 CK (sys4x) and we count cl/cwl from last bit
         cmd_latency     = 2
 
-        cl, cwl = frange.rl[rl_set], frange.wl[{'A': 0, 'B': 1}[wl_set]]  # measured with respect to CK
+        cl, cwl = frange.rl, frange.wl  # measured with respect to CK
 
         # Read latency
         # DFI cmd -> cmd buf -> PHY serializers -> DRAM -> Read Latency -> DQ data
@@ -239,41 +245,55 @@ class LPDDR5PHY(Module, AutoCSR):
         self.sync += If(self.adapter.wck_sync, wck_sync_done.eq(1))
         self.comb += self.adapter.wck_sync_done.eq(wck_sync_done)
 
-        # TODO: wck sync sequence
+        wck_sync = TappedDelayLine(
+            signal = self.adapter.wck_sync & ~wck_sync_done,
+            ntaps  = max(
+                frange.t_wckenl_wr + frange.t_wckpre_static + frange.t_wckpre_toggle_wr,
+                frange.t_wckenl_rd + frange.t_wckpre_static + frange.t_wckpre_toggle_rd,
+            ))
+        wck_sync_taps = Cat(wck_sync.input, wck_sync.taps)
+
         wck_pattern = Signal(8)  # for WCK:CK=2:1 we take wck_pattern[::2]
-        self.comb += wck_pattern.eq(bitpattern("--__--__"))
-        # wck_sync = TappedDelayLine(
-        #     signal = self.adapter.wck_sync & ~wck_sync_done,
-        #     ntaps  = wrtap + 2
-        # )
-        # wck_fsm = FSM()
-        # self.submodules += wck_sync, wck_fsm
-        # wck_fsm.act("DISABLED",
-        #     wck_pattern.eq(bitpattern("________")),
-        #     If(wck_sync.taps[frange.t_wckenl_wr],  # TODO: wr/rd
-        #         NextState("STATIC")
-        #     )
-        # )
-        # wck_fsm.act("STATIC",
-        #     wck_pattern.eq(bitpattern("--------")),
-        #     If(wck_sync.taps[frange.t_wckenl_wr + frange.t_wckpre_static],
-        #         NextState("TOGGLE")
-        #     )
-        # )
-        # wck_fsm.act("TOGGLE",
-        #     wck_pattern.eq(bitpattern("--__--__")),
-        #     If(~wck_sync_done,
-        #         NextState("DISABLED")
-        #     ).Elif((wck_ck_ratio == 4),  # go to full speed in the next cycle
-        #         NextState("TOGGLE_4:1")
-        #     ),
-        # )
-        # wck_fsm.act("TOGGLE_4:1",
-        #     wck_pattern.eq(bitpattern("-_-_-_-_")),
-        #     If(~wck_sync_done,
-        #         NextState("DISABLED")
-        #     ),
-        # )
+        patterns = {
+            "disabled": "________",
+            "static": "________",
+            "toggle": "--__--__",
+            "toggle_4:1": "-_-_-_-_",
+        }
+        # FIXME: An edge case for tWCKENL_WR=0 which assumes that we use same pattern for DISABLED and STATIC
+        assert patterns["disabled"] == patterns["static"]
+        start_toggle = frange.t_wckenl_wr + frange.t_wckpre_static - 1
+        if frange.t_wckenl_wr == 0:
+            start_toggle -= 1
+
+        wck_fsm = FSM()
+        self.submodules += wck_sync, wck_fsm
+        wck_fsm.act("DISABLED",
+            wck_pattern.eq(bitpattern(patterns["disabled"])),
+            If(wck_sync_taps[frange.t_wckenl_wr - 1],  # TODO: wr/rd
+                NextState("STATIC")
+            )
+        )
+        wck_fsm.act("STATIC",
+            wck_pattern.eq(bitpattern(patterns["static"])),
+            If(wck_sync_taps[start_toggle],
+                NextState("TOGGLE")
+            )
+        )
+        wck_fsm.act("TOGGLE",
+            wck_pattern.eq(bitpattern(patterns["toggle"])),
+            If(~wck_sync_done,
+                NextState("DISABLED")
+            ).Elif((wck_ck_ratio == 4),  # go to full speed in the next cycle
+                NextState("TOGGLE_4:1")
+            ),
+        )
+        wck_fsm.act("TOGGLE_4:1",
+            wck_pattern.eq(bitpattern(patterns["toggle_4:1"])),
+            If(~wck_sync_done,
+                NextState("DISABLED")
+            ),
+        )
 
         wck_out = {2: wck_pattern[::2], 4: wck_pattern}[wck_ck_ratio]
         assert len(wck_out) == len(self.out.wck[0]), (len(wck_out), len(self.out.wck))

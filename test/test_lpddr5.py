@@ -400,31 +400,47 @@ class LPDDR5Tests(unittest.TestCase):
             },
         )
 
-    @unittest.skip("not yet")
-    def test_lpddr5_wck_sync(self):
-        # Test that correct WCK sequence is generated during WCK sync before burst
+    # TODO: WCK sync cases to be tested:
+    # * 2:1 vs 4:1
+    # * read vs write
+    # * different timings (for different data rates)
+    # * keep WCK always enabled or disable after burst
+    def test_lpddr5_wck_sync_1to2(self):
+        # Test that correct WCK sequence is generated during WCK sync before burst for WCK:CK=2:1
         phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
-        sys_cyc = "0" * 2*8
+        wl = phy.settings.write_latency
+        dfi_data = {  # `10101010...` pattern on dq0 and `11111...` on others
+            0: dict(wrdata=0xfffefffffffefffffffefffffffefffffffefffffffefffffffefffffffeffff),
+        }
+        latency = [{}] * (wl - 1)
+        # for 100 MHz sys_clk_freq => 200 MHz WCK => 400 MT/s
+        self.assertEqual(self.SYS_CLK_FREQ, 100e6)
+        t_wckenl_wr = 1
+        t_wckenl_static = 1
+        t_wckenl_toggle_wr = 3
+        wck_preamble = "00 00" * t_wckenl_wr + "00 00" * t_wckenl_static + "10 10" * t_wckenl_toggle_wr
         self.run_test(phy,
             dfi_sequence = [
-                {0: dict(wrdata_en=1)},
-                {},
-                {  # `10101010...` pattern on dq0 and `11111...` on others
-                    0: dict(wrdata=0xfffefffffffeffff),
-                    1: dict(wrdata=0xfffefffffffeffff),
-                    2: dict(wrdata=0xfffefffffffeffff),
-                    3: dict(wrdata=0xfffefffffffeffff),
-                },
+                {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=0, wrdata_en=1)},
+                *latency,
+                dfi_data
             ],
             pad_checkers = {
-                "sys8x_90_ddr": {  # DQ just for reference
-                    "dq0":  sys_cyc*2 + dq_latency(phy) + "10101010 10101010" + sys_cyc,
-                    "dq1":  sys_cyc*2 + dq_latency(phy) + "11111111 11111111" + sys_cyc,
+                "sys_90": {
+                    "cs": "01100000",
                 },
-                "sys8x_ddr": {
-                    "wck0": dq_latency(phy) + "00000000 00000000 00000000 00000000 10101010 10101010" + sys_cyc,
+                "sys4x_90": {  # DQ just for reference
+                    "dq0": "0000"*wl + "0000 0000" + "10101010 10101010" + "0000",
+                    "dq1": "0000"*wl + "0000 0000" + "11111111 11111111" + "0000",
+                },
+                "sys4x_180": {
+                    # tWCKENL_WR starts counting from first command (CAS) so we add command latency,
+                    # then preamble, then toggle for the whole burst, then postamble for tWCKPST=2.5tCK
+                    # (but for now we assume that WCK is never disabled)
+                    "wck0": "0000" + wck_preamble + "10 10" * (16//4) + "10 10 1" + "0 10" + "10 10"*2,
                 },
             },
+            chunk_size=4,
         )
 
     # def test_debug(self):
