@@ -18,7 +18,7 @@ from litex.soc.interconnect.csr import AutoCSR, CSRStorage, CSR
 from litedram.common import BitSlip, get_sys_latency, get_sys_phase, PhySettings, TappedDelayLine
 from litedram.phy.dfi import Interface as DFIInterface
 from litedram.phy.utils import CommandsPipeline, bitpattern, delayed, HoldValid
-from litedram.phy.lpddr5.commands import DFIPhaseAdapter
+from litedram.phy.lpddr5.commands import DFIPhaseAdapter, WCKSyncType
 
 
 class LPDDR5Output:
@@ -247,37 +247,59 @@ class LPDDR5PHY(Module, AutoCSR):
         self.comb += self.adapter.wck_sync_done.eq(wck_sync_done)
 
         wck_sync = TappedDelayLine(
-            signal = (self.adapter.wck_sync != 0) & ~wck_sync_done,
+            signal = self.adapter.wck_sync,
             ntaps  = max(
-                frange.t_wckenl_wr + frange.t_wckpre_static + frange.t_wckpre_toggle_wr,
-                frange.t_wckenl_rd + frange.t_wckpre_static + frange.t_wckpre_toggle_rd,
+                frange.t_wckenl_wr + frange.t_wckpre_static, # + frange.t_wckpre_toggle_wr,
+                frange.t_wckenl_rd + frange.t_wckpre_static, # + frange.t_wckpre_toggle_rd,
             ))
-        wck_sync_taps = Cat(wck_sync.input, wck_sync.taps)
+        self.submodules += wck_sync
+        wck_sync_taps = Array([wck_sync.input, *wck_sync.taps])
 
         wck_pattern = Signal(8)  # for WCK:CK=2:1 we take wck_pattern[::2]
         patterns = {
-            "disabled": "________",
-            "static": "________",
-            "toggle": "--__--__",
+            "disabled":   "________",
+            "static":     "________",
+            "toggle":     "--__--__",
             "toggle_4:1": "-_-_-_-_",
         }
-        # FIXME: An edge case for tWCKENL_WR=0 which assumes that we use same pattern for DISABLED and STATIC
-        assert patterns["disabled"] == patterns["static"]
-        start_toggle = frange.t_wckenl_wr + frange.t_wckpre_static - 1
-        if frange.t_wckenl_wr == 0:
-            start_toggle -= 1
+
+        # When tWCKENL=0 there is a special case:
+        # tWCKENL=0, tWCKPRE_Static=1: instant static and jump toggle
+        # tWCKENL=0, tWCKPRE_Static=2: instant static and jump static
+        # tWCKENL=1, tWCKPRE_Static=1 (and others): jump static, jump toggle
+        def on_disabled(t_wckenl):
+            # when there is no tWCKENL we need to use static in this cycle
+            return If(t_wckenl == 0,
+                wck_pattern.eq(bitpattern(patterns["static"])),
+                # If there is only 1 cycle of static, we must jump directly to toggle
+                If(frange.t_wckpre_static == 1,
+                    NextState("TOGGLE")
+                ).Else(
+                    NextState("STATIC")
+                )
+            ).Else(
+                # tWCKENL was > 0, so we just continue to STATIC
+                NextState("STATIC")
+            ),
+
+        assert frange.t_wckpre_static > 0  # The algorithm assumes it's never 0
 
         wck_fsm = FSM()
-        self.submodules += wck_sync, wck_fsm
+        self.submodules += wck_fsm
         wck_fsm.act("DISABLED",
             wck_pattern.eq(bitpattern(patterns["disabled"])),
-            If(wck_sync_taps[frange.t_wckenl_wr - 1],  # TODO: wr/rd
-                NextState("STATIC")
+            # Avoid indexing with -1 as it wraps, we just have special logic for tWCKENL=0
+            If(wck_sync_taps[max(0, frange.t_wckenl_wr - 1)] == WCKSyncType.WR,
+                on_disabled(frange.t_wckenl_wr)
+            ).Elif(wck_sync_taps[max(0, frange.t_wckenl_rd - 1)] == WCKSyncType.RD,
+                on_disabled(frange.t_wckenl_rd)
             )
         )
         wck_fsm.act("STATIC",
             wck_pattern.eq(bitpattern(patterns["static"])),
-            If(wck_sync_taps[start_toggle],
+            If(wck_sync_taps[frange.t_wckenl_wr + frange.t_wckpre_static - 1] == WCKSyncType.WR,
+                NextState("TOGGLE")
+            ).Elif(wck_sync_taps[frange.t_wckenl_rd + frange.t_wckpre_static - 1] == WCKSyncType.RD,
                 NextState("TOGGLE")
             )
         )

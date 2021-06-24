@@ -400,81 +400,73 @@ class LPDDR5Tests(unittest.TestCase):
             },
         )
 
-    # TODO: WCK sync cases to be tested:
-    # * 2:1 vs 4:1
-    # * read vs write
-    # * different timings (for different data rates)
-    # * keep WCK always enabled or disable after burst
-    def test_lpddr5_wck_sync_1to2(self):
-        # Test that correct WCK sequence is generated during WCK sync before burst for WCK:CK=2:1
-        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
-        wl = phy.settings.write_latency
-        dfi_data = {  # `10101010...` pattern on dq0 and `11111...` on others
-            0: dict(wrdata=0xfffefffffffefffffffefffffffefffffffefffffffefffffffefffffffeffff),
+    # TODO: test 4:1
+    def test_lpddr5_wck_sync_1to2_write(self):
+        # Test that correct WCK sequence is generated during WCK sync before burst write for WCK:CK=2:1
+        cases = {  # sys_clk_freq: timings
+            100e6: dict(t_wckenl_wr=1, t_wckenl_static=1, t_wckenl_toggle_wr=3),  # data rate 400 MT/s
+            200e6: dict(t_wckenl_wr=0, t_wckenl_static=2, t_wckenl_toggle_wr=3),  # 800 MT/s
+            300e6: dict(t_wckenl_wr=1, t_wckenl_static=2, t_wckenl_toggle_wr=4),  # 1200 MT/s
         }
-        latency = [{}] * (wl - 1)
-        # for 100 MHz sys_clk_freq => 200 MHz WCK => 400 MT/s
-        self.assertEqual(self.SYS_CLK_FREQ, 100e6)
-        t_wckenl_wr = 1
-        t_wckenl_static = 1
-        t_wckenl_toggle_wr = 3
-        wck_preamble = "00 00" * t_wckenl_wr + "00 00" * t_wckenl_static + "10 10" * t_wckenl_toggle_wr
-        self.run_test(phy,
-            dfi_sequence = [
-                {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=0, wrdata_en=1)},
-                *latency,
-                dfi_data
-            ],
-            pad_checkers = {
-                "sys_90": {
-                    "cs": "01100000",
-                },
-                "sys4x_90": {  # DQ just for reference
-                    "dq0": "0000"*wl + "0000 0000" + "10101010 10101010" + "0000",
-                    "dq1": "0000"*wl + "0000 0000" + "11111111 11111111" + "0000",
-                },
-                "sys4x_180": {
-                    # tWCKENL_WR starts counting from first command (CAS) so we add command latency,
-                    # then preamble, then toggle for the whole burst, then postamble for tWCKPST=2.5tCK
-                    # (but for now we assume that WCK is never disabled)
-                    "wck0": "0000" + wck_preamble + "10 10" * (16//4) + "10 10 1" + "0 10" + "10 10"*2,
-                },
-            },
-            chunk_size=4,
-        )
+        for sys_clk_freq, t in cases.items():
+            with self.subTest(sys_clk_freq=sys_clk_freq, timings=t):
+                phy = LPDDR5SimPHY(sys_clk_freq=sys_clk_freq)
+                wl = phy.settings.write_latency
+                dfi_data = {  # `10101010...` pattern on dq0 and `11111...` on others
+                    0: dict(wrdata=0xfffefffffffefffffffefffffffefffffffefffffffefffffffefffffffeffff),
+                }
+                latency = [{}] * (wl - 1)
+                wck_preamble = "00 00" * t["t_wckenl_wr"] + "00 00" * t["t_wckenl_static"] + "10 10" * t["t_wckenl_toggle_wr"]
+                self.run_test(phy,
+                    dfi_sequence = [
+                        {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=0, wrdata_en=1)},
+                        *latency,
+                        dfi_data
+                    ],
+                    pad_checkers = {
+                        "sys_90": {
+                            "cs": "01100000",
+                        },
+                        "sys4x_90": {  # DQ just for reference
+                            "dq0": "0000"*wl + "0000 0000" + "10101010 10101010" + "0000",
+                            "dq1": "0000"*wl + "0000 0000" + "11111111 11111111" + "0000",
+                        },
+                        "sys4x_180": {
+                            # tWCKENL_WR starts counting from first command (CAS) so we add command latency,
+                            # then preamble, then toggle for the whole burst, then postamble for tWCKPST=2.5tCK
+                            # (but for now we assume that WCK is never disabled)
+                            "wck0": "0000" + wck_preamble + "10 10" * (16//4) + "10 10 1" + "0 10" + "10 10"*2,
+                        },
+                    },
+                    chunk_size=4,
+                )
 
-    # def test_debug(self):
-    #     class Dut(Module):
-    #         def __init__(self):
-    #             self.dfi_cmd = Signal()
-    #             self.out_first = Signal()
-    #             self.out_fifo = Signal()
-    #             self.cnt = Signal(8)
-    #
-    #             from litex.soc.interconnect import stream
-    #             buf = stream.PipeValid([("cs", 1), ("ca_p", 7), ("ca_n", 7)])
-    #             self.submodules += buf
-    #             self.comb += [
-    #                 buf.sink.valid.eq(self.dfi_cmd),
-    #                 buf.source.ready.eq(1),
-    #                 self.out_fifo.eq(buf.source.valid),
-    #
-    #                 # self.valid.eq(self.cnt[1]),
-    #             ]
-    #             self.comb += self.out_first.eq(self.dfi_cmd)
-    #             self.sync += self.cnt.eq(self.cnt + 1)
-    #
-    #     def generator(dut):
-    #         for _ in range(2):
-    #             for _ in range(2):
-    #                 yield
-    #             yield dut.dfi_cmd.eq(1)
-    #             yield
-    #             yield
-    #             yield dut.dfi_cmd.eq(0)
-    #             yield
-    #             for _ in range(4):
-    #                 yield
-    #
-    #     dut = Dut()
-    #     test.phy_common.run_simulation(dut, generator(dut), {"sys": (2, 1)}, vcd_name='sim.vcd')
+    def test_lpddr5_wck_sync_1to2_read(self):
+        # Test that correct WCK sequence is generated during WCK sync before burst read for WCK:CK=2:1
+        cases = {  # sys_clk_freq: timings
+            100e6: dict(t_wckenl_rd=0, t_wckenl_static=1, t_wckenl_toggle_rd=6),  # data rate 400 MT/s
+            200e6: dict(t_wckenl_rd=0, t_wckenl_static=2, t_wckenl_toggle_rd=7),  # 800 MT/s
+            300e6: dict(t_wckenl_rd=1, t_wckenl_static=2, t_wckenl_toggle_rd=8),  # 1200 MT/s
+        }
+        for sys_clk_freq, t in cases.items():
+            with self.subTest(sys_clk_freq=sys_clk_freq, timings=t):
+                phy = LPDDR5SimPHY(sys_clk_freq=sys_clk_freq)
+                rl = phy.settings.read_latency
+                latency = [{}] * (rl - 1)
+                wck_preamble = "00 00" * t["t_wckenl_rd"] + "00 00" * t["t_wckenl_static"] + "10 10" * t["t_wckenl_toggle_rd"]
+                self.run_test(phy,
+                    dfi_sequence = [
+                        {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1, rddata_en=1)},
+                        *latency,
+                        {0: dict(rddata_valid=1)},
+                    ],
+                    pad_checkers = {
+                        "sys_90": {
+                            "cs": "01100000",
+                        },
+                        "sys4x_180": {
+                            "wck0": "0000" + wck_preamble + "10 10" * (16//4) + "10 10 1" + "0 10" + "10 10"*2,
+                        },
+                    },
+                    chunk_size=4,
+                )
