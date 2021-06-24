@@ -153,7 +153,7 @@ class LPDDR5PHY(Module, AutoCSR):
         write_latency = cwl
 
         # Registers --------------------------------------------------------------------------------
-        self._rst             = CSRStorage()
+        self._rst = CSRStorage()
 
         self._wlevel_en     = CSRStorage()
         self._wlevel_strobe = CSR()
@@ -327,8 +327,6 @@ class LPDDR5PHY(Module, AutoCSR):
         wrtap = cwl - 1
         assert wrtap >= 0
 
-        # Create a delay line of write commands coming from the DFI interface. This taps are used to
-        # control DQ/DQS tristates.
         wrdata_en = TappedDelayLine(
             signal = reduce(or_, [dfi.phases[i].wrdata_en for i in range(nphases)]),
             ntaps  = wrtap + (burst_ck_cycles-1) + 2
@@ -337,37 +335,17 @@ class LPDDR5PHY(Module, AutoCSR):
 
         dq_oe = Signal()
         self.comb += dq_oe.eq(reduce(or_, wrdata_en.taps[wrtap:wrtap+burst_ck_cycles]))
-        # # Always enabled in write leveling mode, else during transfers
-        # self.comb += dqs_oe.eq(self._wlevel_en.storage | (dqs_preamble | dq_oe | dqs_postamble))
 
         # Read Control Path ------------------------------------------------------------------------
-        # Creates a delay line of read commands coming from the DFI interface. The output is used to
-        # signal a valid read data to the DFI interface.
-        #
-        # The read data valid is asserted for 1 sys_clk cycle when the data is available on the DFI
-        # interface, the latency is the sum of the OSERDESE2, CAS, ISERDESE2 and Bitslip latencies.
         rddata_en = TappedDelayLine(
             signal = reduce(or_, [dfi.phases[i].rddata_en for i in range(nphases)]),
             ntaps  = self.settings.read_latency + burst_ck_cycles
         )
         self.submodules += rddata_en
 
-        # self.comb += [
-        #     phase.rddata_valid.eq(rddata_en.output | self._wlevel_en.storage)
-        #     for phase in dfi.phases
-        # ]
-
-        # # Write DQS Postamble/Preamble Control Path ------------------------------------------------
-        # # Generates DQS Preamble 1 cycle before the first write and Postamble 1 cycle after the last
-        # # write. During writes, DQS tristate is configured as output for at least 3 sys_clk cycles:
-        # # 1 for Preamble, 1 for the Write and 1 for the Postamble.
-        # def wrdata_en_tap(i):  # allows to have wrtap == 0
-        #     return wrdata_en.input if i == -1 else wrdata_en.taps[i]
-        # self.comb += dqs_preamble.eq( wrdata_en_tap(wrtap - 1)  & ~wrdata_en_tap(wrtap + 0))
-        # self.comb += dqs_postamble.eq(wrdata_en_tap(wrtap + 1)  & ~wrdata_en_tap(wrtap + 0))
-
-        # DQ ---------------------------------------------------------------------------------------
+        # Data Path --------------------------------------------------------------------------------
         self.comb += self.out.dq_oe.eq(delayed(self, dq_oe))
+        self.comb += self.out.dmi_oe.eq(self.out.dq_oe if masked_write else 0)
 
         wrdata_ck = Signal(self.settings.dfi_databits//burst_ck_cycles)
         wrdata_hold = HoldValid([("data", self.settings.dfi_databits)])
@@ -381,9 +359,26 @@ class LPDDR5PHY(Module, AutoCSR):
             wrdata_hold.sink.data.eq(self.dfi.p0.wrdata),
             wrdata_hold.sink.valid.eq(wrdata_en.taps[wrtap]),
             wrdata_hold.source.connect(wrdata_converter.sink),
-            wrdata_converter.source.ready.eq(1),
             wrdata_ck.eq(wrdata_converter.source.data),
+            wrdata_converter.source.ready.eq(1),
         ]
+
+        if masked_write:
+            wrdata_mask_ck = Signal(len(wrdata_ck)//8)
+            wrdata_mask_hold = HoldValid([("data", self.settings.dfi_databits//8)])
+            wrdata_mask_converter = stream.Converter(
+                nbits_from = self.settings.dfi_databits//8,
+                nbits_to   = len(wrdata_mask_ck),
+            )
+            self.submodules += wrdata_mask_hold, wrdata_mask_converter
+
+            self.comb += [
+                wrdata_mask_hold.sink.data.eq(self.dfi.p0.wrdata_mask),
+                wrdata_mask_hold.sink.valid.eq(wrdata_en.taps[wrtap]),
+                wrdata_mask_hold.source.connect(wrdata_mask_converter.sink),
+                wrdata_mask_ck.eq(wrdata_mask_converter.source.data),
+                wrdata_mask_converter.source.ready.eq(1),
+            ]
 
         rddata_ck = Signal(self.settings.dfi_databits//burst_ck_cycles)
         rddata_converter = stream.Converter(
@@ -415,7 +410,19 @@ class LPDDR5PHY(Module, AutoCSR):
                 o      = self.out.dq_o[bit],
             )
 
-            # TODO:input
+            if masked_write and bit % 8 == 0:
+                byte = bit//8
+                wrdata_mask = [wrdata_mask_ck[i * self.databits//8 + byte] for i in range(2*wck_ck_ratio)]
+                self.submodules += BitSlip(
+                    dw     = 2*wck_ck_ratio,
+                    cycles = bitslip_cycles,
+                    rst    = self.get_rst(byte, self._wdly_dq_bitslip_rst.re),
+                    slp    = self.get_inc(byte, self._wdly_dq_bitslip.re),
+                    i      = Cat(*wrdata_mask),
+                    o      = self.out.dmi_o[byte],
+                )
+
+            # input
             dq_i_bs = Signal(2*wck_ck_ratio)
             self.submodules += BitSlip(
                 dw     = 2*wck_ck_ratio,
@@ -427,52 +434,6 @@ class LPDDR5PHY(Module, AutoCSR):
             )
             for i in range(2*wck_ck_ratio):
                 self.comb += rddata_ck[i * self.databits + bit].eq(dq_i_bs[i])
-
-        # WCK --------------------------------------------------------------------------------------
-        # WCK can be enabled/disabled. When enabling, it has to be synchronized with CK. To do so,
-        # CAS (alone or followed by WR/RD) must be issued. Synchronization is done after tCKSENL_x
-        # after CAS command (CK rising edge), by keeping WCK static for tWCKPRE_Static, then
-        # toggling it for tWCKPRE_Toggle_x. If using WCK:CK=4:1, then the first CK of toggling
-        # should be with half WCK frequency.
-        # Timings are in relation to WL and RL as:
-        # WL = tWCKENL_WR - 1 + tWCKPRE_Static + tWCKPRE_Toggle_WR
-        wck_oe = Signal()
-        wck = Signal(2*2*nphases)
-        wck_pattern = {
-            "disabled":    bitpattern("________"),  # could be High-Z
-            "static":      bitpattern("--------"),
-            "toggle_half": bitpattern("--__--__"),
-            "toggle_full": bitpattern("-_-_-_-_"),
-        }
-        wck_sync_timeline = [
-            (frange.t_wckenl_wr, wck_pattern["disabled"]),
-            (frange.t_wckpre_static, wck_pattern["static"]),
-            (frange.t_wckpre_toggle_wr, wck_pattern["toggle_half"]),
-        ]
-
-        # # DMI --------------------------------------------------------------------------------------
-        # # DMI signal is used for Data Mask or Data Bus Invertion depending on Mode Registers values.
-        # # With DM and DBI disabled, this signal is a Don't Care.
-        # # With DM enabled, masking is performed only when the command used is WRITE-MASKED.
-        # # We don't support DBI, DM support is configured statically with `masked_write`.
-        # for byte in range(self.databits//8):
-        #     if isinstance(masked_write, Signal) or masked_write:
-        #         self.comb += self.out.dmi_oe.eq(self.out.dq_oe)
-        #         wrdata_mask = [
-        #             self.dfi.phases[i//2] .wrdata_mask[i%2 * self.databits//8 + byte]
-        #             for i in range(2*nphases)
-        #         ]
-        #         self.submodules += BitSlip(
-        #             dw     = 2*nphases,
-        #             cycles = bitslip_cycles,
-        #             rst    = self.get_rst(byte, self._wdly_dq_bitslip_rst.re),
-        #             slp    = self.get_inc(byte, self._wdly_dq_bitslip.re),
-        #             i      = Cat(*wrdata_mask),
-        #             o      = self.out.dmi_o[byte],
-        #         )
-        #     else:
-        #         self.comb += self.out.dmi_o[byte].eq(0)
-        #         self.comb += self.out.dmi_oe.eq(0)
 
     def get_rst(self, byte, rst):
         return (self._dly_sel.storage[byte] & rst) | self._rst.storage

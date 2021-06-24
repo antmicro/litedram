@@ -322,6 +322,32 @@ class LPDDR5Tests(unittest.TestCase):
             chunk_size=4,
         )
 
+    def test_lpddr5_dmi_out(self):
+        # Test serialization of dfi wrdata to DQ pads
+        for masked_write in [False, True]:
+            with self.subTest(masked_write=masked_write):
+                phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, masked_write=masked_write)
+                wl = phy.settings.write_latency
+                dfi_data = {
+                    0: dict(  # all DQs have the same value on each cycle, each mask bit is 1 byte
+                        wrdata = 0xffff0000ffffffff00000000ffffffff0000ffff00000000ffffffff0000ffff,
+                        wrdata_mask = 0b11001000110110110101010010110011,
+                    ),
+                }
+                dfi_wrdata_en = {0: dict(wrdata_en=1)}
+                latency = [{}] * (wl - 1)
+                pads = {
+                    f"dq{i}": "0000"*wl + "0000 0000" "1011 0010 1100 1101" "0000"
+                    for i in range(16)
+                }
+                pads["dmi0"] = "0000"*wl + "0000 0000" + ("1010011110110001" if masked_write else 16*"0") + "0000"
+                pads["dmi1"] = "0000"*wl + "0000 0000" + ("1011000011010101" if masked_write else 16*"0") + "0000"
+                self.run_test(phy,
+                    dfi_sequence = [dfi_wrdata_en, *latency, dfi_data],
+                    pad_checkers = {"sys4x_90": pads},
+                    chunk_size=4,
+                )
+
     def test_lpddr5_dq_out_only_1_cycle(self):
         # Test that only single cycle of wrdata after write_latency gets serialized
         phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
