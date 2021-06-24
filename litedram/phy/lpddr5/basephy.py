@@ -51,7 +51,7 @@ class FreqRange:
     t_wckpre_static:    int
     t_wckpre_toggle_wr: int
     rl:                 Tuple[int, int, int] # (Set 0, Set 1, Set 2)
-    t_wckenl_rd:        int
+    t_wckenl_rd:        Tuple[int, int, int] # (Set 0, Set 1, Set 2)
     t_wckpre_toggle_rd: int
     n_rbtp:             int
 
@@ -66,24 +66,41 @@ class FreqRange:
         new.wl = self.wl[wl_set]
         new.t_wckenl_wr = self.t_wckenl_wr[wl_set]
         new.rl = self.rl[rl_set]
+        new.t_wckenl_rd = self.t_wckenl_rd[rl_set]
         return new
 
 # Taken from Tables 182, 183, 201 of JEDEC specification for LPDDR5
-# WCK:CK=2:1, DVFSC diabled, Read Link ECC off
-FREQUENCY_RANGES = [
-    #         MR       DR            WL                     RL                   nRBTP
-    FreqRange(0b0000, (40,   533),  (4,  4),  (1, 1), 1, 3, ( 6,  6,  6), 0,  6, 0),
-    FreqRange(0b0001, (533,  1067), (4,  6),  (0, 2), 2, 3, ( 8,  8,  8), 0,  7, 0),
-    FreqRange(0b0010, (1067, 1600), (6,  8),  (1, 3), 2, 4, (10, 10, 10), 1,  8, 0),
-    FreqRange(0b0011, (1600, 2133), (8,  10), (2, 4), 3, 4, (12, 14, 14), 2,  8, 0),
-    FreqRange(0b0100, (2133, 2750), (8,  14), (1, 7), 4, 4, (16, 16, 16), 3, 10, 2),
-    FreqRange(0b0101, (2750, 3200), (10, 16), (3, 9), 4, 4, (18, 20, 20), 5, 10, 2),
-]
+# WCK:CK 2:1 or 4:1, DVFSC diabled, Read Link ECC off
+FREQUENCY_RANGES = {
+    2: [
+        #         MR       DR            WL                     RL                           nRBTP
+        FreqRange(0b0000, (40,   533),  (4,  4),  (1, 1), 1, 3, ( 6,  6,  6), (0, 0, 0),  6, 0),
+        FreqRange(0b0001, (533,  1067), (4,  6),  (0, 2), 2, 3, ( 8,  8,  8), (0, 0, 0),  7, 0),
+        FreqRange(0b0010, (1067, 1600), (6,  8),  (1, 3), 2, 4, (10, 10, 10), (1, 1, 3),  8, 0),
+        FreqRange(0b0011, (1600, 2133), (8,  10), (2, 4), 3, 4, (12, 14, 14), (2, 4, 4),  8, 0),
+        FreqRange(0b0100, (2133, 2750), (8,  14), (1, 7), 4, 4, (16, 16, 16), (3, 3, 5), 10, 2),
+        FreqRange(0b0101, (2750, 3200), (10, 16), (3, 9), 4, 4, (18, 20, 20), (5, 7, 7), 10, 2),
+    ],
+    4: [
+        #         MR       DR            WL                      RL                           nRBTP
+        FreqRange(0b0000, (40,   533),  (2,  2),  (0, 0),  1, 2, ( 3,  3,  3), (0, 0, 0),  3, 0),
+        FreqRange(0b0001, (533,  1067), (2,  3),  (0, 1),  1, 2, ( 4,  4,  4), (0, 0, 0),  4, 0),
+        FreqRange(0b0010, (1067, 1600), (3,  4),  (1, 2),  1, 2, ( 5,  5,  6), (1, 1, 2),  4, 0),
+        FreqRange(0b0011, (1600, 2133), (4,  5),  (1, 2),  2, 2, ( 6,  7,  7), (1, 2, 2),  4, 0),
+        FreqRange(0b0100, (2133, 2750), (4,  7),  (1, 4),  2, 2, ( 8,  8,  9), (2, 2, 3),  5, 1),
+        FreqRange(0b0101, (2750, 3200), (5,  8),  (2, 5),  2, 2, ( 9, 10, 10), (3, 4, 4),  5, 1),
+        FreqRange(0b0110, (3200, 3733), (6,  9),  (2, 5),  3, 2, (10, 11, 12), (3, 4, 5),  5, 2),
+        FreqRange(0b0111, (3733, 4267), (6,  11), (2, 7),  3, 2, (12, 13, 14), (4, 5, 6),  6, 2),
+        FreqRange(0b1000, (4267, 4800), (7,  12), (3, 8),  3, 2, (13, 14, 15), (5, 6, 7),  6, 3),
+        FreqRange(0b1001, (4800, 5500), (8,  14), (3, 9),  4, 2, (15, 16, 17), (6, 7, 8),  6, 4),
+        FreqRange(0b1010, (5500, 6000), (9,  15), (4, 10), 4, 2, (16, 17, 19), (6, 7, 9),  7, 4),
+        FreqRange(0b1011, (6000, 6400), (9,  16), (4, 11), 4, 2, (17, 18, 20), (7, 8, 10), 7, 4),
+    ]
+}
 
-
-def get_frange(twck):
+def get_frange(twck, wck_ck_ratio):
     data_rate = 2 * 1/twck
-    for frange in FREQUENCY_RANGES:
+    for frange in FREQUENCY_RANGES[wck_ck_ratio]:
         dr_min, dr_max = frange.data_rate
         if dr_min < data_rate/1e6 <= dr_max:
             return frange
@@ -127,7 +144,7 @@ class LPDDR5PHY(Module, AutoCSR):
 
         # Parameters -------------------------------------------------------------------------------
         assert wck_ck_ratio == 2, "Need to add params for 4:1"
-        frange = get_frange(twck).for_set(wl_set="A", rl_set=0)
+        frange = get_frange(twck, wck_ck_ratio).for_set(wl_set="A", rl_set=0)
 
         burst_len = 16
         burst_ck_cycles = burst_len // (2*wck_ck_ratio)
