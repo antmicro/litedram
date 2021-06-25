@@ -143,7 +143,6 @@ class LPDDR5PHY(Module, AutoCSR):
         assert databits % 8 == 0
 
         # Parameters -------------------------------------------------------------------------------
-        assert wck_ck_ratio == 2, "Need to add params for 4:1"
         frange = get_frange(twck, wck_ck_ratio).for_set(wl_set="A", rl_set=0)
 
         burst_len = 16
@@ -265,10 +264,8 @@ class LPDDR5PHY(Module, AutoCSR):
 
         wck_sync = TappedDelayLine(
             signal = self.adapter.wck_sync,
-            ntaps  = max(
-                frange.t_wckenl_wr + frange.t_wckpre_static, # + frange.t_wckpre_toggle_wr,
-                frange.t_wckenl_rd + frange.t_wckpre_static, # + frange.t_wckpre_toggle_rd,
-            ))
+            ntaps  = max(1, max(frange.t_wckenl_wr, frange.t_wckenl_rd) + frange.t_wckpre_static - 1),
+        )
         self.submodules += wck_sync
         wck_sync_taps = Array([wck_sync.input, *wck_sync.taps])
 
@@ -457,5 +454,3 @@ class LPDDR5PHY(Module, AutoCSR):
 
     def get_inc(self, byte, inc):
         return self._dly_sel.storage[byte] & inc
-
-
