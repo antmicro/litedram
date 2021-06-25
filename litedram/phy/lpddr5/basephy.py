@@ -145,23 +145,22 @@ class LPDDR5PHY(Module, AutoCSR):
         # Parameters -------------------------------------------------------------------------------
         frange = get_frange(twck, wck_ck_ratio).for_set(wl_set="A", rl_set=0)
 
+        # Burst spans several CK cycles
         burst_len = 16
         burst_ck_cycles = burst_len // (2*wck_ck_ratio)
 
         # Bitslip introduces latency from 1 up to `cycles + 1` (sys)
         bitslip_cycles  = 1
         bitslip_range   = 1
-        # Commands on DFI are delayed by 1 cycle
-        ca_latency      = 1
-        # Commands are sent over 2 CK (sys4x) and we count cl/cwl from last bit
-        cmd_latency     = 2
+        # Commands are sent over 2 CK and we count cl/cwl from the 2nd CK
+        cmd_latency     = 1
 
         cl, cwl = frange.rl, frange.wl  # measured with respect to CK
 
         # Read latency
         # DFI cmd -> cmd buf -> PHY serializers -> DRAM -> Read Latency -> DQ data
         # -> PHY deserializers -> Bitslip -> Burst cycles -> StrideConverter -> DFI rddata
-        read_data_delay = ca_latency + ser_latency.sys + cl  # DFI cmd -> read data on DQ
+        read_data_delay = cmd_latency + ser_latency.sys + cl  # DFI cmd -> read data on DQ
         read_des_delay  = des_latency.sys + bitslip_cycles+bitslip_range + burst_ck_cycles  # DQ -> DFI rddata
         read_latency    = read_data_delay + read_des_delay
 

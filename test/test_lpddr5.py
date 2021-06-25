@@ -8,7 +8,7 @@ import re
 import unittest
 from typing import Mapping
 from collections import defaultdict
-from functools import partial
+from functools import partial, wraps
 
 from migen import *
 
@@ -67,6 +67,16 @@ def dq_latency(phy):
     return "0" * (2*8 + phy.ser_latency.sys16x)  # sys8x ddr
 
 
+def wck_ratio_subtests(testfunc):
+    """Wraps a test running it for both WCK:CK=2:1 and 4:1. Passes wrapped LPDDR5SimPHY constructor as an argument."""
+    @wraps(testfunc)
+    def wrapper(self):
+        for wck_ck_ratio in [2, 4]:
+            with self.subTest(wck_ck_ratio=wck_ck_ratio):
+                Phy = lambda *args, **kwargs: LPDDR5SimPHY(*args, wck_ck_ratio=wck_ck_ratio, **kwargs)
+                testfunc(self, Phy)
+    return wrapper
+
 
 class LPDDR5Tests(unittest.TestCase):
     SYS_CLK_FREQ = 100e6
@@ -89,9 +99,10 @@ class LPDDR5Tests(unittest.TestCase):
         PadChecker.assert_ok(self, checkers, chunk_size=chunk_size)
         dfi.assert_ok(self)
 
-    def test_lpddr5_reset_n(self):
+    @wck_ratio_subtests
+    def test_lpddr5_reset_n(self, Phy):
         # Test serialization of DFI reset_n
-        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        phy = Phy(sys_clk_freq=self.SYS_CLK_FREQ)
         read = dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)
         self.run_test(phy,
             dfi_sequence = [
@@ -109,9 +120,10 @@ class LPDDR5Tests(unittest.TestCase):
             }},
         )
 
-    def test_lpddr5_cs(self):
+    @wck_ratio_subtests
+    def test_lpddr5_cs(self, Phy):
         # Test that CS is serialized correctly
-        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        phy = Phy(sys_clk_freq=self.SYS_CLK_FREQ)
         self.run_test(phy,
             dfi_sequence = [
                 {0: dict(cs_n=0, cas_n=1, ras_n=0, we_n=1)},  # ACT
@@ -127,9 +139,10 @@ class LPDDR5Tests(unittest.TestCase):
             }},
         )
 
-    def test_lpddr5_ck(self):
+    @wck_ratio_subtests
+    def test_lpddr5_ck(self, Phy):
         # Test clock serialization, first cycle is undefined so ignore them
-        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        phy = Phy(sys_clk_freq=self.SYS_CLK_FREQ)
         self.run_test(phy,
             dfi_sequence = [
                 {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)},
@@ -139,9 +152,10 @@ class LPDDR5Tests(unittest.TestCase):
             }},
         )
 
-    def test_lpddr5_ca(self):
+    @wck_ratio_subtests
+    def test_lpddr5_ca(self, Phy):
         # Test proper serialization of commands to CA pads and that overlapping commands are handled
-        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        phy = Phy(sys_clk_freq=self.SYS_CLK_FREQ)
         read = {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)}  # CAS+RD16
         precharge = {0: dict(cs_n=0, cas_n=1, ras_n=0, we_n=0)}
         self.run_test(phy,
@@ -168,9 +182,10 @@ class LPDDR5Tests(unittest.TestCase):
             chunk_size=4,
         )
 
-    def test_lpddr5_cas_wck_sync_read(self):
+    @wck_ratio_subtests
+    def test_lpddr5_cas_wck_sync_read(self, Phy):
         # Test that WCK sync bit in CAS command is set on first read command
-        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        phy = Phy(sys_clk_freq=self.SYS_CLK_FREQ)
         read = {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)}  # CAS+RD16
         self.run_test(phy,
             dfi_sequence = [
@@ -197,9 +212,10 @@ class LPDDR5Tests(unittest.TestCase):
             chunk_size=4,
         )
 
-    def test_lpddr5_cas_wck_sync_mrr(self):
+    @wck_ratio_subtests
+    def test_lpddr5_cas_wck_sync_mrr(self, Phy):
         # Test that WCK sync bit in CAS command is set on first MRR command (CAS with WS_RD)
-        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        phy = Phy(sys_clk_freq=self.SYS_CLK_FREQ)
         mrr = {0: dict(cs_n=0, cas_n=1, ras_n=1, we_n=0, bank=1)}  # MRR is ZQC with bank=1
         self.run_test(phy,
             dfi_sequence = [
@@ -226,12 +242,13 @@ class LPDDR5Tests(unittest.TestCase):
             chunk_size=4,
         )
 
-    def test_lpddr5_cas_wck_sync_write(self):
+    @wck_ratio_subtests
+    def test_lpddr5_cas_wck_sync_write(self, Phy):
         # Test that WCK sync bit in CAS command is set on first write command
         write = {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=0)}  # CAS+WR16
         for masked_write in [True, False]:
             with self.subTest(masked_write=masked_write):
-                phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, masked_write=masked_write)
+                phy = Phy(sys_clk_freq=self.SYS_CLK_FREQ, masked_write=masked_write)
                 w1 = f"10{int(not masked_write)}0"
                 w2 = f"{int(not masked_write)}000"
                 self.run_test(phy,
@@ -259,7 +276,8 @@ class LPDDR5Tests(unittest.TestCase):
                     chunk_size=4,
                 )
 
-    def test_lpddr5_ca_addressing(self):
+    @wck_ratio_subtests
+    def test_lpddr5_ca_addressing(self, Phy):
         # Test that bank/address for different commands are correctly serialized to CA pads
         # LPDDR5 has only 64 columns, but uses optional 4-bit "burst address"
         read       = dict(cs_n=0, cas_n=0, ras_n=1, we_n=1, bank=0b1111, address=0b110101)
@@ -274,7 +292,7 @@ class LPDDR5Tests(unittest.TestCase):
 
         for masked_write in [True, False]:
             with self.subTest(masked_write=masked_write):
-                phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, masked_write=masked_write)
+                phy = Phy(sys_clk_freq=self.SYS_CLK_FREQ, masked_write=masked_write)
                 mw = f"10{int(not masked_write)}0"
                 self.run_test(phy,
                     dfi_sequence = [
@@ -305,7 +323,7 @@ class LPDDR5Tests(unittest.TestCase):
                     chunk_size=4,
                 )
 
-    def test_lpddr5_dq_out(self):
+    def test_lpddr5_dq_out_2to1(self):
         # Test serialization of dfi wrdata to DQ pads
         phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
         dfi_data = {
@@ -322,7 +340,23 @@ class LPDDR5Tests(unittest.TestCase):
             chunk_size=4,
         )
 
-    def test_lpddr5_dmi_out(self):
+    def test_lpddr5_dq_out_4to1(self):
+        # Test serialization of dfi wrdata to DQ pads
+        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, wck_ck_ratio=4)
+        dfi_data = {
+            0: dict(wrdata=0x111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000),
+        }
+        dfi_wrdata_en = {0: dict(wrdata_en=1)}
+        latency = [{}] * (phy.settings.write_latency - 1)
+        self.run_test(phy,
+            dfi_sequence = [dfi_wrdata_en, *latency, dfi_data],
+            pad_checkers = {"sys8x_90": {
+                f'dq{i}': "00000000"*phy.settings.write_latency + "00000000 00000000" + dq_pattern(i, dfi_data, "wrdata") + "00000000"
+                for i in range(16)
+            }},
+        )
+
+    def test_lpddr5_dmi_out_2to1(self):
         # Test serialization of dfi wrdata to DQ pads
         for masked_write in [False, True]:
             with self.subTest(masked_write=masked_write):
@@ -348,6 +382,31 @@ class LPDDR5Tests(unittest.TestCase):
                     chunk_size=4,
                 )
 
+    def test_lpddr5_dmi_out_4to1(self):
+        # Test serialization of dfi wrdata to DQ pads
+        for masked_write in [False, True]:
+            with self.subTest(masked_write=masked_write):
+                phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, masked_write=masked_write, wck_ck_ratio=4)
+                wl = phy.settings.write_latency
+                dfi_data = {
+                    0: dict(  # all DQs have the same value on each cycle, each mask bit is 1 byte
+                        wrdata = 0xffff0000ffffffff00000000ffffffff0000ffff00000000ffffffff0000ffff,
+                        wrdata_mask = 0b11001000110110110101010010110011,
+                    ),
+                }
+                dfi_wrdata_en = {0: dict(wrdata_en=1)}
+                latency = [{}] * (wl - 1)
+                pads = {
+                    f"dq{i}": "00000000"*wl + "00000000 00000000" "1011 0010 1100 1101" "00000000"
+                    for i in range(16)
+                }
+                pads["dmi0"] = "00000000"*wl + "00000000 00000000" + ("1010011110110001" if masked_write else 16*"0") + "00000000"
+                pads["dmi1"] = "00000000"*wl + "00000000 00000000" + ("1011000011010101" if masked_write else 16*"0") + "00000000"
+                self.run_test(phy,
+                    dfi_sequence = [dfi_wrdata_en, *latency, dfi_data],
+                    pad_checkers = {"sys8x_90": pads},
+                )
+
     def test_lpddr5_dq_out_only_1_cycle(self):
         # Test that only single cycle of wrdata after write_latency gets serialized
         phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
@@ -365,9 +424,10 @@ class LPDDR5Tests(unittest.TestCase):
             chunk_size=4,
         )
 
-    def test_lpddr5_dq_in_rddata_valid(self):
+    @wck_ratio_subtests
+    def test_lpddr5_dq_in_rddata_valid(self, Phy):
         # Test that rddata_valid is set with correct delay
-        phy = LPDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        phy = Phy(sys_clk_freq=self.SYS_CLK_FREQ)
         dfi_sequence = [
             {0: dict(rddata_en=1)},  # command is issued by MC (appears on next cycle)
             *[{0: dict(rddata_valid=0)} for _ in range(phy.settings.read_latency - 1)],  # nothing is sent during write latency
@@ -426,7 +486,7 @@ class LPDDR5Tests(unittest.TestCase):
             },
         )
 
-    def test_lpddr5_wck_sync_1to2_write(self):
+    def test_lpddr5_wck_sync_2to1_write(self):
         # Test that correct WCK sequence is generated during WCK sync before burst write for WCK:CK=2:1
         cases = {  # sys_clk_freq: timings
             100e6: dict(t_wckenl_wr=1, t_wckenl_static=1, t_wckenl_toggle_wr=3),  # data rate 400 MT/s
@@ -469,7 +529,7 @@ class LPDDR5Tests(unittest.TestCase):
                     chunk_size=4,
                 )
 
-    def test_lpddr5_wck_sync_1to4_write(self):
+    def test_lpddr5_wck_sync_4to1_write(self):
         # Test that correct WCK sequence is generated during WCK sync before burst write for WCK:CK=2:1
         cases = {  # sys_clk_freq: timings
             50e6:  dict(t_wckenl_wr=0, t_wckenl_static=1, t_wckenl_toggle_wr=2),  # data rate 400 MT/s
@@ -511,7 +571,7 @@ class LPDDR5Tests(unittest.TestCase):
                     },
                 )
 
-    def test_lpddr5_wck_sync_1to2_read(self):
+    def test_lpddr5_wck_sync_2to1_read(self):
         # Test that correct WCK sequence is generated during WCK sync before burst read for WCK:CK=2:1
         cases = {  # sys_clk_freq: timings
             100e6: dict(t_wckenl_rd=0, t_wckenl_static=1, t_wckenl_toggle_rd=6),  # data rate 400 MT/s
@@ -544,7 +604,7 @@ class LPDDR5Tests(unittest.TestCase):
                     chunk_size=4,
                 )
 
-    def test_lpddr5_wck_sync_1to4_read(self):
+    def test_lpddr5_wck_sync_4to1_read(self):
         # Test that correct WCK sequence is generated during WCK sync before burst read for WCK:CK=4:1
         cases = {  # sys_clk_freq: timings
             50e6:  dict(t_wckenl_rd=0, t_wckenl_static=1, t_wckenl_toggle_rd=3),  # data rate 400 MT/s
