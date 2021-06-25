@@ -6,8 +6,10 @@
 
 from migen import *
 
-from litedram.phy.utils import delayed, Serializer, Deserializer, Latency, SimPad, SimulationPads, SimSerDesMixin
+from litedram.phy.utils import delayed, Serializer, Deserializer, Latency
+from litedram.phy.sim_utils import SimPad, SimulationPads, SimSerDesMixin
 from litedram.phy.lpddr5.basephy import LPDDR5PHY
+
 
 class LPDDR5SimulationPads(SimulationPads):
     def layout(self, databits=16):
