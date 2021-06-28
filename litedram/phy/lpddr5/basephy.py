@@ -209,6 +209,7 @@ class LPDDR5PHY(Module, AutoCSR):
             write_latency = write_latency,
             cmd_latency   = cmd_latency,
             cmd_delay     = cmd_delay,
+            bitslips      = 8,
         )
 
         # DFI Interface ----------------------------------------------------------------------------
