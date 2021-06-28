@@ -6,6 +6,8 @@
 
 from migen import *
 
+from litex.soc.interconnect.csr import CSR
+
 from litedram.phy.utils import delayed, Serializer, Deserializer, Latency
 from litedram.phy.sim_utils import SimPad, SimulationPads, SimSerDesMixin
 from litedram.phy.lpddr5.basephy import LPDDR5PHY
@@ -46,6 +48,12 @@ class LPDDR5SimPHY(SimSerDesMixin, LPDDR5PHY):
             des_latency  = Latency(sys=Deserializer.LATENCY),
             phytype      = "LPDDR5SimPHY",
             **kwargs)
+
+        # fake delays (make no nsense in simulation, but sdram.c expects them)
+        self.settings.read_leveling = True
+        self.settings.delays = 1
+        self._rdly_dq_rst = CSR()
+        self._rdly_dq_inc = CSR()
 
         delay = lambda sig, cycles: delayed(self, sig, cycles=cycles)
         ddr_ck     = dict(clkdiv="sys", clk="sys2x")
