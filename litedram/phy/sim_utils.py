@@ -11,13 +11,32 @@ from litex.build.sim.config import SimConfig
 from litex.build.generic_platform import Pins, Subsignal
 from litex.soc.interconnect.csr import CSRStorage, AutoCSR
 
-from litedram.common import Settings
+from litedram.common import Settings, tXXDController
 from litedram.phy.utils import Serializer, Deserializer, edge
 
+
+# PHY ----------------------------------------------------------------------------------------------
+
+class SimSerDesMixin:
+    """Helper class for easier (de-)serialization to simulation pads."""
+    def ser(self, *, i, o, clkdiv, clk, name="", **kwargs):
+        assert len(o) == 1
+        kwargs = dict(i=i, i_dw=len(i), o=o, o_dw=1, clk=clk, clkdiv=clkdiv,
+            name=f"ser_{name}".strip("_"), **kwargs)
+        self.submodules += Serializer(**kwargs)
+
+    def des(self, *, i, o, clkdiv, clk, name="", **kwargs):
+        assert len(i) == 1
+        kwargs = dict(i=i, i_dw=1, o=o, o_dw=len(o), clk=clk, clkdiv=clkdiv,
+            name=f"des_{name}".strip("_"), **kwargs)
+        self.submodules += Deserializer(**kwargs)
+
+# Platform -----------------------------------------------------------------------------------------
 
 class SimPad(Settings):
     def __init__(self, name, width, io=False):
         self.set_attributes(locals())
+
 
 class SimulationPads(Module):
     """Pads for simulation purpose
@@ -48,21 +67,66 @@ class SimulationPads(Module):
                 setattr(self, pad.name, Signal(pad.width, name=pad.name))
 
 
+class Clocks(dict):
+    """Helper for definiting simulation clocks
 
-class SimSerDesMixin:
-    """Helper class for easier (de-)serialization to simulation pads."""
-    def ser(self, *, i, o, clkdiv, clk, name="", **kwargs):
-        assert len(o) == 1
-        kwargs = dict(i=i, i_dw=len(i), o=o, o_dw=1, clk=clk, clkdiv=clkdiv,
-            name=f"ser_{name}".strip("_"), **kwargs)
-        self.submodules += Serializer(**kwargs)
+    Dictionary format is `{name: {"freq_hz": _, "phase_deg": _}, ...}`.
+    """
+    def names(self):
+        return list(self.keys())
 
-    def des(self, *, i, o, clkdiv, clk, name="", **kwargs):
-        assert len(i) == 1
-        kwargs = dict(i=i, i_dw=1, o=o, o_dw=len(o), clk=clk, clkdiv=clkdiv,
-            name=f"des_{name}".strip("_"), **kwargs)
-        self.submodules += Deserializer(**kwargs)
+    def add_io(self, io):
+        for name in self.names():
+            io.append((name + "_clk", 0, Pins(1)))
 
+    def add_clockers(self, sim_config):
+        for name, desc in self.items():
+            sim_config.add_clocker(name + "_clk", **desc)
+
+
+class CRG(Module):
+    """Clock & Reset Generator for Verilator-based simulation"""
+    def __init__(self, platform, clock_domains=None):
+        if clock_domains is None:
+            clock_domains = ["sys"]
+        elif isinstance(clock_domains, Clocks):
+            clock_domains = list(clock_domains.names())
+
+        # request() before creating clock_domains to avoid signal renaming problem
+        clock_domains = {name: platform.request(name + "_clk") for name in clock_domains}
+
+        self.clock_domains.cd_por = ClockDomain(reset_less=True)
+        for name in clock_domains.keys():
+            setattr(self.clock_domains, "cd_" + name, ClockDomain(name=name))
+
+        int_rst = Signal(reset=1)
+        self.sync.por += int_rst.eq(0)
+        self.comb += self.cd_por.clk.eq(self.cd_sys.clk)
+
+        for name, clk in clock_domains.items():
+            cd = getattr(self, "cd_" + name)
+            self.comb += cd.clk.eq(clk)
+            self.comb += cd.rst.eq(int_rst)
+
+
+class Platform(SimPlatform):
+    def __init__(self, io, clocks: Clocks):
+        common_io = [
+            ("sys_rst", 0, Pins(1)),
+
+            ("serial", 0,
+                Subsignal("source_valid", Pins(1)),
+                Subsignal("source_ready", Pins(1)),
+                Subsignal("source_data",  Pins(8)),
+                Subsignal("sink_valid",   Pins(1)),
+                Subsignal("sink_ready",   Pins(1)),
+                Subsignal("sink_data",    Pins(8)),
+            ),
+        ]
+        clocks.add_io(common_io)
+        SimPlatform.__init__(self, "SIM", common_io + io)
+
+# Logging ------------------------------------------------------------------------------------------
 
 class SimLogger(Module, AutoCSR):
     """Logger for use in simulation
@@ -123,61 +187,47 @@ class SimLogger(Module, AutoCSR):
                 args = (self.time_ps, *args)
             self.sync += If((level >= self.level) & cond, Display(fmt, *args))
 
+def log_level_getter(log_level):
+    """Parse logging level description
 
-class Clocks(dict):
-    """Helper for definiting simulation clocks
-
-    Dictionary format is `{name: {"freq_hz": _, "phase_deg": _}, ...}`.
+    Log level can be presented in a simple form (e.g. `--log-level=DEBUG`) to specify
+    the same level for all modules, or can set different levels for different modules
+    e.g. `--log-level=all=INFO,data=DEBUG`.
     """
-    def names(self):
-        return list(self.keys())
+    def get_level(name):
+        return getattr(SimLogger, name.upper())
 
-    def add_io(self, io):
-        for name in self.names():
-            io.append((name + "_clk", 0, Pins(1)))
+    if "=" not in log_level:  # simple log_level, e.g. "INFO"
+        return lambda _: get_level(log_level)
 
-    def add_clockers(self, sim_config):
-        for name, desc in self.items():
-            sim_config.add_clocker(name + "_clk", **desc)
+    # parse log_level in the per-module form, e.g. "--log-level=all=INFO,data=DEBUG"
+    per_module = dict(part.split("=") for part in log_level.strip().split(","))
+    return lambda module: get_level(per_module.get(module, per_module.get("all", None)))
 
+# Simulator ----------------------------------------------------------------------------------------
 
-class CRG(Module):
-    """Clock & Reset Generator for Verilator-based simulation"""
-    def __init__(self, platform, clock_domains=None):
-        if clock_domains is None:
-            clock_domains = ["sys"]
-        elif isinstance(clock_domains, Clocks):
-            clock_domains = list(clock_domains.names())
+class PulseTiming(Module):
+    """Timing monitor with pulse input/output
 
-        # request() before creating clock_domains to avoid signal renaming problem
-        clock_domains = {name: platform.request(name + "_clk") for name in clock_domains}
+    This module works like `tXXDController` with the following differences:
 
-        self.clock_domains.cd_por = ClockDomain(reset_less=True)
-        for name in clock_domains.keys():
-            setattr(self.clock_domains, "cd_" + name, ClockDomain(name=name))
+    * countdown triggered by a low to high pulse on `trigger`
+    * `ready` is initially low, only after a trigger it can become high
+    * provides `ready_p` which is high only for 1 cycle when `ready` becomes high
+    """
+    def __init__(self, t):
+        self.trigger = Signal()
+        self.ready   = Signal()
+        self.ready_p = Signal()
 
-        int_rst = Signal(reset=1)
-        self.sync.por += int_rst.eq(0)
-        self.comb += self.cd_por.clk.eq(self.cd_sys.clk)
+        ready_d = Signal()
+        triggered = Signal()
+        tctrl = tXXDController(t)
+        self.submodules += tctrl
 
-        for name, clk in clock_domains.items():
-            cd = getattr(self, "cd_" + name)
-            self.comb += cd.clk.eq(clk)
-            self.comb += cd.rst.eq(int_rst)
-
-class Platform(SimPlatform):
-    def __init__(self, io, clocks: Clocks):
-        common_io = [
-            ("sys_rst", 0, Pins(1)),
-
-            ("serial", 0,
-                Subsignal("source_valid", Pins(1)),
-                Subsignal("source_ready", Pins(1)),
-                Subsignal("source_data",  Pins(8)),
-                Subsignal("sink_valid",   Pins(1)),
-                Subsignal("sink_ready",   Pins(1)),
-                Subsignal("sink_data",    Pins(8)),
-            ),
+        self.sync += If(self.trigger, triggered.eq(1)),
+        self.comb += [
+            self.ready.eq(triggered & tctrl.ready),
+            self.ready_p.eq(edge(self, self.ready)),
+            tctrl.valid.eq(edge(self, self.trigger)),
         ]
-        clocks.add_io(common_io)
-        SimPlatform.__init__(self, "SIM", common_io + io)
