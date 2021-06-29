@@ -61,6 +61,12 @@ class LPDDR5SimPHY(SimSerDesMixin, LPDDR5PHY):
         ddr_wck     = dict(clkdiv="sys", clk={2: "sys4x", 4: "sys8x"}[wck_ck_ratio])
         ddr_wck_180 = dict(clkdiv="sys", clk={2: "sys4x_180", 4: "sys8x_180"}[wck_ck_ratio])
 
+        def cdc(sig, cd):
+            latched = Signal.like(sig)
+            sd_wck = getattr(self.sync, cd["clk"])
+            sd_wck += latched.eq(delay(sig, cycles=Serializer.LATENCY))
+            return dict(i=latched, register=False)
+
         if aligned_reset_zero:
             ddr_ck["reset_cnt"] = 0
             ddr_wck["reset_cnt"] = 0
@@ -75,7 +81,7 @@ class LPDDR5SimPHY(SimSerDesMixin, LPDDR5PHY):
         ]
         self.ser(i=~self.out.ck, o=self.pads.ck, name='ck', **ddr_ck)
         for i in range(7):
-            self.ser(i=self.out.ca[i], o=self.pads.ca[i], name=f'ca{i}', **ddr_ck_180)
+            self.ser(**cdc(self.out.ca[i], ddr_ck_180), o=self.pads.ca[i], name=f'ca{i}', **ddr_ck_180)
 
         # WCK
         for i in range(self.databits//8):
