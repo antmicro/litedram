@@ -48,12 +48,12 @@ def get_clocks(sys_clk_freq, wck_ck_ratio):
     clocks = {
         "sys":           dict(freq_hz=sys_clk_freq),
         "sys2x":         dict(freq_hz=2*sys_clk_freq),
-        "sys2x_90":      dict(freq_hz=2*sys_clk_freq, phase_deg=90),
+        "sys2x_180":     dict(freq_hz=2*sys_clk_freq, phase_deg=180),
     }
     clocks.update({
         2: {
             "sys4x":         dict(freq_hz=4*sys_clk_freq),
-            "sys4x_90":      dict(freq_hz=4*sys_clk_freq, phase_deg=90),
+            "sys4x_180":     dict(freq_hz=4*sys_clk_freq, phase_deg=180),
         },
         4: {
 
