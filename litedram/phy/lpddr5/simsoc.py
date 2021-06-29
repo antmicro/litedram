@@ -72,8 +72,7 @@ class LPDDR5ExampleModule(SDRAMModule):
 
     nbanks      = 16
     nrows       = 32768
-    # ncols       = 1024
-    ncols       = 64  # TODO: check if we actually want more and add alignment
+    ncols       = 1024
 
     # TODO: find a way to select if we need masked writes
     tccd = {"write": (8, None), "masked-write": (32, None)}
