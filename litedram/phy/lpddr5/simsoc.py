@@ -56,7 +56,8 @@ def get_clocks(sys_clk_freq, wck_ck_ratio):
             "sys4x_180":     dict(freq_hz=4*sys_clk_freq, phase_deg=180),
         },
         4: {
-
+            "sys8x":         dict(freq_hz=8*sys_clk_freq),
+            "sys8x_180":     dict(freq_hz=8*sys_clk_freq, phase_deg=180),
         },
     }[wck_ck_ratio])
     return Clocks(clocks)
@@ -86,7 +87,7 @@ class SimSoC(SoCCore):
     """Simulation of SoC with LPDDR5 DRAM"""
     def __init__(self, clocks, log_level,
             auto_precharge=False, with_refresh=True, trace_reset=0, disable_delay=False,
-            masked_write=True, finish_after_memtest=False, **kwargs):
+            masked_write=True, finish_after_memtest=False, wck_ck_ratio=2, **kwargs):
         platform     = Platform(_io, clocks)
         sys_clk_freq = clocks["sys"]["freq_hz"]
 
@@ -112,6 +113,7 @@ class SimSoC(SoCCore):
             sys_clk_freq       = sys_clk_freq,
             aligned_reset_zero = True,
             masked_write       = masked_write,
+            wck_ck_ratio       = wck_ck_ratio,
         )
 
         for p in ["ck", "cs", "ca", "dq", "wck", "rdqs", "dmi", "reset_n"]:
@@ -291,6 +293,7 @@ def main():
     group.add_argument("--sys-clk-freq",         default="100e6",         help="System clock frequency")
     group.add_argument("--auto-precharge",       action="store_true",     help="Use DRAM auto precharge")
     group.add_argument("--no-refresh",           action="store_true",     help="Disable DRAM refresher")
+    group.add_argument("--wck-ck-ratio", default=2, type=int, choices=[2, 4], help="WCK:CK ratio")
     group.add_argument("--log-level",            default="all=INFO",      help="Set simulation logging level")
     group.add_argument("--disable-delay",        action="store_true",     help="Disable CPU delays")
     group.add_argument("--gtkw-savefile",        action="store_true",     help="Generate GTKWave savefile")
@@ -304,7 +307,7 @@ def main():
 
     sim_config = SimConfig()
     sys_clk_freq = int(float(args.sys_clk_freq))
-    clocks = get_clocks(sys_clk_freq, wck_ck_ratio=2)
+    clocks = get_clocks(sys_clk_freq, wck_ck_ratio=args.wck_ck_ratio)
     clocks.add_clockers(sim_config)
 
     # Configuration --------------------------------------------------------------------------------
@@ -325,6 +328,7 @@ def main():
         disable_delay   = args.disable_delay,
         masked_write    = not args.no_masked_write,
         finish_after_memtest = args.finish_after_memtest,
+        wck_ck_ratio    = args.wck_ck_ratio,
         **soc_kwargs)
 
     # Build/Run ------------------------------------------------------------------------------------
