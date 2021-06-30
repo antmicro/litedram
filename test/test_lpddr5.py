@@ -57,15 +57,6 @@ run_simulation = partial(test.phy_common.run_simulation, clocks=generate_clocks(
 dfi_data_to_dq = partial(test.phy_common.dfi_data_to_dq, databits=16, nphases=1, burst=16)
 dq_pattern = partial(test.phy_common.dq_pattern, databits=16, nphases=1, burst=16)
 
-def cs_latency(phy):
-    return "0" * (4 + phy.ser_latency.sys4x)
-
-def ca_latency(phy):
-    return "0" * (8 + phy.ser_latency.sys8x)
-
-def dq_latency(phy):
-    return "0" * (2*8 + phy.ser_latency.sys16x)  # sys8x ddr
-
 
 def wck_ratio_subtests(testfunc):
     """Wraps a test running it for both WCK:CK=2:1 and 4:1. Passes wrapped LPDDR5SimPHY constructor as an argument."""
