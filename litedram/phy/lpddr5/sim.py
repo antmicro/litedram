@@ -7,7 +7,7 @@
 # import math
 # from operator import or_
 # from functools import reduce
-# from collections import defaultdict, OrderedDict
+from collections import OrderedDict
 
 from migen import *
 
@@ -58,8 +58,13 @@ def nested_case(mapping, *, on_leaf, variables, default=None, **kwargs):
         User keyword args, passed for each call to `on_leaf`.
     """
     # call the recursive version with initial argument values
-    return _nested_case(mapping, on_leaf=on_leaf, variables=variables, default=default,
-        values=[], orig_mapping=mapping, **kwargs)
+    return _nested_case(mapping,
+        on_leaf      = on_leaf,
+        variables    = variables,
+        default      = default,
+        values       = [],
+        orig_mapping = mapping,
+        **kwargs)
 
 def index_recurive(indexable, indices):
     for i in indices:
@@ -67,7 +72,7 @@ def index_recurive(indexable, indices):
     return indexable
 
 def _nested_case(mapping, *, on_leaf, variables, default, values, orig_mapping, **kwargs):
-    debug = True
+    debug = False
 
     if len(variables) == 0:
         if debug:
@@ -89,8 +94,12 @@ def _nested_case(mapping, *, on_leaf, variables, default, values, orig_mapping, 
             print(f'{" "* 2*len(values)}Case({name}, <{keys}>')
         for key in keys:
             cases[key] = _nested_case(mapping[key],
-                on_leaf=on_leaf, variables=variables[1:], default=default, values=values + [key],
-                orig_mapping=orig_mapping, **kwargs)
+                on_leaf      = on_leaf,
+                variables    = variables[1:],
+                default      = default,
+                values       = values + [key],
+                orig_mapping = orig_mapping,
+                **kwargs)
         if default is not None:
             cases["default"] = default(name, var)
         if debug:
@@ -183,39 +192,191 @@ class CommandsSim(Module, AutoCSR):
 
         self.submodules.mode_regs = ModeRegisters(log_level=log_level, ck_freq=ck_freq)
 
-        # from migen.genlib.misc import timeline
-        # self.sync += [
-        #     timeline(1, [
-        #         ( 1*8, [self.mode_regs.mr[1].eq(0b00110000)]),
-        #         ( 2*8, [self.mode_regs.mr[3].eq(0b00010000)]),
-        #         ( 3*8, [self.mode_regs.mr[1].eq(0b01110000)]),
-        #         ( 4*8, [self.mode_regs.mr[18].eq(0b10000000)]),
-        #         ( 5*8, [self.mode_regs.mr[18].eq(0b00000000)]),
-        #         (90*8, [self.mode_regs.mr[18].eq(0b00000000)]),
-        #     ])
-        # ]
+        self.nbanks = 16
+        self.active_banks = Array([Signal(name=f"bank{i}_active") for i in range(self.nbanks)])
+        self.active_rows = Array([Signal(18, name=f"bank{i}_active_row") for i in range(self.nbanks)])
 
         # The captured command is delayed and the timer starts 1 cycle later:
-        #     CK   --____----____----____----____----____--
-        #     CS   __--------______________________________  (center-aligned to CK)
-        #     CA   ____ppppNNNN____________________________  (center-aligned to CK DDR)
-        #    cmd   ______________XXXXXXXX__________________  (phase-aligned to CK)
-        # timing   ______________________8-------7-------6-  (phase-aligned to CK)
+        #       CK  --____----____----____----____----____--
+        #       CS  __--------______________________________  (center-aligned to CK)
+        #       CA  ____ppppNNNN____________________________  (center-aligned to CK DDR)
+        # ca_p_pre  ______xxxxxxxx__________________________
+        # ca_n_pre  __________xxxxxxxx______________________
+        #   ca_p/n  ______________XXXXXXXX__________________  (phase-aligned to CK)
+        #   timing  ______________________8-------7-------6-  (phase-aligned to CK)
         cs = Signal()
         cs_pre = Signal()
-        ca_p = Signal(7)
-        ca_n = Signal(7)
-        self.sync.ck += cs_pre.eq(pads.cs)
-        self.sync.ck += cs.eq(cs_pre)
-        self.sync.ck += ca_p.eq(pads.ca)
-        self.sync.ck_n += ca_n.eq(pads.ca)
-        ca = Array([Signal(7) for _ in range(2)])
+        ca_p_pre = Signal(7)
+        ca_n_pre = Signal(7)
+        self.ca_p = Signal(7)
+        self.ca_n = Signal(7)
+        self.sync.ck_n += ca_n_pre.eq(pads.ca)
         self.sync.ck += [
-            ca[0].eq(ca_p),
-            ca[1].eq(ca_n),
+            cs_pre.eq(pads.cs),
+            cs.eq(cs_pre),
+            ca_p_pre.eq(pads.ca),
+            self.ca_p.eq(ca_p_pre),
+            self.ca_n.eq(ca_n_pre),
         ]
 
-        rl = 8
-        rl_timer = PulseTiming(rl)
-        self.submodules += ClockDomainsRenamer("ck")(rl_timer)
-        self.comb += rl_timer.trigger.eq((ca[0][:3] == 0b001) & (cs == 1))
+        self.handle_cmd = Signal()
+
+        cmds_enabled = Signal()
+        cmd_handlers = OrderedDict(
+            ACT = self.activate_handler(),
+            PRE = self.precharge_handler(),
+            REF = self.refresh_handler(),
+            MRW = self.mrw_handler(),
+            # WRITE/MASKED-WRITE
+            # READ
+            # CAS
+            # MPC
+            # MRR
+            # WFF/RFF?
+            # RDC?
+        )
+        self.comb += [
+            self.handle_cmd.eq(cmds_enabled & cs),
+            If(self.handle_cmd & ~reduce(or_, cmd_handlers.values()),
+                self.log.error("Unexpected command: CA_p=0b%07b CA_n=0b%07b", self.ca_p, self.ca_n)
+            ),
+
+            cmds_enabled.eq(1),
+        ]
+
+    def activate_handler(self):
+        bank = Signal(max=self.nbanks)
+        row1 = Signal(4)
+        row2 = Signal(3)
+        row3 = Signal(4)
+        row4 = Signal(7)
+        row = Signal(18)
+        t_aad = PulseTiming(8 - 1)
+        return self.cmd_two_step("ACTIVATE",
+            cond1 = self.ca_p[:3] == 0b111,
+            body1 = [
+                NextValue(row1, self.ca_p[3:]),
+                NextValue(row2, self.ca_n[4:]),
+                NextValue(bank, self.ca_n[:4]),
+            ],
+            cond2 = self.ca_p[:3] == 0b011,
+            body2 = [
+                self.log.info("ACT: bank=%d row=%d", bank, row),
+                row3.eq(self.ca_p[3:]),
+                row4.eq(self.ca_n),
+                row.eq(Cat(row4, row3, row2, row1)),
+                NextValue(self.active_banks[bank], 1),
+                NextValue(self.active_rows[bank], row),
+                If(self.active_banks[bank],
+                    self.log.error("ACT on already active bank: bank=%d row=%d", bank, row)
+                ),
+            ],
+            wait_time = 8,  # tAAD
+        )
+
+    def precharge_handler(self):
+        bank = Signal(max=self.nbanks)
+        all_banks = Signal()
+        return self.cmd_one_step("PRECHARGE",
+            cond = self.ca_p[:7] == 0b1111000,
+            comb = [
+                all_banks.eq(self.ca_n[6]),
+                If(all_banks,
+                    self.log.info("PRE: all banks"),
+                    bank.eq(2**len(bank) - 1),
+                ).Else(
+                    self.log.info("PRE: bank = %d", bank),
+                    bank.eq(self.ca_n[:4]),
+                ),
+            ],
+            sync = [
+                If(all_banks,
+                    *[self.active_banks[b].eq(0) for b in range(2**len(bank))]
+                ).Else(
+                    self.active_banks[bank].eq(0),
+                    If(~self.active_banks[bank],
+                        self.log.warn("PRE on inactive bank: bank=%d", bank)
+                    ),
+                ),
+            ]
+        )
+
+    def refresh_handler(self):
+        # TODO: refresh tracking
+        bank = Signal(max=self.nbanks)
+        all_banks = Signal()
+        return self.cmd_one_step("REFRESH",
+            cond = self.ca_p[:7] == 0b0111000,
+            comb = [
+                all_banks.eq(self.ca_n[6]),
+                If(reduce(or_, self.active_banks),
+                    self.log.error("Not all banks precharged during REFRESH")
+                )
+            ]
+        )
+
+    def mrw_handler(self):
+        ma  = Signal(7)
+        op  = Signal(8)
+        return self.cmd_two_step("MRW",
+            cond1 = self.ca_p[:7] == 0b1011000,
+            body1 = [
+                NextValue(ma, self.ca_n),
+            ],
+            cond2 = self.ca_p[:6] == 0b001000,
+            body2 = [
+                op.eq(Cat(self.ca_n, self.ca_p[6])),
+                self.log.info("MRW: MR[%d] = 0x%02x", ma, op),
+                NextValue(self.mode_regs.mr[ma], op),
+            ]
+        )
+
+    def cmd_one_step(self, name, cond, comb, sync=None):
+        matched = Signal()
+        self.comb += If(self.handle_cmd & cond,
+            self.log.debug(name),
+            matched.eq(1),
+            *comb
+        )
+        if sync is not None:
+            self.sync += If(self.handle_cmd & cond,
+                *sync
+            )
+        return matched
+
+    def cmd_two_step(self, name, cond1, body1, cond2, body2, wait_time=None):
+        state1, state2 = f"{name}-1", f"{name}-2"
+        matched = Signal()
+
+        if wait_time is not None:
+            wait_time = wait_time - 1
+        next_cmd_timer = PulseTiming(wait_time)
+        self.submodules += next_cmd_timer
+
+        fsm = FSM()
+        fsm.act(state1,
+            If(self.handle_cmd & cond1,
+                self.log.debug(state1),
+                matched.eq(1),
+                *body1,
+                NextState(state2)
+            )
+        )
+        fsm.act(state2,
+            next_cmd_timer.trigger.eq(1),
+            If(next_cmd_timer.ready,
+                NextState(state1)
+            ).Elif(self.handle_cmd,
+                If(cond2,
+                    self.log.debug(state2),
+                    matched.eq(1),
+                    *body2
+                ).Else(
+                    self.log.error(f"Waiting for {state2} but got unexpected CA_p=0b%07b CA_n=0b%07b", self.ca_p, self.ca_n)
+                ),
+                NextState(state1)  # always back to first
+            )
+        )
+        self.submodules += fsm
+
+        return matched
