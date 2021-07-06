@@ -85,7 +85,6 @@ class LPDDR5SimPHY(SimSerDesMixin, LPDDR5PHY):
 
         # WCK
         for i in range(self.databits//8):
-            self.ser(i=self.out.wck[i], o=self.pads.wck[i], name=f'wck{i}', **ddr_wck_90)
             self.ser(i=self.out.wck[i], o=self.pads.wck[i], name=f'wck{i}', **ddr_wck_180)
             self.ser(i=self.out.dmi_o[i], o=self.pads.dmi_o[i], name=f'dmi_o{i}', **ddr_wck)
             self.des(o=self.out.dmi_i[i], i=self.pads.dmi[i],   name=f'dmi_i{i}', **ddr_wck)
