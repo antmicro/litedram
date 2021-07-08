@@ -10,17 +10,29 @@ from collections import OrderedDict
 
 from migen import *
 
-from litex.soc.interconnect.stream import ClockDomainCrossing
+from litex.soc.interconnect import stream
 from litex.soc.interconnect.csr import AutoCSR
 #
 from litedram.common import TappedDelayLine
+from litedram.phy.utils import edge
 from litedram.phy.sim_utils import SimLogger, PulseTiming, log_level_getter
 
+
+CMD_INFO_LAYOUT = [
+    ("we", 1),
+    ("masked", 1),
+    ("burst32", 1),
+    ("bank", 4),
+    ("row", 18),
+    ("col", 6),
+]
+
+gtkw_dbg = {}
 
 class LPDDR5Sim(Module, AutoCSR):
     """LPDDR5 DRAM simulation
     """
-    def __init__(self, pads, *, ck_freq, log_level):
+    def __init__(self, pads, *, ck_freq, wck_freq, log_level):
         log_level = log_level_getter(log_level)
 
         self.clock_domains.cd_ck = ClockDomain(reset_less=True)
@@ -37,15 +49,15 @@ class LPDDR5Sim(Module, AutoCSR):
             self.cd_wck_n.clk.eq(~pads.wck),
         ]
 
-        # CommandsSim and DataSim communicate via this CDC
-        cdc_layout = [("we", 1), ("masked", 1), ("burst32", 1), ("bank", 4), ("row", 18), ("col", 6)]
-        self.submodules.cdc = ClockDomainCrossing(cdc_layout, cd_from="ck", cd_to="wck", depth=4)
+        # CommandsSim and DataSim communicate via this endpoint
+        cmd_info = stream.Endpoint(CMD_INFO_LAYOUT)
+        gtkw_dbg["cmd_info"] = cmd_info
 
-        cmd = CommandsSim(pads, self.cdc, ck_freq=ck_freq, log_level=log_level("cmd"))
+        cmd = CommandsSim(pads, cmd_info, ck_freq=ck_freq, log_level=log_level("cmd"))
         self.submodules.cmd = ClockDomainsRenamer("ck")(cmd)
 
-        data = DataSim(pads, self.cdc, ck_freq=ck_freq, log_level=log_level("data"))
-        self.submodules.cmd = ClockDomainsRenamer("wck")(data)
+        data = DataSim(pads, cmd_info, cmd.data_timer.ready_p, wck_freq=wck_freq, log_level=log_level("data"))
+        self.submodules.data = ClockDomainsRenamer("wck")(data)
 
 
 def nested_case(mapping, *, on_leaf, variables, default=None, **kwargs):
@@ -206,11 +218,11 @@ class Sync(list):
 
 
 class CommandsSim(Module, AutoCSR):
-    def __init__(self, pads, cdc, *, ck_freq, log_level):
+    def __init__(self, pads, cmd_info, *, ck_freq, log_level):
         self.submodules.log = log = SimLogger(log_level=log_level, clk_freq=ck_freq)
         self.log.add_csrs()
 
-        self.cdc = cdc
+        self.cmd_info = cmd_info
         self.submodules.mode_regs = ModeRegisters(log_level=log_level, ck_freq=ck_freq)
 
         self.nbanks = 16
@@ -386,19 +398,19 @@ class CommandsSim(Module, AutoCSR):
                 row.eq(self.active_rows[bank]),
                 col.eq(Cat(self.ca_p[0], self.ca_n[4:6], self.ca_p[4:7])),
                 auto_precharge.eq(self.ca_n[6]),
-                # push via CDC
-                self.cdc.sink.we.eq(data_cmds["MASKED-WRITE"] | data_cmds["WRITE"] | data_cmds["WRITE32"]),
-                self.cdc.sink.masked.eq(data_cmds["MASKED-WRITE"]),
-                self.cdc.sink.burst32.eq(data_cmds["WRITE32"] | data_cmds["READ32"]),
-                self.cdc.sink.bank.eq(bank),
-                self.cdc.sink.row.eq(row),
-                self.cdc.sink.col.eq(col),
-                self.cdc.sink.valid.eq(1),
-                If(~self.cdc.sink.ready,
-                    self.log.error("Simulator CDC FIFO overflow")
+                # push to DataSim
+                self.cmd_info.we.eq(data_cmds["MASKED-WRITE"] | data_cmds["WRITE"] | data_cmds["WRITE32"]),
+                self.cmd_info.masked.eq(data_cmds["MASKED-WRITE"]),
+                self.cmd_info.burst32.eq(data_cmds["WRITE32"] | data_cmds["READ32"]),
+                self.cmd_info.bank.eq(bank),
+                self.cmd_info.row.eq(row),
+                self.cmd_info.col.eq(col),
+                self.cmd_info.valid.eq(1),
+                If(~self.cmd_info.ready,
+                    self.log.error("Simulator CMD-to-DATA overflow")
                 ),
                 # data latency
-                If(self.cdc.sink.we,
+                If(self.cmd_info.we,
                     self.data_latency.eq(self.mode_regs.wl - 2),
                     If(self.mode_regs.wl < 2,
                         self.log.error("WL < 2 is currently not supported")
@@ -424,7 +436,7 @@ class CommandsSim(Module, AutoCSR):
                 If(~self.active_banks[bank],
                     self.log.error("CAS command on inactive bank: bank=%d row=%d col=%d", bank, row, col)
                 ),
-                If(self.cdc.sink.masked & ~((self.mode_regs.fields["bank_org"] == 0b00) | (self.mode_regs.fields["bank_org"] == 0b10)),
+                If(self.cmd_info.masked & ~((self.mode_regs.fields["bank_org"] == 0b00) | (self.mode_regs.fields["bank_org"] == 0b10)),
                     self.log.error("READ32/WRITE32 are valid in BG/16B mode only")
                 ),
             ],
@@ -484,6 +496,133 @@ class CommandsSim(Module, AutoCSR):
 
 
 class DataSim(Module, AutoCSR):
-    def __init__(self, pads, cdc, *, ck_freq, log_level):
-        debug = Signal(8)
-        self.sync += debug.eq(debug + 1)
+    def __init__(self, pads, cmd_info, latency_ready, *, wck_freq, log_level, nrows=32768, ncols=1024, nbanks=16):
+        self.submodules.log = log = SimLogger(log_level=log_level, clk_freq=wck_freq)
+        self.log.add_csrs()
+
+        # CommandsSim produces the data required for handling a data command via cmd_info endpoint.
+        # Using stream.ClockDomainCrossing introduces too much latency, so we do a simplistic CDC
+        # and store the information in a FIFO, so that it is possible to pipeline data commands.
+        self.submodules.cmds = stream.SyncFIFO(CMD_INFO_LAYOUT, depth=4)
+        gtkw_dbg["cmds"] = self.cmds
+        self.comb += [
+            cmd_info.connect(self.cmds.sink, omit={"ready", "valid"}),
+            # ~ready will signalize that somehow our FIFO is full, which is an internal error
+            cmd_info.ready.eq(cmd_info.valid & self.cmds.sink.ready),
+            # to latch a command only once we use an edge here, which we can do as there is no way
+            # for 2 valid commands cycle-by-cycle
+            self.cmds.sink.valid.eq(edge(self, cmd_info.valid)),
+        ]
+
+        wr_start = Signal()
+        rd_start = Signal()
+        self.comb += [
+            wr_start.eq(self.cmds.source.valid & self.cmds.source.we & latency_ready),
+            rd_start.eq(self.cmds.source.valid & ~self.cmds.source.we & latency_ready),
+        ]
+
+        # After the WL signal arives we require the data to arrive some time later and then we start
+        # reading it. This would be adjustable on hardware, but in simulation we rather must set this
+        # so that it matches the delay that PHY introduces.
+        t_wckdqi = 2 - 1
+
+        wr_start_d = wr_start
+        for _ in range(t_wckdqi):
+            _wr_start_d = Signal()
+            self.sync += _wr_start_d.eq(wr_start_d)
+            wr_start_d = _wr_start_d
+
+        current_cmd = stream.Endpoint(CMD_INFO_LAYOUT)
+        gtkw_dbg["current_cmd"] = current_cmd
+        cmd_buf = stream.PipeValid(CMD_INFO_LAYOUT)
+        gtkw_dbg["cmd_buf"] = cmd_buf
+        self.submodules += cmd_buf
+        self.comb += [
+            self.cmds.source.connect(cmd_buf.sink),
+            cmd_buf.source.connect(current_cmd),
+        ]
+
+        burst_counter = Signal(max=32)
+        burst_length = Signal.like(burst_counter)
+        self.comb += [
+            If(current_cmd.burst32,
+                burst_length.eq(32 - 1)
+            ).Else(
+                burst_length.eq(16 - 1)
+            )
+        ]
+
+        class BurstWriter(Module):
+            def __init__(self, ports, burst_beat):
+                self.enable = Signal()
+
+                self.submodules.log = log = SimLogger(log_level=log_level, clk_freq=wck_freq)
+                self.log.add_csrs()
+
+                mem_addr = Signal(max=nrows * ncols)
+                current_col = Signal(max=ncols)
+                _burst_beat = burst_beat
+                burst_beat = Signal.like(current_col)
+
+                self.comb += [
+                    burst_beat.eq(_burst_beat),
+                    If(self.enable,
+                        current_col.eq(current_cmd.col + burst_beat),
+                        mem_addr.eq(current_cmd.row * ncols + current_col),
+                        ports[current_cmd.bank].we.eq(2**len(ports[current_cmd.bank].we) - 1),
+                        ports[current_cmd.bank].adr.eq(mem_addr),
+                        ports[current_cmd.bank].dat_w.eq(pads.dq),
+                        self.log.debug("WRITE[%d]: bank=%d, row=%d, col=%d, dq=0x%04x dm=0x%02b",
+                            burst_beat, current_cmd.bank, current_cmd.row, current_col, pads.dq, pads.dmi,
+                            once=False
+                        ),
+                    ),
+                ]
+
+        # DRAM Memory storage
+        mems = [Memory(len(pads.dq), depth=nrows * ncols) for _ in range(nbanks)]
+        ports_p = [mem.get_port(write_capable=True, we_granularity=8, async_read=True, clock_domain="wck") for mem in mems]
+        ports_n = [mem.get_port(write_capable=True, we_granularity=8, async_read=True, clock_domain="wck_n") for mem in mems]
+        self.specials += mems + ports_p + ports_n
+        ports_p = Array(ports_p)
+        ports_n = Array(ports_n)
+
+        self.submodules.write_p = ClockDomainsRenamer("wck")(BurstWriter(ports_p, 2*burst_counter))
+        self.submodules.write_n = ClockDomainsRenamer("wck_n")(BurstWriter(ports_n, 2*burst_counter + 1))
+
+        self.submodules.fsm = fsm = FSM()
+        fsm.act("IDLE",
+            If(wr_start_d,
+                current_cmd.ready.eq(1),
+                NextValue(burst_counter, 0),
+                NextState("WRITE-BURST"),
+            )
+        )
+        fsm.act("WRITE-BURST",
+            self.write_p.enable.eq(1),
+            self.write_n.enable.eq(1),
+            # self.log.debug("WRITE[%d]: bank=%d, row=%d, col=%d, dq=0x%04x dm=0x%02b",
+            #     burst_counter, current_cmd.bank, current_cmd.row, current_col, pads.dq, pads.dmi,
+            #     once=False
+            # ),
+            # ports_p[current_cmd.bank].we.eq(2**len(ports_p[current_cmd.bank].we) - 1),
+            # ports_p[current_cmd.bank].adr.eq(mem_addr),
+            # ports_p[current_cmd.bank].dat_w.eq(pads.dq),
+            # ports_n[current_cmd.bank].we.eq(2**len(ports_n[current_cmd.bank].we) - 1),
+            # ports_n[current_cmd.bank].adr.eq(mem_addr + 1),
+            # ports_n[current_cmd.bank].dat_w.eq(pads.dq),
+            If(burst_counter == burst_length[1:],
+                # TODO: continuous bursts
+                # If(wr_start, NextValue(burst_counter, current_cmd.burst32)),
+                NextValue(burst_counter, 0),
+                NextState("IDLE")
+            ).Else(
+                NextValue(burst_counter, burst_counter + 1),
+            ),
+        )
+        fsm.act("READ-BURST",
+        )
+
+
+
+        pass
