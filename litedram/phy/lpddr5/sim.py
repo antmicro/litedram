@@ -221,6 +221,7 @@ class CommandsSim(Module, AutoCSR):
     def __init__(self, pads, cmd_info, *, log_level, logger_kwargs):
         self.submodules.log = log = SimLogger(log_level=log_level, **logger_kwargs)
         self.log.add_csrs()
+        self.comb += self.log.info("Simulation start")
 
         self.cmd_info = cmd_info
         self.submodules.mode_regs = ModeRegisters(log_level=log_level, logger_kwargs=logger_kwargs)
@@ -524,7 +525,7 @@ class DataSim(Module, AutoCSR):
         # After the WL signal arives we require the data to arrive some time later and then we start
         # reading it. This would be adjustable on hardware, but in simulation we rather must set this
         # so that it matches the delay that PHY introduces.
-        t_wckdqi = 2 - 1
+        t_wckdqi = 2 - 1 -1
 
         wr_start_d = wr_start
         for _ in range(t_wckdqi):
@@ -553,7 +554,7 @@ class DataSim(Module, AutoCSR):
         ]
 
         class BurstWriter(Module):
-            def __init__(self, ports, burst_beat):
+            def __init__(self, ports, burst_start):
                 self.enable = Signal()
 
                 self.submodules.log = log = SimLogger(log_level=log_level, **logger_kwargs)
@@ -561,11 +562,14 @@ class DataSim(Module, AutoCSR):
 
                 mem_addr = Signal(max=nrows * ncols)
                 current_col = Signal(max=ncols)
-                _burst_beat = burst_beat
-                burst_beat = Signal.like(current_col)
+                burst_beat = Signal.like(current_col, reset=burst_start)
 
+                self.sync += If(self.enable,
+                    burst_beat.eq(burst_beat + 2)
+                ).Else(
+                    burst_beat.eq(burst_start)
+                )
                 self.comb += [
-                    burst_beat.eq(_burst_beat),
                     If(self.enable,
                         current_col.eq(current_cmd.col + burst_beat),
                         mem_addr.eq(current_cmd.row * ncols + current_col),
@@ -587,8 +591,16 @@ class DataSim(Module, AutoCSR):
         ports_p = Array(ports_p)
         ports_n = Array(ports_n)
 
-        self.submodules.write_p = ClockDomainsRenamer("wck")(BurstWriter(ports_p, 2*burst_counter))
-        self.submodules.write_n = ClockDomainsRenamer("wck_n")(BurstWriter(ports_n, 2*burst_counter + 1))
+        self.submodules.write_p = ClockDomainsRenamer("wck")(BurstWriter(ports_p, 0))
+        self.submodules.write_n = ClockDomainsRenamer("wck_n")(BurstWriter(ports_n, 1))
+        write_enable = Signal()
+        self.sync.wck_n += If(write_enable,
+            self.write_p.enable.eq(1),
+            self.write_n.enable.eq(1),
+        ).Else(
+            self.write_p.enable.eq(0),
+            self.write_n.enable.eq(0),
+        )
 
         self.submodules.fsm = fsm = FSM()
         fsm.act("IDLE",
@@ -599,18 +611,7 @@ class DataSim(Module, AutoCSR):
             )
         )
         fsm.act("WRITE-BURST",
-            self.write_p.enable.eq(1),
-            self.write_n.enable.eq(1),
-            # self.log.debug("WRITE[%d]: bank=%d, row=%d, col=%d, dq=0x%04x dm=0x%02b",
-            #     burst_counter, current_cmd.bank, current_cmd.row, current_col, pads.dq, pads.dmi,
-            #     once=False
-            # ),
-            # ports_p[current_cmd.bank].we.eq(2**len(ports_p[current_cmd.bank].we) - 1),
-            # ports_p[current_cmd.bank].adr.eq(mem_addr),
-            # ports_p[current_cmd.bank].dat_w.eq(pads.dq),
-            # ports_n[current_cmd.bank].we.eq(2**len(ports_n[current_cmd.bank].we) - 1),
-            # ports_n[current_cmd.bank].adr.eq(mem_addr + 1),
-            # ports_n[current_cmd.bank].dat_w.eq(pads.dq),
+            write_enable.eq(1),
             If(burst_counter == burst_length[1:],
                 # TODO: continuous bursts
                 # If(wr_start, NextValue(burst_counter, current_cmd.burst32)),
