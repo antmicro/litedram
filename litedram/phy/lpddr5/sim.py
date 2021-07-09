@@ -394,9 +394,9 @@ class CommandsSim(Module, AutoCSR):
         return self.cmd_one_step("DATA",
             cond = reduce(or_, data_cmds.values()),
             body = [
-                bank.eq(self.ca_p[:4]),
+                bank.eq(self.ca_n[:4]),
                 row.eq(self.active_rows[bank]),
-                col.eq(Cat(self.ca_p[0], self.ca_n[4:6], self.ca_p[4:7])),
+                col.eq(Cat(self.ca_p[3], self.ca_n[4:6], self.ca_p[4:7])),
                 auto_precharge.eq(self.ca_n[6]),
                 # push to DataSim
                 self.cmd_info.we.eq(data_cmds["MASKED-WRITE"] | data_cmds["WRITE"] | data_cmds["WRITE32"]),
