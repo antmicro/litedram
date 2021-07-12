@@ -245,6 +245,8 @@ class Timing(Module):
                     count.eq(t - 1),
                     If(t == 1,
                         ready_reg.eq(1)
+                    ).Else(
+                        ready_reg.eq(0)
                     )
                 ),
             ).Elif(~ready,
