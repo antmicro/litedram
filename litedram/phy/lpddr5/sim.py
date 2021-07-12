@@ -515,10 +515,23 @@ class DataSim(Module, AutoCSR):
 
         # DRAM Memory storage
         mems = [Memory(len(pads.dq), depth=nrows * ncols) for _ in range(nbanks)]
+        self.specials += mems
 
-        writer_kwargs = dict(pads=pads, cmd=cmd, mems=mems, nrows=nrows, ncols=ncols, log_level=log_level, logger_kwargs=logger_kwargs)
-        self.submodules.write_p = ClockDomainsRenamer("wck")(BurstWriter(wck_cd="wck", **writer_kwargs))
-        self.submodules.write_n = ClockDomainsRenamer("wck_n")(BurstWriter(wck_cd="wck_n", **writer_kwargs))
+        # Combine SDR data from each burst handler into DDR value
+        dq_i_p = Signal.like(pads.dq_i)
+        dq_i_n = Signal.like(pads.dq_i)
+        self.comb += [
+            If(pads.wck,
+                pads.dq_i.eq(dq_i_n),
+            ).Else(
+                pads.dq_i.eq(dq_i_p),
+            )
+        ]
+
+        Burst = lambda wck_cd, dq_i_x: BurstHalf(wck_cd=wck_cd, pads=pads, dq_i=dq_i_x, cmd=cmd,
+            mems=mems, nrows=nrows, ncols=ncols, log_level=log_level, logger_kwargs=logger_kwargs)
+        self.submodules.burst_p = ClockDomainsRenamer("wck")(Burst("wck", dq_i_p))
+        self.submodules.burst_n = ClockDomainsRenamer("wck_n")(Burst("wck_n", dq_i_n))
 
         # After the WL signal arives we require the data to arrive some time later and then we start
         # reading it. This would be adjustable on hardware, but in simulation we rather must set this
@@ -528,18 +541,21 @@ class DataSim(Module, AutoCSR):
         self.comb += [
             wr_start.eq(cmd.valid & cmd.we & latency_ready),
             rd_start.eq(cmd.valid & ~cmd.we & latency_ready),
-            self.write_p.enable.eq(wr_start),
-            self.write_n.enable.eq(delayed(self, wr_start, cycles=1)),
-            cmd.ready.eq(self.write_p.ready),
+            self.burst_p.enable_wr.eq(wr_start),
+            self.burst_p.enable_rd.eq(rd_start),
+            self.burst_n.enable_wr.eq(delayed(self, wr_start, cycles=1)),
+            self.burst_n.enable_rd.eq(delayed(self, rd_start, cycles=1)),
+            cmd.ready.eq(self.burst_p.ready),
         ]
 
 
-class BurstWriter(Module):
-    def __init__(self, *, pads, cmd, mems, wck_cd, nrows, ncols, log_level, logger_kwargs):
+class BurstHalf(Module):
+    def __init__(self, *, pads, dq_i, cmd, mems, wck_cd, nrows, ncols, log_level, logger_kwargs):
         self.submodules.log = SimLogger(log_level=log_level("burst_wr"), **logger_kwargs)
 
-        self.enable = Signal()
-        self.ready = Signal()
+        self.enable_wr = Signal()
+        self.enable_rd = Signal()
+        self.ready     = Signal()
 
         # Register the command
         cmd_d = stream.Endpoint(CMD_INFO_LAYOUT)
@@ -551,7 +567,10 @@ class BurstWriter(Module):
         current_col = Signal(max=ncols)
         burst_beat  = Signal.like(current_col, reset=burst_start)
 
-        ports = [mem.get_port(write_capable=True, we_granularity=8, clock_domain=wck_cd) for mem in mems]
+        ports = [
+            mem.get_port(write_capable=True, we_granularity=8, async_read=True, clock_domain=wck_cd)
+            for mem in mems
+        ]
         self.specials += ports
         ports = Array(ports)
 
@@ -565,27 +584,50 @@ class BurstWriter(Module):
                 burst_length.eq(16 - 1)
             ),
         ]
+
+        self.comb += [
+            current_col.eq(cmd_d.col + burst_beat),
+            mem_addr.eq(cmd_d.row * ncols + current_col),
+            ports[cmd_d.bank].adr.eq(mem_addr),
+        ]
+
         self.submodules.fsm = fsm = FSM()
         fsm.act("IDLE",
-            If(self.enable,
+            If(self.enable_wr | self.enable_rd,
                 NextValue(burst_beat, burst_start),
-                NextState("BURST-WRITE"),
+                If(self.enable_wr,
+                    NextState("BURST-WRITE"),
+                ).Else(
+                    NextState("BURST-READ"),
+                ),
             )
         )
         fsm.act("BURST-WRITE",
-            current_col.eq(cmd_d.col + burst_beat),
-            mem_addr.eq(cmd_d.row * ncols + current_col),
             ports[cmd_d.bank].we.eq(2**len(ports[cmd_d.bank].we) - 1),
-            ports[cmd_d.bank].adr.eq(mem_addr),
             ports[cmd_d.bank].dat_w.eq(pads.dq),
             self.log.debug("WRITE[%d]: bank=%d, row=%d, col=%d, dq=0x%04x dm=0x%02b",
                 burst_beat, cmd_d.bank, cmd_d.row, current_col, pads.dq, pads.dmi,
                 once=False
             ),
-            self.ready.eq(burst_beat[1:] == burst_length[1:]),
             If(self.ready,
                 NextValue(burst_beat, burst_start),
-                If(~self.enable,
+                If(~self.enable_wr,
+                    NextState("IDLE"),
+                ),
+            ).Else(
+                NextValue(burst_beat, burst_beat + 2),
+            ),
+        )
+        fsm.act("BURST-READ",
+            ports[cmd_d.bank].we.eq(0),
+            dq_i.eq(ports[cmd_d.bank].dat_r),
+            self.log.debug("READ[%d]: bank=%d, row=%d, col=%d, dq=0x%04x",
+                burst_beat, cmd_d.bank, cmd_d.row, current_col, pads.dq,
+                once=False
+            ),
+            If(self.ready,
+                NextValue(burst_beat, burst_start),
+                If(~self.enable_rd,
                     NextState("IDLE"),
                 ),
             ).Else(
