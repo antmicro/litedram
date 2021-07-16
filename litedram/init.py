@@ -725,8 +725,8 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
         (0, 3, rzq_map[wck_odt]),
         (3, 1, 0),  # WCK low frequency mode
         (4, 1, 1),  # WCK always on mode enabled
-        (5, 1, 0),  # WCK2CK leveling diabled
-        (6, 1, {2: 1, 4: 0}[wck_ck_ratio]),
+        (6, 1, 0),  # WCK2CK leveling diabled
+        (7, 1, {2: 1, 4: 0}[wck_ck_ratio]),
     ])
     # MR19 - defaults
     mr[20] = reg([
@@ -750,7 +750,9 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
 
     init_sequence = [
         ("Assert reset", 0x0000, 0, "DFII_CONTROL_ODT", ck(200e-6)),  # ??
-        ("Release reset", 0x0000, 0, cmds["UNRESET"], ck(2e-3) + 5),
+        ("Release reset", 0x0000, 0, cmds["UNRESET"],
+            # ck(2e-3) + 5),
+            ck(2e-6)),
         ("Toggle CS", 0, SpecialCmd.NOP, "DFII_COMMAND_WE|DFII_COMMAND_CS", ck(2e-6)),
         *[cmd_mr(ma) for ma in sorted(mr.keys())],
         ("ZQ Calibration latch", MPC.ZQC_LATCH, SpecialCmd.MPC, "DFII_COMMAND_WE|DFII_COMMAND_CS", max(4, ck(30e-9))),
