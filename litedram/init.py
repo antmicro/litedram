@@ -865,6 +865,7 @@ def get_sdram_phy_c_header(phy_settings, timing_settings):
     r.define(f"SDRAM_PHY_{phytype}")
     r.define("SDRAM_PHY_XDR", 1 if phy_settings.memtype == "SDR" else 2)
     r.define("SDRAM_PHY_DATABITS", phy_settings.databits)
+    r.define("SDRAM_PHY_DFI_DATABITS", phy_settings.dfi_databits)
     r.define("SDRAM_PHY_PHASES", nphases)
     for setting in ["cl", "cwl", "cmd_latency", "cmd_delay"]:
         if getattr(phy_settings, setting, None) is not None:
