@@ -187,8 +187,8 @@ class LPDDR5PHY(Module, AutoCSR):
         # Read latency
         # DFI cmd -> cmd buf -> PHY serializers -> DRAM -> Read Latency -> DQ data
         # -> PHY deserializers -> Bitslip -> Burst cycles -> StrideConverter -> DFI rddata
-        read_data_delay = cmd_latency + ser_latency.sys + cl  # DFI cmd -> read data on DQ
-        read_des_delay  = des_latency.sys + bitslip_cycles+bitslip_range + burst_ck_cycles  # DQ -> DFI rddata
+        read_data_delay = cmd_latency + ser_latency.sys8x//8 + cl  # DFI cmd -> read data on DQ
+        read_des_delay  = des_latency.sys8x//8 + bitslip_cycles+bitslip_range + burst_ck_cycles  # DQ -> DFI rddata
         read_latency    = read_data_delay + read_des_delay
 
         # Write latency
