@@ -186,7 +186,7 @@ class LPDDR5Tests(unittest.TestCase):
                 read,  # with WCK sync
                 {},
                 {},
-                read,  # no WCK sync
+                read,  # with WCK sync
                 {},
                 {},
             ],
@@ -199,7 +199,7 @@ class LPDDR5Tests(unittest.TestCase):
                     'ca2': '00' '00' '1000 0010 0000',
                     'ca3': '00' '00' '1000 0010 0000',
                     'ca4': '00' '00' '0000 0000 0000',
-                    'ca5': '00' '00' '1000 0000 0000',
+                    'ca5': '00' '00' '1000 0010 0000',
                     'ca6': '00' '00' '0000 0000 0000',
                 }
             },
@@ -216,7 +216,7 @@ class LPDDR5Tests(unittest.TestCase):
                 mrr,  # with WCK sync
                 {},
                 {},
-                mrr,  # no WCK sync
+                mrr,  # with WCK sync
                 {},
                 {},
             ],
@@ -229,7 +229,7 @@ class LPDDR5Tests(unittest.TestCase):
                     'ca2': '00' '00' '1000 0010 0000',
                     'ca3': '00' '00' '1010 0010 1000',
                     'ca4': '00' '00' '0010 0000 1000',
-                    'ca5': '00' '00' '1000 0000 0000',
+                    'ca5': '00' '00' '1000 0010 0000',
                     'ca6': '00' '00' '0000 0000 0000',
                 }
             },
@@ -250,7 +250,7 @@ class LPDDR5Tests(unittest.TestCase):
                         write,  # with WCK sync
                         {},
                         {},
-                        write,  # no WCK sync
+                        write,  # with WCK sync
                         {},
                         {},
                     ],
@@ -262,7 +262,7 @@ class LPDDR5Tests(unittest.TestCase):
                             'ca1': '00' '00' '0010 0000 1000',
                             'ca2': '00' '00'f'{w1} 0010 {w2}',
                             'ca3': '00' '00' '1000 0010 0000',
-                            'ca4': '00' '00' '1000 0000 0000',
+                            'ca4': '00' '00' '1000 0010 0000',
                             'ca5': '00' '00' '0000 0000 0000',
                             'ca6': '00' '00' '0000 0000 0000',
                         }
@@ -292,12 +292,12 @@ class LPDDR5Tests(unittest.TestCase):
                     dfi_sequence = [
                         {},
                         {0: read}, {},  # WCK sync
-                        {0: write_ap}, {},  # no WCK sync
+                        {0: write_ap}, {},  # with WCK sync
                         {0: activate}, {},
                         {0: refresh_ab},{},
                         {0: precharge}, {},
                         {0: mrw}, {},
-                        {0: mrr}, {},  # no WCK sync
+                        {0: mrr}, {},  # with WCK sync
                         {0: zqc_start}, {},
                         {0: zqc_latch}, {},
                     ],
@@ -309,8 +309,8 @@ class LPDDR5Tests(unittest.TestCase):
                             'ca1': '00' '0000' '0001 0011 1110 0000 0001 0101 0000 0000 0001',
                             'ca2': '00' '0000'f'1001 {mw} 1000 0000 0001 0000 1001 0001 0001',
                             'ca3': '00' '0000' '1011 1001 1010 0010 0010 1011 1011 0000 0000',
-                            'ca4': '00' '0000' '0000 0000 1010 0010 001x 1100 0010 0010 0010',
-                            'ca5': '00' '0000' '1011 0000 1001 0010 001x 0001 0001 0010 0010',
+                            'ca4': '00' '0000' '0000 1000 1010 0010 001x 1100 0010 0010 0010',
+                            'ca5': '00' '0000' '1011 0000 1001 0010 001x 0001 1001 0010 0010',
                             'ca6': '00' '0000' '0010 0001 1101 0001 0010 1110 0001 0010 0010',
                         }
                     },
@@ -498,12 +498,31 @@ class LPDDR5Tests(unittest.TestCase):
                     0: dict(wrdata=0xfffefffffffefffffffefffffffefffffffefffffffefffffffefffffffeffff),
                 }
                 latency = [{}] * (wl - 1)
+
+                # minimum latency to have correct wck synchronization
+                consecutive_burst_latency = [{}] * 6
+
                 wck_preamble = "00 00" * t["t_wckenl_wr"] + "00 00" * t["t_wckenl_static"] + "10 10" * t["t_wckenl_toggle_wr"]
+                wck_burst = "10 10" * (16//4)
+                wck_postamble = "10 10" + "10 00"
+
                 self.run_test(phy,
                     dfi_sequence = [
                         {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=0, wrdata_en=1)},
                         *latency,
-                        dfi_data
+                        dfi_data,
+                        *consecutive_burst_latency,
+                        {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=0, wrdata_en=1)},
+                        *latency,
+                        dfi_data,
+                        *consecutive_burst_latency,
+                        {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=0, wrdata_en=1)},
+                        *latency,
+                        dfi_data,
+                        *consecutive_burst_latency,
+                        {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=0, wrdata_en=1)},
+                        *latency,
+                        dfi_data,
                     ],
                     pad_checkers = {
                         "sys_270": {
@@ -517,7 +536,10 @@ class LPDDR5Tests(unittest.TestCase):
                             # tWCKENL_WR starts counting from first command (CAS) so we add command latency,
                             # then preamble, then toggle for the whole burst, then postamble for tWCKPST=2.5tCK
                             # (but for now we assume that WCK is never disabled)
-                            "wck0": "0000 0000" + wck_preamble + "10 10" * (16//4) + "10 10 1" + "0 10" + "10 10"*2,
+                            "wck0": "0000 0000" + wck_preamble + wck_burst + wck_postamble + \
+                                    "0000" + wck_preamble + wck_burst + wck_postamble + \
+                                    "0000" + wck_preamble + wck_burst + wck_postamble + \
+                                    "0000" + wck_preamble + wck_burst + wck_postamble,
                         },
                     },
                     chunk_size=4,
@@ -541,12 +563,31 @@ class LPDDR5Tests(unittest.TestCase):
                     0: dict(wrdata=0xfffefffffffefffffffefffffffefffffffefffffffefffffffefffffffeffff),
                 }
                 latency = [{}] * (wl - 1)
+
+                # minimum latency to have correct wck synchronization
+                consecutive_burst_latency = [{}] * 3
+
                 wck_preamble = "00000000" * (t["t_wckenl_wr"] + t["t_wckenl_static"]) + "11001100" + "10101010" * (t["t_wckenl_toggle_wr"] - 1)
+                wck_burst = "10101010" * (16//8)
+                wck_postamble = "10101000"
+
                 self.run_test(phy,
                     dfi_sequence = [
                         {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=0, wrdata_en=1)},
                         *latency,
-                        dfi_data
+                        dfi_data,
+                        *consecutive_burst_latency,
+                        {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=0, wrdata_en=1)},
+                        *latency,
+                        dfi_data,
+                        *consecutive_burst_latency,
+                        {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=0, wrdata_en=1)},
+                        *latency,
+                        dfi_data,
+                        *consecutive_burst_latency,
+                        {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=0, wrdata_en=1)},
+                        *latency,
+                        dfi_data,
                     ],
                     pad_checkers = {
                         "sys_270": {
@@ -560,7 +601,10 @@ class LPDDR5Tests(unittest.TestCase):
                             # tWCKENL_WR starts counting from first command (CAS) so we add command latency,
                             # then preamble, then toggle for the whole burst, then postamble for tWCKPST=2.5tCK
                             # (but for now we assume that WCK is never disabled)
-                            "wck0": "00000000 00000000" + wck_preamble + "10101010" * (16//8) + "10101" + "0 10" + "10 10"*2,
+                            "wck0": "00000000 00000000" + wck_preamble + wck_burst + wck_postamble + \
+                                    "00000000" + wck_preamble + wck_burst + wck_postamble + \
+                                    "00000000" + wck_preamble + wck_burst + wck_postamble + \
+                                    "00000000" + wck_preamble + wck_burst + wck_postamble,
                         },
                     },
                 )
@@ -580,7 +624,11 @@ class LPDDR5Tests(unittest.TestCase):
                 phy = LPDDR5SimPHY(sys_clk_freq=sys_clk_freq)
                 rl = phy.settings.read_latency
                 latency = [{}] * (rl - 1)
+
                 wck_preamble = "00 00" * t["t_wckenl_rd"] + "00 00" * t["t_wckenl_static"] + "10 10" * t["t_wckenl_toggle_rd"]
+                wck_burst = "10 10" * (16//4)
+                wck_postamble = "10 10" + "10 00"
+
                 self.run_test(phy,
                     dfi_sequence = [
                         {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1, rddata_en=1)},
@@ -592,7 +640,7 @@ class LPDDR5Tests(unittest.TestCase):
                             "cs": "01100000",
                         },
                         "sys4x_270": {
-                            "wck0": "0000 0000" + wck_preamble + "10 10" * (16//4) + "10 10 1" + "0 10" + "10 10"*2,
+                            "wck0": "0000 0000" + wck_preamble + wck_burst + wck_postamble + "00 00",
                         },
                     },
                     chunk_size=4,
@@ -613,7 +661,11 @@ class LPDDR5Tests(unittest.TestCase):
                 phy = LPDDR5SimPHY(sys_clk_freq=sys_clk_freq, wck_ck_ratio=4)
                 rl = phy.settings.read_latency
                 latency = [{}] * (rl - 1)
+
                 wck_preamble = "00000000" * (t["t_wckenl_rd"] + t["t_wckenl_static"]) + "11001100" + "10101010" * (t["t_wckenl_toggle_rd"] - 1)
+                wck_burst = "10101010" * (16//8)
+                wck_postamble = "10101000"
+
                 self.run_test(phy,
                     dfi_sequence = [
                         {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1, rddata_en=1)},
@@ -625,7 +677,7 @@ class LPDDR5Tests(unittest.TestCase):
                             "cs": "01100000",
                         },
                         "sys8x_270": {
-                            "wck0": "00000000 00000000" + wck_preamble + "10101010" * (16//8) + "10101" + "0 10" + "10 10"*2,
+                            "wck0": "00000000 00000000" + wck_preamble + wck_burst + wck_postamble + "00000000",
                         },
                     },
                 )

@@ -121,7 +121,6 @@ def get_frange(twck, wck_ck_ratio):
             return frange
     raise ValueError
 
-
 class LPDDR5PHY(Module, AutoCSR):
     """Core logic of LPDDR5 PHY
 
@@ -295,9 +294,6 @@ class LPDDR5PHY(Module, AutoCSR):
         # WL = tWCKENL_WR - 1 + tWCKPRE_Static + tWCKPRE_Toggle_WR
         # RL = tWCKENL_RD - 1 + tWCKPRE_Static + tWCKPRE_Toggle_RD  (without Byte Mode, nor Read DBI/Read Data Copy)
         wck_sync_done = Signal()
-        self.sync += If(self.adapter.wck_sync != 0, wck_sync_done.eq(1))
-        self.comb += self.adapter.wck_sync_done.eq(wck_sync_done)
-
         wck_sync = TappedDelayLine(
             signal = self.adapter.wck_sync,
             ntaps  = max(1, max(frange.t_wckenl_wr, frange.t_wckenl_rd) + frange.t_wckpre_static),
@@ -307,10 +303,12 @@ class LPDDR5PHY(Module, AutoCSR):
 
         wck_pattern = Signal(8)  # for WCK:CK=2:1 we take wck_pattern[::2]
         patterns = {
-            "disabled":   "________",
-            "static":     "________",
-            "toggle":     "--__--__",
-            "toggle_4:1": "-_-_-_-_",
+            "disabled":      "________",
+            "static":        "________",
+            "toggle":        "--__--__",
+            "toggle_4:1":    "-_-_-_-_",
+            "postamble":     "--______",
+            "postamble_4:1": "-_-_-___",
         }
 
         assert frange.t_wckpre_static > 0  # The algorithm assumes it's never 0
@@ -336,7 +334,7 @@ class LPDDR5PHY(Module, AutoCSR):
         wck_fsm.act("TOGGLE",
             wck_pattern.eq(bitpattern(patterns["toggle"])),
             If(~wck_sync_done,
-                NextState("DISABLED")
+                NextState("POSTAMBLE")
             ).Elif((wck_ck_ratio == 4),  # go to full speed in the next cycle
                 NextState("TOGGLE_4:1")
             ),
@@ -344,8 +342,21 @@ class LPDDR5PHY(Module, AutoCSR):
         wck_fsm.act("TOGGLE_4:1",
             wck_pattern.eq(bitpattern(patterns["toggle_4:1"])),
             If(~wck_sync_done,
-                NextState("DISABLED")
+                NextState("POSTAMBLE")
             ),
+        )
+        wck_fsm.act("POSTAMBLE",
+            If((wck_ck_ratio == 4),
+                wck_pattern.eq(bitpattern(patterns["postamble_4:1"])),
+                NextState("DISABLED")
+            ).Else(
+                wck_pattern.eq(bitpattern(patterns["toggle"])),
+                NextState("POSTAMBLE_2:1")
+            )
+        )
+        wck_fsm.act("POSTAMBLE_2:1",
+            wck_pattern.eq(bitpattern(patterns["postamble"])),
+            NextState("DISABLED")
         )
 
         wck_out = {2: wck_pattern[::2], 4: wck_pattern}[wck_ck_ratio]
@@ -427,6 +438,29 @@ class LPDDR5PHY(Module, AutoCSR):
             self.dfi.p0.rddata.eq(rddata_converter.source.data),
             self.dfi.p0.rddata_valid.eq(rddata_converter.source.valid),
         ]
+
+
+        # -2 is to take into account the serialization time for wck
+        read_wck_latency = cmd_latency + cl + burst_ck_cycles - 2
+        write_wck_latency = cmd_latency + cwl + burst_ck_cycles - 2
+
+        self.wck_sync_state = Signal(2)
+        self.sync += If(self.adapter.wck_sync != 0,
+            wck_sync_done.eq(1),
+            self.wck_sync_state.eq(self.adapter.wck_sync)
+        ).Elif(self.wck_sync_state == WCKSyncType.RD,
+            If(reduce(or_, rddata_en.taps[0:read_wck_latency]) == 0,
+                wck_sync_done.eq(0),
+                self.wck_sync_state.eq(0b00),
+            )
+        ).Elif(self.wck_sync_state == WCKSyncType.WR,
+            If(reduce(or_, wrdata_en.taps[0:write_wck_latency]) == 0,
+                wck_sync_done.eq(0),
+                self.wck_sync_state.eq(0b00),
+            )
+        )
+
+        self.comb += self.adapter.wck_sync_done.eq(wck_sync_done)
 
         for bit in range(self.databits):
             # output
