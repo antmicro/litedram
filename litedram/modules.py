@@ -1344,6 +1344,29 @@ class MT53E256M16D1(SDRAMModule):
     }
     speedgrade_timings["default"] = speedgrade_timings["1866"]
 
+# DDR5 -------------------------------------------------------------------------------------------
+
+class MT60B2G8HB48B(SDRAMModule):
+    memtype = "DDR5"
+
+    nbanks = 32
+    nrows = 65536
+    ncols = 1024
+
+    # TODO: These data below is taken from the LPDDR4 module. It needs to be changed and verified
+
+    # TODO: find a way to select if we need masked writes
+    tccd = {"write": (32, 20)}
+
+    # TODO: tZQCS - performing ZQC during runtime will require modifying Refresher, as ZQC has to be done in 2 phases
+    # 1. ZQCAL START is issued 2. ZQCAL LATCH updates the values, the time START->LATCH tZQCAL=1us, so we cannot block
+    # the controller during this time, after ZQCAL LATCH we have to wait tZQLAT=max(8ck, 30ns)
+    technology_timings = _TechnologyTimings(tREFI=32e6/8192, tWTR=(16, 10), tCCD=tccd["write"], tRRD=(8, 5), tZQCS=(30, 8))
+    speedgrade_timings = {
+        "1866": _SpeedgradeTimings(tRP=15.00, tRCD=15.00, tWR=(48, 30), tRFC=260, tFAW=40, tRAS=32),  # TODO: tRAS_max
+    }
+    speedgrade_timings["default"] = speedgrade_timings["1866"]
+
 def memtype_to_max_values(memtype, freq, ratio):
     cls = {
         "SDR": SDRModule,
