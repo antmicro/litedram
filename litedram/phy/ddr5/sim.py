@@ -129,8 +129,9 @@ class CommandsSim(Module, AutoCSR):
             REF = self.refresh_handler(),
             ACT = self.activate_handler(),
             PRE = self.precharge_handler(),
-            RD =  self.read_handler(),
+            RD  = self.read_handler(),
             MPC = self.mpc_handler(),
+            WR  = self.write_handler(),
         )
 
         self.comb += [
@@ -257,12 +258,12 @@ class CommandsSim(Module, AutoCSR):
     def mrw_handler(self):
         ma  = Signal(8)
         op  = Signal(8)
-        return self.cmd_one_step("MWR",
+        return self.cmd_one_step("MRW",
             cond = self.cs_low[:5] == 0b00101,
             comb = [
                 self.log.info("MRW: MR[%d] = 0x%02x", ma, op),
-                op.eq(self.cs_high[:7]),
-                ma.eq(self.cs_low[5:12]),
+                op.eq(self.cs_high[:8]),
+                ma.eq(self.cs_low[5:13]),
                 NextValue(self.mode_regs[ma], op),
             ],
         )
@@ -279,7 +280,7 @@ class CommandsSim(Module, AutoCSR):
                     )
                 ).Else(
                     self.log.info("REF: bank = %d", bank),
-                    bank.eq(self.cs_low[6:7]),
+                    bank.eq(self.cs_low[6:8]),
                 )
             ]
         )
@@ -290,8 +291,8 @@ class CommandsSim(Module, AutoCSR):
         return self.cmd_one_step("ACTIVATE",
             cond = self.cs_low[:2] == 0b00,
             comb = [
-                bank.eq(self.cs_low[6:10]),
-                row.eq(Cat(self.cs_low[2:5], self.cs_high)),
+                bank.eq(self.cs_low[6:11]),
+                row.eq(Cat(self.cs_low[2:6], self.cs_high)),
                 self.log.info("ACT: bank=%d row=%d", bank, row),
                 NextValue(self.active_banks[bank], 1),
                 NextValue(self.active_rows[bank], row),
@@ -310,7 +311,7 @@ class CommandsSim(Module, AutoCSR):
                     self.log.info("PRE: all banks"),
                 ).Else(
                     self.log.info("PRE: bank = %d", bank),
-                    bank.eq(self.cs_low[6:7]),
+                    bank.eq(self.cs_low[6:8]),
                 ),
             ],
             sync = [
@@ -331,7 +332,7 @@ class CommandsSim(Module, AutoCSR):
         return self.cmd_one_step("MPC",
             cond = self.cs_low[:5] == 0b01111,
             comb = [
-                self.mpc_op.eq(self.cs_low[5:12]),
+                self.mpc_op.eq(self.cs_low[5:13]),
                 Case(self.mpc_op, cases)
             ],
         )
@@ -345,8 +346,8 @@ class CommandsSim(Module, AutoCSR):
             comb = [
                 If(~self.cs_low[5],
                    self.log.warn("Command places the DRAM into alternate burst mode; currently unsupported")
-                   ),                
-                bank.eq(self.cs_low[6:11]),
+                   ),
+                bank.eq(self.cs_n_low[6:11]),
                 row.eq(self.active_rows[bank]),
                 col.eq(self.cs_high[:9]),
                 self.log.info("READ: bank=%d row=%d, col=%d", bank, row, col),
@@ -363,6 +364,35 @@ class CommandsSim(Module, AutoCSR):
             ],
         )
 
+    def write_handler(self):
+        bank = Signal(5)
+        row  = Signal(18)
+        col  = Signal(9)
+        auto_precharge = Signal()
+
+        return self.cmd_one_step("WRITE",
+            cond = self.cs_n_low[:5] == 0b01101,
+            comb = [
+                If(~self.cs_low[5],
+                   self.log.warn("Command places the DRAM into alternate burst mode; currently unsupported")
+                   ),
+                bank.eq(self.cs_n_low[6:11]),
+                row.eq(self.active_rows[bank]),
+                col.eq(self.cs_high[1:9]),
+                self.log.info("WRITE: bank=%d row=%d, col=%d", bank, row, col),
+
+                # pass the data to data simulator
+                self.data_en.input.eq(1),
+                self.data.sink.valid.eq(1),
+                self.data.sink.we.eq(1),
+                self.data.sink.bank.eq(bank),
+                self.data.sink.row.eq(row),
+                self.data.sink.col.eq(col),
+                If(~self.data.sink.ready,
+                    self.log.error("Simulator data FIFO overflow")
+                ),
+            ],
+        )
 # Data ---------------------------------------------------------------------------------------------
 
 class DataSim(Module, AutoCSR):
