@@ -54,7 +54,7 @@ class DDR5Sim(Module, AutoCSR):
     log_level : str
         SimLogger initial logging level (formatted for parsing with `log_level_getter`).
     """
-    def __init__(self, pads, *, sys_clk_freq, cl, cwl, disable_delay, log_level):
+    def __init__(self, pads, *, sys_clk_freq, cl, cwl, disable_delay, log_level, geom_settings):
         log_level = log_level_getter(log_level)
 
         cd_cmd    = "sys8x_90"
@@ -64,14 +64,15 @@ class DDR5Sim(Module, AutoCSR):
         cd_dqs_rd = "sys8x_ddr"
 
         self.submodules.data_cdc = ClockDomainCrossing(
-            [("we", 1), ("bank", 5), ("row", 18), ("col", 11)],
+            [("we", 1), ("bank", geom_settings.bankbits), ("row", 18), ("col", 11)],
             cd_from=cd_cmd, cd_to=cd_dq_wr)
 
         cmd = CommandsSim(pads,
-            data_cdc    = self.data_cdc,
-            clk_freq    = 8*sys_clk_freq,
-            log_level   = log_level("cmd"),
-            init_delays = not disable_delay,
+            data_cdc      = self.data_cdc,
+            clk_freq      = 8*sys_clk_freq,
+            log_level     = log_level("cmd"),
+            geom_settings = geom_settings,
+            init_delays   = not disable_delay,
         )
         self.submodules.cmd = ClockDomainsRenamer(cd_cmd)(cmd)
 
@@ -99,15 +100,16 @@ class CommandsSim(Module, AutoCSR):
 
     Command simulator should work in the clock domain of `pads.clk_p` (SDR).
     """
-    def __init__(self, pads, data_cdc, *, clk_freq, log_level, init_delays=False):
+    def __init__(self, pads, data_cdc, *, clk_freq, log_level, geom_settings, init_delays=False):
         self.submodules.log = log = SimLogger(log_level=log_level, clk_freq=clk_freq)
         self.log.add_csrs()
 
         # Mode Registers storage
         self.mode_regs = Array([Signal(8) for _ in range(64)])
         # Active banks
-        self.active_banks = Array([Signal() for _ in range(8)])
-        self.active_rows = Array([Signal(18) for _ in range(8)])
+        self.number_of_banks = 2 ** geom_settings.bankbits;
+        self.active_banks = Array([Signal() for _ in range(self.number_of_banks)])
+        self.active_rows = Array([Signal(18) for _ in range(self.number_of_banks)])
         # Connection to DataSim
         self.data_en = TappedDelayLine(ntaps=26)
         self.data = data_cdc
@@ -318,7 +320,7 @@ class CommandsSim(Module, AutoCSR):
             ],
             sync = [
                 If(~self.cs_n_low[10],
-                    *[self.active_banks[b].eq(0) for b in range(2**len(bank))]
+                    *[self.active_banks[b].eq(0) for b in range(self.number_of_banks)]
                 ).Else(
                     self.active_banks[bank].eq(0),
                     If(~self.active_banks[bank],
