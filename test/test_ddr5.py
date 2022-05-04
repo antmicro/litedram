@@ -143,3 +143,27 @@ class DDR5Tests(unittest.TestCase):
                           'ca13': latency   + 'xx00'+'xx00' + 'x000'+'x000' + 'x000'+'xx00' + 'x000'+'x000' + 'xx00'+'0000',
                       }},
                       )
+
+    def test_ddr5_dq_out(self):
+        # Test serialization of dfi wrdata to DQ pads
+        dut = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        zero = '00000000' * 2  # zero for 1 sysclk clock in sys8x_ddr clock domain
+
+        dfi_data = {
+            0: dict(wrdata=0x11112222),
+            1: dict(wrdata=0x33334444),
+            2: dict(wrdata=0x55556666),
+            3: dict(wrdata=0x77778888),
+            4: dict(wrdata=0x9999aaaa),
+            5: dict(wrdata=0xbbbbcccc),
+            6: dict(wrdata=0xddddeeee),
+            7: dict(wrdata=0xffff0000),
+        }
+        dfi_wrdata_en = {0: dict(wrdata_en=1)}  # wrdata_en=1 required on any single phase
+
+        self.run_test(dut,
+            dfi_sequence = [dfi_wrdata_en, {}, dfi_data],
+            pad_checkers = {"sys8x_90_ddr": {
+                f'dq{i}': (self.CMD_LATENCY+1)*zero + zero + dq_pattern(i, dfi_data, "wrdata") + zero for i in range(8)
+            }},
+        )
