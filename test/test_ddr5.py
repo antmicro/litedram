@@ -219,3 +219,124 @@ class DDR5Tests(unittest.TestCase):
                           'ca13': latency   + 'xx00'+'xx00' + 'x000'+'x000' + 'x000'+'xx00' + 'x000'+'x000' + 'xx00'+'0000',
                       }},
                       )
+
+    def test_ddr5_dq_out(self):
+        # Test serialization of dfi wrdata to DQ pads
+        phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        zero = '00000000' * 2  # zero for 1 sysclk clock in sys8x_ddr clock domain
+        write_latency = phy.settings.write_latency
+
+        dfi_data = {
+            0: dict(wrdata=0x1122),
+            1: dict(wrdata=0x3344),
+            2: dict(wrdata=0x5566),
+            3: dict(wrdata=0x7788),
+            4: dict(wrdata=0x99aa),
+            5: dict(wrdata=0xbbcc),
+            6: dict(wrdata=0xddee),
+            7: dict(wrdata=0xff00),
+        }
+        dfi_wrdata_en = {0: dict(wrdata_en=1)}  # wrdata_en=1 required on any single phase
+
+        self.run_test(dut = phy,
+            dfi_sequence = [
+                dfi_wrdata_en,
+                *[{} for _ in range(write_latency - 1)],
+                dfi_data,
+            ],
+            pad_checkers = {"sys8x_90_ddr": {
+                f'dq{i}': (phy.settings.cmd_latency + write_latency) * zero + dq_pattern(i, dfi_data, "wrdata") + zero for i in range(8)
+            }},
+            vcd_name="ddr_dq_out.vcd"
+        )
+
+    def test_ddr5_dq_only_1cycle(self):
+        # Test that DQ data is sent to pads only during expected cycle, on other cycles there is no data
+        phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        zero = '00000000' * 2
+        write_latency = phy.settings.write_latency
+
+        dfi_data = {
+            0: dict(wrdata=0x1122),
+            1: dict(wrdata=0x3344),
+            2: dict(wrdata=0x5566),
+            3: dict(wrdata=0x7788),
+            4: dict(wrdata=0x99aa),
+            5: dict(wrdata=0xbbcc),
+            6: dict(wrdata=0xddee),
+            7: dict(wrdata=0xff00),
+        }
+        dfi_wrdata_en = copy.deepcopy(dfi_data)
+        dfi_wrdata_en[0].update(dict(wrdata_en=1))
+
+        self.run_test(dut = phy,
+            dfi_sequence = [
+                dfi_wrdata_en,
+                *[dfi_data for _ in range(write_latency)], # only last should be handled
+            ],
+            pad_checkers = {"sys8x_90_ddr": {
+                f'dq{i}': (phy.settings.cmd_latency + write_latency)*zero + dq_pattern(i, dfi_data, "wrdata") + zero for i in range(8)
+            }},
+            vcd_name="ddr_dq_only_1cycle.vcd"
+        )
+
+    def test_ddr5_dq_in_rddata_valid(self):
+        # Test that rddata_valid is set with correct delay
+        phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        dfi_sequence = [
+            {0: dict(rddata_en=1)},  # command is issued by MC (appears on next cycle)
+            *[{p: dict(rddata_valid=0) for p in range(8)} for _ in range(phy.settings.read_latency - 1)],  # nothing is sent during write latency
+            {p: dict(rddata_valid=1) for p in range(8)},
+            {},
+        ]
+
+        self.run_test(dut = phy,
+            dfi_sequence = dfi_sequence,
+            pad_checkers = {},
+            pad_generators = {},
+            vcd_name="ddr5_dq_in_rddata_valid.vcd"
+        )
+
+    def test_ddr5_dq_in_rddata(self):
+        # Test that data on DQ pads is deserialized correctly to DFI rddata.
+        # We assume that when there are no commands, PHY will still deserialize the data,
+        # which is generally true (tristate oe is 0 whenever we are not writing).
+        phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        dfi_data = {
+            0: dict(rddata=0x1122),
+            1: dict(rddata=0x3344),
+            2: dict(rddata=0x5566),
+            3: dict(rddata=0x7788),
+            4: dict(rddata=0x99aa),
+            5: dict(rddata=0xbbcc),
+            6: dict(rddata=0xddee),
+            7: dict(rddata=0xff00),
+        }
+
+        def sim_dq(pads):
+            for _ in range(16 * 1):  # wait 1 sysclk cycle
+                yield
+            for cyc in range(16):  # send a burst of data on pads
+                for bit in range(8):
+                    yield pads.dq_i[bit].eq(int(dq_pattern(bit, dfi_data, "rddata")[cyc]))
+                yield
+            for bit in range(8):
+                yield pads.dq_i[bit].eq(0)
+            yield
+
+        read_des_delay = 3  # phy.read_des_delay
+        dfi_sequence = [
+            {},  # wait 1 sysclk cycle
+            *[{} for _ in range(read_des_delay)],
+            dfi_data,
+            {},
+        ]
+
+        self.run_test(dut = phy,
+            dfi_sequence = dfi_sequence,
+            pad_checkers = {},
+            pad_generators = {
+                "sys8x_90_ddr": sim_dq,
+            },
+            vcd_name="ddr_dq_in_rddata.vcd"
+        )
