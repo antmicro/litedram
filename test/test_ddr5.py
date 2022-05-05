@@ -49,8 +49,8 @@ run_simulation = partial(test.phy_common.run_simulation, clocks={
     "sys8x_90_ddr": ( 4,  3),
 })
 
-dfi_data_to_dq = partial(test.phy_common.dfi_data_to_dq, databits=16, nphases=8, burst=16)
-dq_pattern = partial(test.phy_common.dq_pattern, databits=16, nphases=8, burst=16)
+dfi_data_to_dq = partial(test.phy_common.dfi_data_to_dq, databits=8, nphases=8, burst=16)
+dq_pattern = partial(test.phy_common.dq_pattern, databits=8, nphases=8, burst=16)
 
 
 class DDR5Tests(unittest.TestCase):
@@ -150,14 +150,14 @@ class DDR5Tests(unittest.TestCase):
         zero = '00000000' * 2  # zero for 1 sysclk clock in sys8x_ddr clock domain
 
         dfi_data = {
-            0: dict(wrdata=0x11112222),
-            1: dict(wrdata=0x33334444),
-            2: dict(wrdata=0x55556666),
-            3: dict(wrdata=0x77778888),
-            4: dict(wrdata=0x9999aaaa),
-            5: dict(wrdata=0xbbbbcccc),
-            6: dict(wrdata=0xddddeeee),
-            7: dict(wrdata=0xffff0000),
+            0: dict(wrdata=0x1122),
+            1: dict(wrdata=0x3344),
+            2: dict(wrdata=0x5566),
+            3: dict(wrdata=0x7788),
+            4: dict(wrdata=0x99aa),
+            5: dict(wrdata=0xbbcc),
+            6: dict(wrdata=0xddee),
+            7: dict(wrdata=0xff00),
         }
         dfi_wrdata_en = {0: dict(wrdata_en=1)}  # wrdata_en=1 required on any single phase
 
