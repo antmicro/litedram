@@ -166,4 +166,5 @@ class DDR5Tests(unittest.TestCase):
             pad_checkers = {"sys8x_90_ddr": {
                 f'dq{i}': (self.CMD_LATENCY+1)*zero + zero + dq_pattern(i, dfi_data, "wrdata") + zero for i in range(8)
             }},
+            vcd_name="ddr_dq_out.vcd"
         )
