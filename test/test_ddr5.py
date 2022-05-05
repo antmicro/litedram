@@ -168,3 +168,46 @@ class DDR5Tests(unittest.TestCase):
             }},
             vcd_name="ddr_dq_out.vcd"
         )
+
+    def test_ddr5_dq_in_rddata(self):
+        # Test that data on DQ pads is deserialized correctly to DFI rddata.
+        # We assume that when there are no commands, PHY will still deserialize the data,
+        # which is generally true (tristate oe is 0 whenever we are not writing).
+        dfi_data = {
+            0: dict(rddata=0x1122),
+            1: dict(rddata=0x3344),
+            2: dict(rddata=0x5566),
+            3: dict(rddata=0x7788),
+            4: dict(rddata=0x99aa),
+            5: dict(rddata=0xbbcc),
+            6: dict(rddata=0xddee),
+            7: dict(rddata=0xff00),
+        }
+
+        def sim_dq(pads):
+            for _ in range(16 * 1):  # wait 1 sysclk cycle
+                yield
+            for cyc in range(16):  # send a burst of data on pads
+                for bit in range(8):
+                    yield pads.dq_i[bit].eq(int(dq_pattern(bit, dfi_data, "rddata")[cyc]))
+                yield
+            for bit in range(8):
+                yield pads.dq_i[bit].eq(0)
+            yield
+
+        read_des_delay = 3  # phy.read_des_delay
+        dfi_sequence = [
+            {},  # wait 1 sysclk cycle
+            *[{} for _ in range(read_des_delay)],
+            dfi_data,
+            {},
+        ]
+
+        self.run_test(DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ),
+            dfi_sequence = dfi_sequence,
+            pad_checkers = {},
+            pad_generators = {
+                "sys8x_90_ddr": sim_dq,
+            },
+            vcd_name="ddr_dq_in_rddata.vcd"
+        )
