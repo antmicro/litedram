@@ -49,8 +49,8 @@ run_simulation = partial(test.phy_common.run_simulation, clocks={
     "sys8x_90_ddr": ( 4,  3),
 })
 
-dfi_data_to_dq = partial(test.phy_common.dfi_data_to_dq, databits=16, nphases=8, burst=16)
-dq_pattern = partial(test.phy_common.dq_pattern, databits=16, nphases=8, burst=16)
+dfi_data_to_dq = partial(test.phy_common.dfi_data_to_dq, databits=8, nphases=8, burst=16)
+dq_pattern = partial(test.phy_common.dq_pattern, databits=8, nphases=8, burst=16)
 
 
 class DDR5Tests(unittest.TestCase):
