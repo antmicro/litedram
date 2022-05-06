@@ -169,6 +169,32 @@ class DDR5Tests(unittest.TestCase):
             vcd_name="ddr_dq_out.vcd"
         )
 
+    def test_ddr5_dq_only_1cycle(self):
+        # Test that DQ data is sent to pads only during expected cycle, on other cycles there is no data
+        dut = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        zero = '00000000' * 2
+
+        dfi_data = {
+            0: dict(wrdata=0x1122),
+            1: dict(wrdata=0x3344),
+            2: dict(wrdata=0x5566),
+            3: dict(wrdata=0x7788),
+            4: dict(wrdata=0x99aa),
+            5: dict(wrdata=0xbbcc),
+            6: dict(wrdata=0xddee),
+            7: dict(wrdata=0xff00),
+        }
+        dfi_wrdata_en = copy.deepcopy(dfi_data)
+        dfi_wrdata_en[0].update(dict(wrdata_en=1))
+
+        self.run_test(dut,
+            dfi_sequence = [dfi_wrdata_en, dfi_data, dfi_data],
+            pad_checkers = {"sys8x_90_ddr": {
+                f'dq{i}': (self.CMD_LATENCY+1)*zero + zero + dq_pattern(i, dfi_data, "wrdata") + zero for i in range(8)
+            }},
+            vcd_name="ddr_dq_only_1cycle.vcd"
+        )
+
     def test_ddr5_dq_in_rddata(self):
         # Test that data on DQ pads is deserialized correctly to DFI rddata.
         # We assume that when there are no commands, PHY will still deserialize the data,
