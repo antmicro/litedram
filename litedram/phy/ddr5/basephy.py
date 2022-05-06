@@ -307,7 +307,7 @@ class DDR5PHY(Module, AutoCSR):
         )
         self.submodules += wrdata_en
 
-        self.comb += dq_oe.eq(wrdata_en.taps[wrtap])
+        self.comb += dq_oe.eq(wrdata_en.taps[wrtap-1])
         # Always enabled in write leveling mode, else during transfers
         self.comb += dqs_oe.eq(self._wlevel_en.storage | (dqs_preamble | dq_oe | dqs_postamble))
 
