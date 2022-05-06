@@ -113,8 +113,8 @@ class DDR5PHY(Module, AutoCSR):
         #   of read_latency, probably to have space for manipulating bitslip values
         bitslip_cycles  = 1
         bitslip_range   = 1
-        # Commands are sent over 4 DRAM clocks (sys8x) and we count cl/cwl from last bit
-        cmd_latency     = 4
+        # Commands are sent over 2 DRAM clocks (sys8x) and we count cl/cwl from last bit
+        cmd_latency     = 2
         # Commands read from adapters are delayed on ConstBitSlips
         ca_latency      = 1
 
