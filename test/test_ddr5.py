@@ -195,6 +195,23 @@ class DDR5Tests(unittest.TestCase):
             vcd_name="ddr_dq_only_1cycle.vcd"
         )
 
+    def test_ddr5_dq_in_rddata_valid(self):
+        # Test that rddata_valid is set with correct delay
+        read_latency = 9
+        dfi_sequence = [
+            {0: dict(rddata_en=1)},  # command is issued by MC (appears on next cycle)
+            *[{p: dict(rddata_valid=0) for p in range(8)} for _ in range(read_latency - 1)],  # nothing is sent during write latency
+            {p: dict(rddata_valid=1) for p in range(8)},
+            {},
+        ]
+
+        self.run_test(DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ),
+            dfi_sequence = dfi_sequence,
+            pad_checkers = {},
+            pad_generators = {},
+            vcd_name="ddr5_dq_in_rddata_valid.vcd"
+        )
+
     def test_ddr5_dq_in_rddata(self):
         # Test that data on DQ pads is deserialized correctly to DFI rddata.
         # We assume that when there are no commands, PHY will still deserialize the data,
