@@ -55,7 +55,6 @@ dq_pattern = partial(test.phy_common.dq_pattern, databits=8, nphases=8, burst=16
 
 class DDR5Tests(unittest.TestCase):
     SYS_CLK_FREQ = 50e6
-    CMD_LATENCY = 2
 
     def run_test(self, dut, dfi_sequence, pad_checkers: Mapping[str, Mapping[str, str]], pad_generators=None, **kwargs):
         # pad_checkers: {clock: {sig: values}}
@@ -77,10 +76,11 @@ class DDR5Tests(unittest.TestCase):
 
     def test_ddr5_empty_command_sequence(self):
         # Test CS_n/CA values for empty dfi commands sequence
-        latency   = '00000000' * self.CMD_LATENCY
-        latency_n = '11111111' * self.CMD_LATENCY
+        phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        latency   = '00000000' * phy.settings.cmd_latency
+        latency_n = '11111111' * phy.settings.cmd_latency
 
-        self.run_test(DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ),
+        self.run_test(dut = phy,
                       dfi_sequence = [],
                       pad_checkers = {"sys8x_90": {
                           'cs_n': latency_n,
@@ -103,8 +103,9 @@ class DDR5Tests(unittest.TestCase):
 
     def test_ddr5_ca_addressing(self):
         # Test that bank/address for different commands are correctly serialized to CA pads
-        latency   = '00000000' * self.CMD_LATENCY
-        latency_n = '11111111' * self.CMD_LATENCY
+        phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        latency   = '00000000' * phy.settings.cmd_latency
+        latency_n = '11111111' * phy.settings.cmd_latency
 
         read          = dict(cs_n=0, cas_n=0, ras_n=1, we_n=1, bank=0b101,    address=0b1100110000)
         write_ap      = dict(cs_n=0, cas_n=0, ras_n=1, we_n=0, bank=0b111,    address=0b10000000000)
@@ -116,7 +117,7 @@ class DDR5Tests(unittest.TestCase):
         zqc_latch     = dict(cs_n=0, cas_n=1, ras_n=1, we_n=0, bank=0,        address=0b0000100)  # MPC with ZQCAL LATCH operand
         mrr           = dict(cs_n=0, cas_n=1, ras_n=1, we_n=0, bank=1,        address=0b101101)  # 6-bit address (bank=1 selects MRR)
 
-        self.run_test(DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ),
+        self.run_test(dut = phy,
                       dfi_sequence = [
                           {0: read, 4: write_ap},
                           {0: activate, 4: refresh_ab},
@@ -146,7 +147,7 @@ class DDR5Tests(unittest.TestCase):
 
     def test_ddr5_dq_out(self):
         # Test serialization of dfi wrdata to DQ pads
-        dut = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
         zero = '00000000' * 2  # zero for 1 sysclk clock in sys8x_ddr clock domain
 
         dfi_data = {
@@ -161,17 +162,17 @@ class DDR5Tests(unittest.TestCase):
         }
         dfi_wrdata_en = {0: dict(wrdata_en=1)}  # wrdata_en=1 required on any single phase
 
-        self.run_test(dut,
+        self.run_test(dut = phy,
             dfi_sequence = [dfi_wrdata_en, {}, dfi_data],
             pad_checkers = {"sys8x_90_ddr": {
-                f'dq{i}': (self.CMD_LATENCY+1)*zero + zero + dq_pattern(i, dfi_data, "wrdata") + zero for i in range(8)
+                f'dq{i}': (phy.settings.cmd_latency + 1)*zero + zero + dq_pattern(i, dfi_data, "wrdata") + zero for i in range(8)
             }},
             vcd_name="ddr_dq_out.vcd"
         )
 
     def test_ddr5_dq_only_1cycle(self):
         # Test that DQ data is sent to pads only during expected cycle, on other cycles there is no data
-        dut = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
         zero = '00000000' * 2
 
         dfi_data = {
@@ -187,25 +188,25 @@ class DDR5Tests(unittest.TestCase):
         dfi_wrdata_en = copy.deepcopy(dfi_data)
         dfi_wrdata_en[0].update(dict(wrdata_en=1))
 
-        self.run_test(dut,
+        self.run_test(dut = phy,
             dfi_sequence = [dfi_wrdata_en, dfi_data, dfi_data],
             pad_checkers = {"sys8x_90_ddr": {
-                f'dq{i}': (self.CMD_LATENCY+1)*zero + zero + dq_pattern(i, dfi_data, "wrdata") + zero for i in range(8)
+                f'dq{i}': (phy.settings.cmd_latency + 1)*zero + zero + dq_pattern(i, dfi_data, "wrdata") + zero for i in range(8)
             }},
             vcd_name="ddr_dq_only_1cycle.vcd"
         )
 
     def test_ddr5_dq_in_rddata_valid(self):
         # Test that rddata_valid is set with correct delay
-        read_latency = 9
+        phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
         dfi_sequence = [
             {0: dict(rddata_en=1)},  # command is issued by MC (appears on next cycle)
-            *[{p: dict(rddata_valid=0) for p in range(8)} for _ in range(read_latency - 1)],  # nothing is sent during write latency
+            *[{p: dict(rddata_valid=0) for p in range(8)} for _ in range(phy.settings.read_latency - 1)],  # nothing is sent during write latency
             {p: dict(rddata_valid=1) for p in range(8)},
             {},
         ]
 
-        self.run_test(DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ),
+        self.run_test(dut = phy,
             dfi_sequence = dfi_sequence,
             pad_checkers = {},
             pad_generators = {},
@@ -216,6 +217,7 @@ class DDR5Tests(unittest.TestCase):
         # Test that data on DQ pads is deserialized correctly to DFI rddata.
         # We assume that when there are no commands, PHY will still deserialize the data,
         # which is generally true (tristate oe is 0 whenever we are not writing).
+        phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
         dfi_data = {
             0: dict(rddata=0x1122),
             1: dict(rddata=0x3344),
@@ -246,7 +248,7 @@ class DDR5Tests(unittest.TestCase):
             {},
         ]
 
-        self.run_test(DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ),
+        self.run_test(dut = phy,
             dfi_sequence = dfi_sequence,
             pad_checkers = {},
             pad_generators = {
