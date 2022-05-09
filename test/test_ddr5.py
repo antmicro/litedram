@@ -54,7 +54,7 @@ dq_pattern = partial(test.phy_common.dq_pattern, databits=8, nphases=8, burst=16
 
 
 class DDR5Tests(unittest.TestCase):
-    SYS_CLK_FREQ = 100e6
+    SYS_CLK_FREQ = 50e6
     CMD_LATENCY = 2
 
     def run_test(self, dut, dfi_sequence, pad_checkers: Mapping[str, Mapping[str, str]], pad_generators=None, **kwargs):
