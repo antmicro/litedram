@@ -102,6 +102,19 @@ class DDR5Tests(unittest.TestCase):
             }},
         )
 
+    def test_ddr5_clk(self):
+        # Test clock serialization
+        phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+
+        self.run_test(dut = phy,
+            dfi_sequence = [
+                {3: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)},
+            ],
+            pad_checkers = {"sys8x_90_ddr": {
+                'clk': '01010101' * (phy.settings.cmd_latency + 1),
+            }},
+        )
+
     def test_ddr5_empty_command_sequence(self):
         # Test CS_n/CA values for empty dfi commands sequence
         phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
