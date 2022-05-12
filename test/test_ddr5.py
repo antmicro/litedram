@@ -398,7 +398,7 @@ class DDR5Tests(unittest.TestCase):
                 },
                 # below lines may be wrong
                 "sys8x_ddr": {
-                    "dqs0": (phy.settings.cmd_latency + write_latency - 1) * zeros + '01010101'+'00000101' + '01010101'+'01010101' + '00010101'+'01010101' + zeros,
+                    "dqs0": (phy.settings.cmd_latency + write_latency - 1) * zeros + 'xxxxxxxx'+'xxxx0010' + '10101010'+'10101010' + '0xxxxxxx'+'xxxxxxxx' + zeros,
                 },
             },
             vcd_name="ddr5_write.vcd"
