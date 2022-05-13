@@ -284,6 +284,7 @@ class DDR5Tests(unittest.TestCase):
         # Test serialization of DQS pattern in relation to DQ data, with proper preamble and postamble
         phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
         zero = '00000000' * 2
+        xs = 'xxxxxxxx' * 2
         write_latency = phy.settings.write_latency
 
         self.run_test(dut = phy,
@@ -307,7 +308,7 @@ class DDR5Tests(unittest.TestCase):
                     'dq1':  (phy.settings.cmd_latency + write_latency) * zero + '11111111'+'11111111' + '00000000'+'00000000' + zero,
                 },
                 "sys8x_ddr": {
-                    'dqs0': (phy.settings.cmd_latency + write_latency - 1) * zero + '01010101'+'00000101' + '01010101'+'01010101' + '00010101'+'01010101' + zero,
+                    "dqs0": (phy.settings.cmd_latency + write_latency - 1) * xs + 'xxxxxxxx'+'xxxx0010' + '10101010'+'10101010' + '0xxxxxxx' + xs,
                 }
             },
             vcd_name="ddr5_dqs.vcd"
@@ -381,6 +382,7 @@ class DDR5Tests(unittest.TestCase):
         latency_n = '11111111' * phy.settings.cmd_latency
         zeros = '00000000' * 2
         ones = '11111111' * 2
+        xs = 'xxxxxxxx' * 2
         write_latency = phy.settings.write_latency
         wrphase = phy.settings.wrphase.reset.value
 
@@ -431,7 +433,7 @@ class DDR5Tests(unittest.TestCase):
                 },
                 # below lines may be wrong
                 "sys8x_ddr": {
-                    "dqs0": (phy.settings.cmd_latency + write_latency - 1) * zeros + 'xxxxxxxx'+'xxxx0010' + '10101010'+'10101010' + '0xxxxxxx'+'xxxxxxxx' + zeros,
+                    "dqs0": (phy.settings.cmd_latency + write_latency - 1) * xs + 'xxxxxxxx'+'xxxx0010' + '10101010'+'10101010' + '0xxxxxxx'+'xxxxxxxx' + xs,
                 },
             },
             vcd_name="ddr5_write.vcd"
