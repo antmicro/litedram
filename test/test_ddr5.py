@@ -308,7 +308,7 @@ class DDR5Tests(unittest.TestCase):
                     'dq1':  (phy.settings.cmd_latency + write_latency) * zero + '11111111'+'11111111' + '00000000'+'00000000' + zero,
                 },
                 "sys8x_ddr": {
-                    "dqs0": (phy.settings.cmd_latency + write_latency - 1) * xs + 'xxxxxxxx'+'xxxx0010' + '10101010'+'10101010' + '0xxxxxxx' + xs,
+                    "dqs0": (phy.settings.cmd_latency + write_latency - 1) * xs + 'xxxxxxxx'+'xxxxx001' + '01010101'+'01010101' + '0xxxxxxxx' + xs,
                 }
             },
             vcd_name="ddr5_dqs.vcd"
@@ -433,7 +433,7 @@ class DDR5Tests(unittest.TestCase):
                 },
                 # below lines may be wrong
                 "sys8x_ddr": {
-                    "dqs0": (phy.settings.cmd_latency + write_latency - 1) * xs + 'xxxxxxxx'+'xxxx0010' + '10101010'+'10101010' + '0xxxxxxx'+'xxxxxxxx' + xs,
+                    "dqs0": (phy.settings.cmd_latency + write_latency - 1) * xs + 'xxxxxxxx'+'xxxxx001' + '01010101'+'01010101' + '0xxxxxxxx' + xs,
                 },
             },
             vcd_name="ddr5_write.vcd"
