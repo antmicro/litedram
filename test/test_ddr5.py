@@ -438,3 +438,126 @@ class DDR5Tests(unittest.TestCase):
             },
             vcd_name="ddr5_write.vcd"
         )
+
+    def test_ddr5_cmd_read(self):
+        # Test whole READ command sequence simulating DRAM response and verifying read_latency from MC perspective
+        phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        zeros = '00000000' * 2
+        ones = '11111111' * 2
+        xs = 'xxxxxxxx' * 2
+        cmd_latency = phy.settings.cmd_latency
+        read_latency = phy.settings.read_latency
+        rdphase = phy.settings.rdphase.reset.value
+
+        data_to_read = {
+            0: dict(rddata=0x1122),
+            1: dict(rddata=0x3344),
+            2: dict(rddata=0x5566),
+            3: dict(rddata=0x7788),
+            4: dict(rddata=0x99aa),
+            5: dict(rddata=0xbbcc),
+            6: dict(rddata=0xddee),
+            7: dict(rddata=0xff00),
+        }
+
+        dfi_sequence = [
+            {rdphase: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1, rddata_en=1)},
+            *[{} for _ in range(read_latency)],
+            {},
+            {},
+            {},
+            {},
+        ]
+
+        class Simulator:
+            def __init__(self, data, test_case, cl):
+                self.data = data
+                self.read_cmd = False
+                self.test_case = test_case
+                self.cl = cl
+
+            @passive
+            def cmd_checker(self, pads):
+                # Monitors CA/CS_n for a READ command
+                read = [
+                    0b00000000111101,  # READ-1 (1) BL=1, BA=0, BG=0, CID=0
+                    0b00010000000000,  # READ-1 (2) BA=0, C=0, AP=0, CID3=0
+                ]
+
+                def check_ca(i):
+                    err = "{}: CA = 0b{:06b}, expected = 0b{:06b}".format(i, (yield pads.ca), read[i])
+                    self.test_case.assertEqual((yield pads.ca), read[i], msg=err)
+
+                while True:
+                    while (yield pads.cs_n):
+                        yield
+                    yield from check_ca(0)
+                    yield
+                    yield from check_ca(1)
+                    yield
+                    self.read_cmd = True
+
+            @passive
+            def dq_generator(self, pads):
+                # After a READ command is received, wait CL and send data
+                while True:
+                    while not self.read_cmd:
+                        yield
+                    data = self.data.pop(0)
+                    for _ in range(2*self.cl + 1):
+                        yield
+                    self.read_cmd = False
+                    for cyc in range(16):
+                        for bit in range(8):
+                            yield pads.dq_i[bit].eq(int(dq_pattern(bit, data, "rddata")[cyc]))
+                        yield
+                    for bit in range(8):
+                        yield pads.dq_i[bit].eq(0)
+
+            @passive
+            def dqs_generator(self, pads):
+                # After a READ command is received, wait CL and send data strobe
+                while True:
+                    while not self.read_cmd:
+                        yield
+                    for _ in range(2*self.cl - 1):  # DQS to transmit DQS preamble
+                        yield
+                    for cyc in range(16 + 1):  # send a burst of data on pads
+                        yield pads.dqs_i.eq(int((cyc + 1) % 2))
+                        yield
+                    yield pads.dqs_i.eq(0)
+
+        sim = Simulator([data_to_read], self, cl=14)
+        self.run_test(phy,
+            dfi_sequence = dfi_sequence,
+            pad_checkers = {
+                "sys8x_90": {
+                    "cs_n": ones  + rdphase * "1" + "0111" + ones,
+                    "ca0":  zeros + rdphase * "0" + "1000" + zeros,
+                    "ca1":  zeros + rdphase * "0" + "0000" + zeros,
+                    "ca2":  zeros + rdphase * "0" + "1000" + zeros,
+                    "ca3":  zeros + rdphase * "0" + "1000" + zeros,
+                    "ca4":  zeros + rdphase * "0" + "1000" + zeros,
+                    "ca5":  zeros + rdphase * "0" + "1000" + zeros,
+                    "ca6":  zeros + rdphase * "0" + "0000" + zeros,
+                    "ca7":  zeros + rdphase * "0" + "0000" + zeros,
+                    "ca8":  zeros + rdphase * "0" + "0000" + zeros,
+                    "ca9":  zeros + rdphase * "0" + "0000" + zeros,
+                    "ca10": zeros + rdphase * "0" + "0100" + zeros,
+                    "ca11": zeros + rdphase * "0" + "0000" + zeros,
+                    "ca12": zeros + rdphase * "0" + "0000" + zeros,
+                    "ca13": zeros + rdphase * "0" + "0000" + zeros,
+                },
+                "sys8x_90_ddr": { #?
+                    f'dq{i}': (cmd_latency+3)*zeros + dq_pattern(i, data_to_read, "rddata") + zeros
+                    for i in range(8)
+                },
+                "sys8x_ddr": {
+                    "dqs0": (cmd_latency+2)*zeros + '00000000'+'00000001' + '01010101'+'01010101' + zeros,
+                },
+            },
+            pad_generators = {
+                "sys8x_ddr": [sim.dq_generator, sim.dqs_generator],
+                "sys8x_90": sim.cmd_checker,
+            },
+        )
