@@ -344,7 +344,7 @@ class CommandsSim(Module, AutoCSR):
     def read_handler(self):
         bank = Signal(5)
         row  = Signal(18)
-        col  = Signal(9)
+        col  = Signal(11)
         auto_precharge = Signal()
 
         return self.cmd_one_step("READ",
@@ -355,7 +355,7 @@ class CommandsSim(Module, AutoCSR):
                    ),
                 bank.eq(self.cs_n_low[6:11]),
                 row.eq(self.active_rows[bank]),
-                col.eq(self.cs_n_high[:9]),
+                col.eq(Cat(Replicate(0, 2), self.cs_n_high[:9])),
                 auto_precharge.eq(~self.cs_n_high[10]),
                 self.log.info("READ: bank=%d row=%d, col=%d", bank, row, col),
 
@@ -383,7 +383,7 @@ class CommandsSim(Module, AutoCSR):
     def write_handler(self):
         bank = Signal(5)
         row  = Signal(18)
-        col  = Signal(9)
+        col  = Signal(11)
         auto_precharge = Signal()
 
         return self.cmd_one_step("WRITE",
@@ -394,7 +394,7 @@ class CommandsSim(Module, AutoCSR):
                    ),
                 bank.eq(self.cs_n_low[6:11]),
                 row.eq(self.active_rows[bank]),
-                col.eq(self.cs_n_high[1:9]),
+                col.eq(Cat(Replicate(0, 3), self.cs_n_high[1:9])),
                 auto_precharge.eq(~self.cs_n_high[10]),
                 self.log.info("WRITE: bank=%d row=%d, col=%d", bank, row, col),
 
@@ -509,21 +509,32 @@ class DQBurst(DataBurst):
     def __init__(self, *, nrows, ncols, row, col, **kwargs):
         super().__init__(**kwargs)
         self.addr = Signal(max=nrows * ncols)
-        self.col_burst = Signal(10)
+        self.col_burst = Signal(11)
         self.comb += [
             self.col_burst.eq(col + self.burst_counter),
             self.addr.eq(row * ncols + self.col_burst),
         ]
 
 class DQWrite(DQBurst):
-    def __init__(self, *, dq, ports, nrows, ncols, bank, row, col, **kwargs):
+    def __init__(self, *, dq, dmi, ports, nrows, ncols, bank, row, col, **kwargs):
         super().__init__(nrows=nrows, ncols=ncols, row=row, col=col, **kwargs)
 
+        assert len(dmi) == len(ports[0].we), "port.we should have the same width as the DMI line"
+        self.masked = Signal()
+        masked = Signal()
+
         self.add_fsm(
+            on_trigger = [
+                NextValue(masked, self.masked),
+            ],
             ops = [
-                self.log.debug("WRITE[%d]: bank=%d, row=%d, col=%d, dq=0x%04x",
-                    self.burst_counter, bank, row, self.col_burst, dq, once=False),
-                ports[bank].we.eq(2**len(ports[bank].we) - 1),
+                self.log.debug("WRITE[%d]: bank=%d, row=%d, col=%d, dq=0x%02x, dm=0x%01b",
+                    self.burst_counter, bank, row, self.col_burst, dq, dmi, once=False),
+                If(masked,
+                    ports[bank].we.eq(~dmi),  # DMI high masks the beat
+                ).Else(
+                    ports[bank].we.eq(2**len(ports[bank].we) - 1),
+                ),
                 ports[bank].adr.eq(self.addr),
                 ports[bank].dat_w.eq(dq),
             ]
