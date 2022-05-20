@@ -582,3 +582,67 @@ class DDR5Tests(unittest.TestCase):
             },
             vcd_name="ddr5_cmd_read.vcd"
         )
+
+    def test_ddr5_double_rate_phy_write(self):
+        # Verify that double rate PHY works as normal one with half sys clock more latency
+        phy = DoubleRateDDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, serdes_reset_cnt=-1)
+        zeros = '00000000' * 2
+        ones  = '11111111' * 2
+        xs    = 'xxxxxxxx' * 2
+        half = '0000'  # double rate PHY introduces latency of 4 sys8x clocks
+        half_n = '1111'
+        cmd_latency = phy.settings.cmd_latency
+        write_latency = phy.settings.write_latency
+        wrphase = phy.settings.wrphase.reset.value
+
+        dfi_data = {
+            0: dict(wrdata=0x1122),
+            1: dict(wrdata=0x3344),
+            2: dict(wrdata=0x5566),
+            3: dict(wrdata=0x7788),
+            4: dict(wrdata=0x99aa),
+            5: dict(wrdata=0xbbcc),
+            6: dict(wrdata=0xddee),
+            7: dict(wrdata=0xff00),
+        }
+        dfi_sequence = [
+            {wrphase: dict(cs_n=0, cas_n=0, ras_n=1, we_n=0, wrdata_en=1)},
+            *[{} for _ in range(write_latency - 1)],
+            dfi_data,
+            {},
+            {},
+            {},
+            {},
+            {},
+        ]
+
+        self.run_test(dut = phy,
+            dfi_sequence = dfi_sequence,
+            pad_checkers = {
+                "sys8x_90": {
+                    "cs_n":  half_n + ones + "11011111" + ones,
+                    "ca0":   half + zeros + "00100000" + zeros,
+                    "ca1":   half + zeros + "00000000" + zeros,
+                    "ca2":   half + zeros + "00100000" + zeros,
+                    "ca3":   half + zeros + "00100000" + zeros,
+                    "ca4":   half + zeros + "00000000" + zeros,
+                    "ca5":   half + zeros + "00100000" + zeros,
+                    "ca6":   half + zeros + "00000000" + zeros,
+                    "ca7":   half + zeros + "00000000" + zeros,
+                    "ca8":   half + zeros + "00000000" + zeros,
+                    "ca9":   half + zeros + "00000000" + zeros,
+                    "ca10":  half + zeros + "00010000" + zeros,
+                    "ca11":  half + zeros + "00000000" + zeros,
+                    "ca12":  half + zeros + "00000000" + zeros,
+                    "ca13":  half + zeros + "00000000" + zeros,
+                },
+                "sys8x_90_ddr": {
+                    f'dq{i}': (phy.settings.cmd_latency + write_latency) * zeros + dq_pattern(i, dfi_data, "wrdata") + zeros
+                            for i in range(8)
+                },
+                "sys8x_ddr": {
+                    "dqs0": (phy.settings.cmd_latency + write_latency - 1) * xs + 'xxxx'+'x001' + '01010101'+'01010101' + '0xxxx' + xs,
+                },
+            },
+            vcd_name="ddr5_double_rate_phy_write.vcd"
+        )
