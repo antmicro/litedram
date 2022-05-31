@@ -256,7 +256,7 @@ class DDR5PHY(Module, AutoCSR):
             extended_overlaps_check = extended_overlaps_check
         )
 
-        self.comb += self.out.cs_n.eq(~self.commands.cs)
+        self.comb += self.out.cs_n.eq((~self.commands.cs) & delayed(self, self.out.reset_n))
         for bit in range(14):
             self.comb += self.out.ca[bit].eq(self.commands.ca[bit])
 
