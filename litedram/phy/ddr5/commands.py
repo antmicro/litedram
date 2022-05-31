@@ -30,8 +30,8 @@ class SpecialCmd(enum.IntEnum):
 class MPC(enum.IntEnum):
     """Op codes for DDR5 multipurpose command
 
-    DFI ZQC command is used to send DDR5 MPC. DFI address A[6:0] is
-    translated to MPC op code OP[6:0]. DFI bank address BA should be 0.
+    DFI ZQC command is used to send DDR5 MPC. DFI address A[7:0] is
+    translated to MPC op code OP[7:0]. DFI bank address BA should be 0.
     """
 
     CS_EX     = 0b00000000 # Exit CS training mode
@@ -142,7 +142,7 @@ class Command(Module):
     TRUTH_TABLE = {
         # 2-cycle commands:
         "ACTIVATE":      ["L L R0 R1 R2 R3 BA0 BA1 BG0 BG1 BG2 CID0 CID1 CID2",
-                          "R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16, CID3/R17"],
+                          "R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 CID3/R17"],
         "READ":          ["H L H H H BL BA0 BA1 BG0 BG1 BG2 CID0 CID1 CID2",
                           "C2 C3 C4 C5 C6 C7 C8 C9 C10 V H V V CID3"],
         "WRITE":         ["H L H H L BL BA0 BA1 BG0 BG1 BG2 CID0 CID1 CID2",
@@ -195,26 +195,26 @@ class Command(Module):
         assert len(self.dfi.address) >= 18, "At least 18 DFI addressbits needed for row address"
         mr_address = self.dfi.bank if is_mrw else self.dfi.address
         rules = {
-            "H":        lambda: 1,  # high
-            "L":        lambda: 0,  # low
-            "V":        lambda: 0,  # defined logic
-            "X":        lambda: 0,  # don't care
-            "BL":       lambda: 1,  # disable placing into the alternate Burst mode
-            "WRP":      lambda: ~self.masked_write,  # LOW value means masked variant
-            "VorRIR":   lambda: 0,  # Assume for now that Refresh Management Required bit is 0
-            "VorH":     lambda: 1,  # depending Refresh Management Required bit, it has to be just valid or H, let's use 1 as more general
-            "BG(\d+)":  lambda i: self.dfi.bank[i + 2],  # bank group address
-            "BA(\d+)":  lambda i: self.dfi.bank[i],  # bank address
-            "R(\d+)":   lambda i: self.dfi.address[i],  # row
-            "C(\d+)":   lambda i: self.dfi.address[i],  # column
-            "MRA(\d+)": lambda i: mr_address[i],  # mode register address
-            "OP(\d+)":  lambda i: self.dfi.address[i],  # mode register value, or operand for MPC
-            "CID(\d+)": lambda i: 0,  # chip id; used for 3DS stacking, need to be just valid if unused
-            "CID3/R17": lambda: self.dfi.address[17],  # we chose R17 variant, because 3DS stacking is unsupported for now
-            "CW":       lambda: 0  # control word
+            r"H":        lambda: 1,  # high
+            r"L":        lambda: 0,  # low
+            r"V":        lambda: 0,  # defined logic
+            r"X":        lambda: 0,  # don't care
+            r"BL":       lambda: 1,  # disable placing into the alternate Burst mode
+            r"WRP":      lambda: ~self.masked_write,  # LOW value means masked variant
+            r"VorRIR":   lambda: 0,  # Assume for now that Refresh Management Required bit is 0
+            r"VorH":     lambda: 1,  # depending Refresh Management Required bit, it has to be just valid or H, let's use 1 as more general
+            r"BG(\d+)":  lambda i: self.dfi.bank[i + 2],  # bank group address
+            r"BA(\d+)":  lambda i: self.dfi.bank[i],  # bank address
+            r"R(\d+)":   lambda i: self.dfi.address[i],  # row
+            r"C(\d+)":   lambda i: self.dfi.address[i],  # column
+            r"MRA(\d+)": lambda i: mr_address[i],  # mode register address
+            r"OP(\d+)":  lambda i: self.dfi.address[i],  # mode register value, or operand for MPC
+            r"CID(\d+)": lambda i: 0,  # chip id; used for 3DS stacking, need to be just valid if unused
+            r"CID3/R17": lambda: self.dfi.address[17],  # we chose R17 variant, because 3DS stacking is unsupported for now
+            r"CW":       lambda: 0  # control word
         }
         for pattern, value in rules.items():
-            m = re.match(pattern, bit)
+            m = re.fullmatch(pattern, bit)
             if m:
                 args = [int(g) for g in m.groups()]
                 return value(*args)
