@@ -115,6 +115,22 @@ class DDR5Tests(unittest.TestCase):
             }},
         )
 
+    def test_ddr5_cs_n_after_reset_n(self):
+        # Test that CS_n is driven high after reset_n (JESD79-5A, 3.3.1, steps 3 and 4)
+        phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
+        latency = '00000000' * phy.settings.cmd_latency
+        zeros   = '00000000'
+        ones    = '11111111'
+
+        self.run_test(dut = phy,
+            dfi_sequence = [
+            ],
+            pad_checkers = {"sys8x_90": {
+                'cs_n':    latency + zeros + ones,
+                'reset_n': latency + ones  + ones,
+            }},
+        )
+
     def test_ddr5_cs_n_multiple_phases(self):
         # Test that CS_n is serialized on different phases and that overlapping commands are handled
         phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ)
