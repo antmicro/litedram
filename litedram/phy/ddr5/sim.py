@@ -139,6 +139,7 @@ class CommandsSim(Module, AutoCSR):
         cmds_enabled = Signal()
         cmd_handlers = OrderedDict(
             MRW  = self.mrw_handler(),
+            MRR = self.mrr_handler(),
             REF  = self.refresh_handler(),
             ACT  = self.activate_handler(),
             PRE  = self.precharge_handler(),
@@ -262,7 +263,8 @@ class CommandsSim(Module, AutoCSR):
         )
         fsm.act("MRW",
             cmds_enabled.eq(1),
-            If(self.handle_2_tick_cmd & ~cmd_handlers["MRW"] & ~cmd_handlers["MPC"] & ~self.handled_1_tick_cmd,
+            If(self.handle_2_tick_cmd & ~cmd_handlers["MRW"] & \
+                    ~cmd_handlers["MRR"] & ~cmd_handlers["MPC"] & ~self.handled_1_tick_cmd,
                 self.log.warn("Only MRW/MRR commands expected before ZQ calibration"),
                 self.log.warn(" ".join("{}=%d".format(cmd) for cmd in cmd_handlers.keys()), *cmd_handlers.values()),
                 self.log.warn("Unexpected command: cs_n_low=0b%14b cs_n_high=0b%14b", self.cs_n_low, self.cs_n_high)
@@ -350,6 +352,18 @@ class CommandsSim(Module, AutoCSR):
                 self.log.info("NOP"),
             ],
             handle_cmd = self.handle_1_tick_cmd | self.handle_2_tick_cmd,
+        )
+
+    def mrr_handler(self):
+        ma  = Signal(8)
+        op  = Signal(8)
+        return self.cmd_one_step("MRR",
+            cond = self.cs_n_low[:5] == 0b10101,
+            comb = [
+                self.log.info("MRR: MR[%d] = 0x%02x", ma, op),
+                ma.eq(self.cs_n_low[5:13]),
+                op.eq(self.mode_regs[ma]),
+            ],
         )
 
     def refresh_handler(self):
