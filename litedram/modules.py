@@ -1182,5 +1182,6 @@ class MT60B2G8HB48B(SDRAMModule):
     technology_timings = _TechnologyTimings(tREFI=32e6/8192, tWTR=(16, 10), tCCD=tccd["write"], tRRD=(8, 5), tZQCS=(30, 8))
     speedgrade_timings = {
         "1866": _SpeedgradeTimings(tRP=15.00, tRCD=15.00, tWR=(48, 30), tRFC=260, tFAW=40, tRAS=32),  # TODO: tRAS_max
+        "3200": _SpeedgradeTimings(tRP=15.00, tRCD=15.00, tWR=30, tRFC=260, tFAW=(32, 25), tRAS=32),
     }
-    speedgrade_timings["default"] = speedgrade_timings["1866"]
+    speedgrade_timings["default"] = speedgrade_timings["3200"]
