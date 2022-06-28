@@ -433,6 +433,10 @@ class SDRAMModule:
     def ns_to_cycles(self, t, margin=True):
         clk_period_ns = 1e9/self.clk_freq
         t += self.margin if margin else 0
+
+        if self.memtype == "DDR5":
+            t *= 0.997
+
         return ceil(t/clk_period_ns)
 
     def ck_to_cycles(self, c):
@@ -1345,27 +1349,66 @@ class MT53E256M16D1(SDRAMModule):
     speedgrade_timings["default"] = speedgrade_timings["1866"]
 
 # DDR5 -------------------------------------------------------------------------------------------
-
-class MT60B2G8HB48B(SDRAMModule):
+class DDR5Module(SDRAMModule):
     memtype = "DDR5"
+    address_bits = 13
+    max_minimal_values = dict(
+        tREFI   = (None, 32e6/8192),
+        tWTR    = (104, None),
+        tCCD    = (32, 20),
+        tRRD    = (8, 5),
+        tRP     = (None, 17.5),
+        tRCD    = (None, 17.5),
+        tWR     = (96, 30),
+        tRFC    = (None, 410),
+        tRC     = (None, 49.5),
+        tFAW    = (40, 25),
+        tRAS    = (None, 32),
+        tZQCS   = None,
+    )
 
-    nbanks = 32
-    nrows = 65536
-    ncols = 1024
+class DDR5RegisteredModule(DDR5Module, SDRAMRegisteredModule):
+    pass
 
-    # TODO: These data below is taken from the LPDDR4 module. It needs to be changed and verified
-
-    # TODO: find a way to select if we need masked writes
-    tccd = {"write": (32, 20)}
+class MT60B2G8HB48B(DDR5Module):
+    #geometry
+    ngroupbanks = 4
+    ngroups     = 8
+    nbanks      = ngroups * ngroupbanks
+    nrows       = 2 ** 16
+    ncols       = 2 ** 10
+    # timings
+    trefi = {"1x": 32e6/8192, "2x": (32e6/8192)/2}
+    trfc  = {"1x": 295, "2x": 160}
 
     # TODO: tZQCS - performing ZQC during runtime will require modifying Refresher, as ZQC has to be done in 2 phases
     # 1. ZQCAL START is issued 2. ZQCAL LATCH updates the values, the time START->LATCH tZQCAL=1us, so we cannot block
     # the controller during this time, after ZQCAL LATCH we have to wait tZQLAT=max(8ck, 30ns)
-    technology_timings = _TechnologyTimings(tREFI=32e6/8192, tWTR=(16, 10), tCCD=tccd["write"], tRRD=(8, 5), tZQCS=(30, 8))
+    technology_timings = _TechnologyTimings(tREFI=trefi, tWTR=(16, 10), tCCD=(32, 20), tRRD=(8, 5), tZQCS=None)
     speedgrade_timings = {
-        "1866": _SpeedgradeTimings(tRP=15.00, tRCD=15.00, tWR=(48, 30), tRFC=260, tFAW=40, tRAS=32),  # TODO: tRAS_max
+        "4800": _SpeedgradeTimings(tRP=16, tRCD=16, tWR=30, tRFC=trfc, tFAW=(32, 13.333), tRAS=32),  # TODO: tRAS_max
     }
-    speedgrade_timings["default"] = speedgrade_timings["1866"]
+    speedgrade_timings["default"] = speedgrade_timings["4800"]
+
+class M329R8GA0BB0(DDR5RegisteredModule):
+    #geometry
+    ngroupbanks = 4
+    ngroups     = 8
+    nbanks      = ngroups * ngroupbanks
+    nrows       = 2 ** 18
+    ncols       = 2 ** 11
+    # timings
+    trefi = {"1x": 32e6/8192, "2x": (32e6/8192)/2}
+    trfc  = {"1x": 295, "2x": 160}
+
+    # TODO: tZQCS - performing ZQC during runtime will require modifying Refresher, as ZQC has to be done in 2 phases
+    # 1. ZQCAL START is issued 2. ZQCAL LATCH updates the values, the time START->LATCH tZQCAL=1us, so we cannot block
+    # the controller during this time, after ZQCAL LATCH we have to wait tZQLAT=max(8ck, 30ns)
+    technology_timings = _TechnologyTimings(tREFI=trefi, tWTR=(16, 10), tCCD=(32, 20), tRRD=(8, 5), tZQCS=None)
+    speedgrade_timings = {
+        "4800": _SpeedgradeTimings(tRP=16, tRCD=16, tWR=30, tRFC=trfc, tFAW=(32, 13.333), tRAS=32),  # TODO: tRAS_max
+    }
+    speedgrade_timings["default"] = speedgrade_timings["4800"]
 
 def memtype_to_max_values(memtype, freq, ratio):
     cls = {
@@ -1376,6 +1419,7 @@ def memtype_to_max_values(memtype, freq, ratio):
         "DDR3": DDR3Module,
         "DDR4": DDR4Module,
         "LPDDR4": MT53E256M16D1,
+        "DDR5": DDR5Module,
         "RPC": RPCModule,
 
     }[memtype]
