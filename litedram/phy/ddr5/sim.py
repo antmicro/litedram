@@ -5,7 +5,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 import math
-from operator import or_
+from operator import or_, and_
 from functools import reduce
 from collections import defaultdict, OrderedDict
 
@@ -34,6 +34,7 @@ class DDR5Sim(Module, AutoCSR):
     after CL/CWL and a data burst is handled, updating memory state.
 
     The simulator requires the following clock domains:
+        sys_10ns:     10ns clock for time based delays.
         sys4x:        4x the memory controller clock frequency, phase aligned.
         sys4x_90:     Phase shifted by 90 degrees vs sys4x.
         sys4x_ddr:    Phase aligned with sys4x, double the frequency.
@@ -58,6 +59,7 @@ class DDR5Sim(Module, AutoCSR):
     def __init__(self, pads, *, sys_clk_freq, cl, cwl, disable_delay, log_level, geom_settings):
         log_level = log_level_getter(log_level)
 
+        cd_10ns   = "sys_10ns"
         cd_cmd    = "sys4x_90"
         cd_dq_wr  = "sys4x_90_ddr"
         cd_dqs_wr = "sys4x_ddr"
@@ -65,15 +67,19 @@ class DDR5Sim(Module, AutoCSR):
         cd_dqs_rd = "sys4x_ddr"
 
         self.submodules.data_cdc = ClockDomainCrossing(
-            [("we", 1), ("masked", 1), ("bank", geom_settings.bankbits), ("row", 18), ("col", 11)],
-            cd_from=cd_cmd, cd_to=cd_dq_wr)
+            [("we", 1),
+             ("masked", 1),
+             ("bank", geom_settings.bankbits),
+             ("row", geom_settings.rowbits),
+             ("col", geom_settings.colbits)],
+            cd_from=cd_cmd,
+            cd_to=cd_dq_wr)
 
         cmd = CommandsSim(pads,
             data_cdc      = self.data_cdc,
             clk_freq      = 4*sys_clk_freq,
             log_level     = log_level("cmd"),
             geom_settings = geom_settings,
-            init_delays   = not disable_delay,
         )
         self.submodules.cmd = ClockDomainsRenamer(cd_cmd)(cmd)
 
@@ -101,16 +107,18 @@ class CommandsSim(Module, AutoCSR):
 
     Command simulator should work in the clock domain of `pads.clk_p` (SDR).
     """
-    def __init__(self, pads, data_cdc, *, clk_freq, log_level, geom_settings, init_delays=False):
+    def __init__(self, pads, data_cdc, *, clk_freq, log_level, geom_settings):
         self.submodules.log = log = SimLogger(log_level=log_level, clk_freq=clk_freq)
         self.log.add_csrs()
+        cd_10ns   = "sys_10ns"
 
         # Mode Registers storage
-        self.mode_regs = Array([Signal(8) for _ in range(64)])
+        self.mode_regs = Array([Signal(8) for _ in range(256)])
         # Active banks
         self.number_of_banks = 2 ** geom_settings.bankbits;
         self.active_banks = Array([Signal() for _ in range(self.number_of_banks)])
-        self.active_rows = Array([Signal(18) for _ in range(self.number_of_banks)])
+        self.active_rows = Array([Signal(geom_settings.rowbits) for _ in range(self.number_of_banks)])
+
         # Connection to DataSim
         self.data_en = TappedDelayLine(ntaps=26)
         self.data = data_cdc
@@ -123,56 +131,75 @@ class CommandsSim(Module, AutoCSR):
 
         self.cs_n_low   = Signal(14)
         self.cs_n_high  = Signal(14)
-        self.handle_cmd = Signal()
+        self.handle_1_tick_cmd  = Signal()
+        self.handle_2_tick_cmd  = Signal()
+        self.handled_1_tick_cmd = Signal()
         self.mpc_op     = Signal(8)
 
         cmds_enabled = Signal()
         cmd_handlers = OrderedDict(
-            MRW = self.mrw_handler(),
-            REF = self.refresh_handler(),
-            ACT = self.activate_handler(),
-            PRE = self.precharge_handler(),
-            RD  = self.read_handler(),
-            MPC = self.mpc_handler(),
-            WR  = self.write_handler(),
+            MRW  = self.mrw_handler(),
+            REF  = self.refresh_handler(),
+            ACT  = self.activate_handler(),
+            PRE  = self.precharge_handler(),
+            RD   = self.read_handler(),
+            MPC  = self.mpc_handler(),
+            WR   = self.write_handler(),
+            NOP  = self.nop_handler(),
         )
 
         self.comb += [
             If(cmds_enabled,
-                If(Cat(cs_n.taps) == 0b01,
-                    self.handle_cmd.eq(1),
+                If(cs_n.taps == 0b0,
+                    self.handle_1_tick_cmd.eq(1),
                     self.cs_n_low.eq(ca.taps[1]),
+                ),
+                If(Cat(cs_n.taps) == 0b01,
+                    self.handle_2_tick_cmd.eq(1),
                     self.cs_n_high.eq(ca.taps[0]),
                 )
             ),
-            If(self.handle_cmd & ~reduce(or_, cmd_handlers.values()),
+            If(self.handle_2_tick_cmd & ~reduce(or_, cmd_handlers.values()) & ~self.handled_1_tick_cmd,
                 self.log.error("Unexpected command: cs_n_low=0b%14b cs_n_high=0b%14b", self.cs_n_low, self.cs_n_high)
             ),
+            If(self.handle_1_tick_cmd & ~reduce(or_, cmd_handlers.values()),
+                self.log.warn("Unexpected command: cs_n_low=0b%14b", self.cs_n_low)
+            ),
         ]
+        self.sync += [If(self.handle_1_tick_cmd,
+                        If(reduce(or_, cmd_handlers.values()),
+                            self.handled_1_tick_cmd.eq(1)
+                        ).Else(
+                            self.handled_1_tick_cmd.eq(0)
+                        ))]
 
-        def ck(t):
-            return math.ceil(t * clk_freq)
+        def ck(t, freq):
+            return math.ceil(t * freq)
 
-        self.submodules.tinit0 = PulseTiming(ck(20e-3))  # makes no sense in simulation
-        self.submodules.tinit1 = PulseTiming(ck(200e-6))
-        self.submodules.tinit2 = PulseTiming(ck(10e-9))
-        self.submodules.tinit3 = PulseTiming(ck(2e-3))
-        self.submodules.tinit4 = PulseTiming(5)  # TODO: would require counting pads.clk_p ticks
-        self.submodules.tinit5 = PulseTiming(ck(2e-6))
-        self.submodules.tzqcal = PulseTiming(ck(1e-6))
-        self.submodules.tzqlat = PulseTiming(max(8, ck(30e-9)))
-        self.submodules.tpw_reset = PulseTiming(ck(100e-9))
+        # We check "Reset Initialization with Stable Power" sequence
+        # Power-up Initialization Sequence is cloase to imposible to track in simulation
+        self.submodules.tpw_reset = ClockDomainsRenamer(cd_10ns)(PulseTiming(ck(1e-6, 1e8)))
+        self.submodules.tinit2    = ClockDomainsRenamer(cd_10ns)(PulseTiming(ck(10e-9, 1e8)))
+        self.submodules.tinit3    = ClockDomainsRenamer(cd_10ns)(PulseTiming(ck(4e-3, 1e8)))
+        self.submodules.tinit4    = ClockDomainsRenamer(cd_10ns)(PulseTiming(ck(2e-6, 1e8)))
+        self.submodules.tcksrx     = PulseTiming(max(ck(3.5e-9, clk_freq), 8))
+        self.submodules.tinit5    = PulseTiming(3)
+        self.submodules.xpr       = ClockDomainsRenamer(cd_10ns)(PulseTiming(ck(410e-9, 1e8)))
+
+        self.submodules.tzqcal = ClockDomainsRenamer(cd_10ns)(PulseTiming(ck(1e-6, 1e8)))
+        self.submodules.tzqlat = PulseTiming(max(8, ck(30e-9, clk_freq)))
+
 
         self.comb += [
-            self.tinit1.trigger.eq(1),
-            self.tinit3.trigger.eq(pads.reset_n),
             self.tpw_reset.trigger.eq(~pads.reset_n),
+            self.tinit2.trigger.eq(~pads.cs_n),
             If(~delayed(self, pads.reset_n) & pads.reset_n,
                 self.log.info("RESET released"),
-                If(~self.tinit1.ready,
-                    self.log.warn("tINIT1 violated: RESET deasserted too fast")
+                If(~self.tinit2.ready,
+                    self.log.error("tINIT2 violated: RESET deasserted too fast")
                 ),
             ),
+            self.tcksrx.trigger.eq(~delayed(self, pads.ck_t) & pads.ck_t),
             If(delayed(self, pads.reset_n) & ~pads.reset_n,
                 self.log.info("RESET asserted"),
             ),
@@ -181,24 +208,51 @@ class CommandsSim(Module, AutoCSR):
         self.submodules.fsm = fsm = ResetInserter()(FSM())
         self.comb += [
             If(self.tpw_reset.ready_p,
+                self.tinit3.trigger.eq(pads.reset_n),
                 fsm.reset.eq(1),
                 self.log.info("FSM reset")
             )
         ]
-        fsm.act("RESET",
-            If(self.tinit3.ready_p | (not init_delays),
-                NextState("EXIT-PD")  # Td
-            )
+        fsm.act("Initialization",
+            If(~delayed(self, pads.cs_n) & pads.cs_n,
+                self.log.info("CS released"),
+                If(~self.tinit3.ready,
+                    self.log.error("tINIT3 violated: CS_n deasserted too fast"),
+                ).Else(
+                    self.tinit4.trigger.eq(1),
+                    NextState("CMOS_Registration")
+                ),
+            ).Elif(pads.cs_n,
+                self.log.error("tINIT3 violated: CS_n deasserted too fast"),
+            ),
+        )
+        fsm.act("CMOS_Registration",
+            If(delayed(self, pads.cs_n) & ~pads.cs_n,
+                self.log.info("CMOS registration ending"),
+                If(~self.tcksrx.ready,
+                    self.log.error("tCKSRX violated: CS_n asserted too fast"),
+                ).Elif(~self.tinit4.ready,
+                    self.log.error("tINIT4 violated: CS_n asserted too fast"),
+                ).Else(
+                    self.tinit5.trigger.eq(1),
+                    NextState("EXIT-PD")
+                ),
+            ).Elif(~reduce(and_, pads.ca),
+                self.log.error("CMD bus must be held high")
+            ),
         )
         fsm.act("EXIT-PD",
-            self.tinit5.trigger.eq(1),
-            If(self.tinit5.ready_p | (not init_delays),
+            If(pads.ca[:5] != 0b11111 | pads.cs_n,
+                self.log.error("Incorrect exit sequence"),
+            ),
+            If(self.tinit5.ready_p,
+                self.log.info("Reset sequence finished"),
                 NextState("MRW")  # Te
             )
         )
         fsm.act("MRW",
             cmds_enabled.eq(1),
-            If(self.handle_cmd & ~cmd_handlers["MRW"] & ~cmd_handlers["MPC"],
+            If(self.handle_2_tick_cmd & ~cmd_handlers["MRW"] & ~cmd_handlers["MPC"],
                 self.log.warn("Only MRW/MRR commands expected before ZQ calibration"),
                 self.log.warn(" ".join("{}=%d".format(cmd) for cmd in cmd_handlers.keys()), *cmd_handlers.values()),
             ),
@@ -213,11 +267,11 @@ class CommandsSim(Module, AutoCSR):
         fsm.act("ZQC",
             self.tzqcal.trigger.eq(1),
             cmds_enabled.eq(1),
-            If(self.handle_cmd,
+            If(self.handle_2_tick_cmd,
                 If(~(cmd_handlers["MPC"] & (self.mpc_op == MPC.ZQC_LATCH)),
                     self.log.error("Expected ZQC-LATCH")
                 ).Else(
-                    If(init_delays & ~self.tzqcal.ready,
+                    If(~self.tzqcal.ready,
                         self.log.warn("tZQCAL violated")
                     ),
                     NextState("NORMAL")  # Tg
@@ -227,7 +281,7 @@ class CommandsSim(Module, AutoCSR):
         fsm.act("NORMAL",
             cmds_enabled.eq(1),
             self.tzqlat.trigger.eq(1),
-            If(init_delays & self.handle_cmd & ~self.tzqlat.ready,
+            If(self.handle_2_tick_cmd & ~self.tzqlat.ready,
                 self.log.warn("tZQLAT violated")
             ),
         )
@@ -245,15 +299,15 @@ class CommandsSim(Module, AutoCSR):
             })
         )
 
-    def cmd_one_step(self, name, cond, comb, sync=None):
+    def cmd_one_step(self, name, cond, comb, handle_cmd, sync=None):
         matched = Signal()
-        self.comb += If(self.handle_cmd & cond,
+        self.comb += If(handle_cmd & cond,
             self.log.debug(name),
             matched.eq(1),
             *comb
         )
         if sync is not None:
-            self.sync += If(self.handle_cmd & cond,
+            self.sync += If(handle_cmd & cond,
                 *sync
             )
         return matched
@@ -269,6 +323,18 @@ class CommandsSim(Module, AutoCSR):
                 ma.eq(self.cs_n_low[5:13]),
                 NextValue(self.mode_regs[ma], op),
             ],
+            handle_cmd = self.handle_2_tick_cmd,
+        )
+
+    def nop_handler(self):
+        ma  = Signal(8)
+        op  = Signal(8)
+        return self.cmd_one_step("NOP",
+            cond = self.cs_n_low[:5] == 0b11111,
+            comb = [
+                self.log.info("NOP"),
+            ],
+            handle_cmd = self.handle_1_tick_cmd,
         )
 
     def refresh_handler(self):
@@ -285,7 +351,8 @@ class CommandsSim(Module, AutoCSR):
                     self.log.info("REF: bank = %d", bank),
                     bank.eq(self.cs_n_low[6:8]),
                 )
-            ]
+            ],
+            handle_cmd = self.handle_2_tick_cmd,
         )
 
     def activate_handler(self):
@@ -305,6 +372,7 @@ class CommandsSim(Module, AutoCSR):
                 self.active_banks[bank].eq(1),
                 self.active_rows[bank].eq(row),
             ],
+            handle_cmd = self.handle_2_tick_cmd,
         )
 
     def precharge_handler(self):
@@ -328,7 +396,8 @@ class CommandsSim(Module, AutoCSR):
                         self.log.warn("PRE on inactive bank: bank=%d", bank)
                     ),
                 ),
-            ]
+            ],
+            handle_cmd = self.handle_2_tick_cmd,
         )
 
     def mpc_handler(self):
@@ -340,6 +409,7 @@ class CommandsSim(Module, AutoCSR):
                 self.mpc_op.eq(self.cs_n_low[5:13]),
                 Case(self.mpc_op, cases)
             ],
+            handle_cmd = self.handle_2_tick_cmd,
         )
 
     def read_handler(self):
@@ -379,6 +449,7 @@ class CommandsSim(Module, AutoCSR):
                     self.log.error("Simulator data FIFO overflow")
                 ),
             ],
+            handle_cmd = self.handle_2_tick_cmd,
         )
 
     def write_handler(self):
@@ -420,6 +491,7 @@ class CommandsSim(Module, AutoCSR):
                     self.log.error("Simulator data FIFO overflow")
                 ),
             ],
+            handle_cmd = self.handle_2_tick_cmd,
         )
 # Data ---------------------------------------------------------------------------------------------
 
