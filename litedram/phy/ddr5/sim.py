@@ -56,10 +56,10 @@ class DDR5Sim(Module, AutoCSR):
         log_level = log_level_getter(log_level)
 
         bl_max    = 16 # We only support BL8 and BL16, there is no support for BL32
-        cd_cmd    = "sys4x_90"
-        cd_dq_wr  = "sys4x_90_ddr"
+        cd_cmd    = "sys4x"
+        cd_dq_wr  = "sys4x_ddr"
         cd_dqs_wr = "sys4x_ddr"
-        cd_dq_rd  = "sys4x_90_ddr"
+        cd_dq_rd  = "sys4x_ddr"
         cd_dqs_rd = "sys4x_ddr"
 
         self.submodules.data_cdc = ClockDomainCrossing(
@@ -91,7 +91,7 @@ class DDR5Sim(Module, AutoCSR):
             cl        = cl,
             cwl       = cwl,
             log_level = log_level("data"),
-            bl_max        = bl_max,
+            bl_max    = bl_max,
         )
         self.submodules.data = ClockDomainsRenamer(cd_dq_wr)(data)
 
@@ -189,6 +189,10 @@ class CommandsSim(Module, AutoCSR):
         self.submodules.tzqcal = PulseTiming(ck(1e-6, clk_freq))
         self.submodules.tzqlat = PulseTiming(max(8, ck(30e-9, clk_freq)))
 
+        self.submodules.clk_check = ClockDomainsRenamer("sys4x_ddr")(TappedDelayLine(pads.ck_t))
+        tcksrx_triggered = Signal(2)
+        self.sync.sys4x_ddr += [If(~self.clk_check.output & pads.ck_t & ~tcksrx_triggered[1], tcksrx_triggered.eq(1))]
+        self.sync += [If(tcksrx_triggered == 0b01, tcksrx_triggered.eq(2))]
 
         self.comb += [
             self.tpw_reset.trigger.eq(~pads.reset_n),
@@ -199,7 +203,7 @@ class CommandsSim(Module, AutoCSR):
                     self.log.error("tINIT2 violated: RESET deasserted too fast")
                 ),
             ),
-            self.tcksrx.trigger.eq(~delayed(self, pads.ck_t) & pads.ck_t),
+            self.tcksrx.trigger.eq(tcksrx_triggered[0]),
             If(delayed(self, pads.reset_n) & ~pads.reset_n,
                 self.log.info("RESET asserted"),
             ),
@@ -460,6 +464,7 @@ class CommandsSim(Module, AutoCSR):
                 # pass the data to data simulator
                 self.data_en.input.eq(1),
                 self.data.sink.valid.eq(1),
+                self.data.sink.we.eq(0),
                 self.data.sink.bank.eq(bank),
                 self.data.sink.row.eq(row),
                 self.data.sink.col.eq(col),
@@ -559,6 +564,7 @@ class DataSim(Module, AutoCSR):
         bank = Signal(5)
         row = Signal(18)
         col = Signal(11)
+
         bl_width = Signal(bl_max.bit_length())
 
         dq_kwargs = dict(bank=bank, row=row, col=col, bl_max=bl_max, nrows=nrows, ncols=ncols,
@@ -568,11 +574,12 @@ class DataSim(Module, AutoCSR):
         self.submodules.dq_wr = ClockDomainsRenamer(cd_dq_wr)(DQWrite(dq=pads.dq, dmi=pads.dm_n,
                                                               bl_width=bl_width, ports=ports, **dq_kwargs))
         self.submodules.dq_rd = ClockDomainsRenamer(cd_dq_rd)(DQRead(dq=pads.dq_i, bl_width=bl_width,
-                                                              ports=ports, **dq_kwargs))
+                                                               ports=ports, **dq_kwargs)) # Acording to JEDEC DQS and DQ for reads are edge alligned
         self.submodules.dqs_wr = ClockDomainsRenamer(cd_dqs_wr)(DQSWrite(dqs=pads.dqs_t, bl_width=bl_width, **dqs_kwargs))
-        self.submodules.dqs_rd = ClockDomainsRenamer(cd_dqs_rd)(DQSRead(dqs=pads.dqs_t_i, bl_width=bl_width, **dqs_kwargs))
+        self.submodules.dqs_rd = ClockDomainsRenamer(cd_dqs_rd)(DQSRead(dqs_t=pads.dqs_t_i, dqs_c=pads.dqs_c_i, bl_width=bl_width, **dqs_kwargs))
 
         write        = Signal()
+        masked       = Signal()
         wr_postamble = Signal(3)
         wr_postamble_trigger = Signal()
         wr_postamble_width   = Signal(max=4)
@@ -583,7 +590,10 @@ class DataSim(Module, AutoCSR):
 
         read = Signal()
 
-        read_skew = 1  # shift the read data as in hardware it will be coming with a delay
+        self.submodules.write_delay    = ClockDomainsRenamer(cd_dq_wr)(TappedDelayLine(write, ntaps=1))
+        self.submodules.masked_delay   = ClockDomainsRenamer(cd_dq_wr)(TappedDelayLine(masked, ntaps=1))
+        self.submodules.read_delay     = ClockDomainsRenamer(cd_dq_rd)(TappedDelayLine(read, ntaps=1))
+
         self.comb += [
             Case(cmds_sim.mode_regs[8][3:5] , {
                 0: self.log.error("Write Preamble 0b00 is reserved"),
@@ -606,18 +616,19 @@ class DataSim(Module, AutoCSR):
                 1: wr_postamble.eq(0b000),
             }),
             self.log.error("Write Preamble width=%d preamble=%d", wr_preamble_width, wr_preamble),
-            write.eq(cmds_sim.data_en.taps[cwl-1] & cmds_sim.data.source.valid & cmds_sim.data.source.we),
-            wr_preamble_trigger.eq(cmds_sim.data_en.taps[cwl - wr_preamble_width[1:] - 1] &
-                                   ~cmds_sim.data_en.taps[cwl - wr_preamble_width] &
+            write.eq(cmds_sim.data_en.taps[cwl-2] & cmds_sim.data.source.valid & cmds_sim.data.source.we),
+            wr_preamble_trigger.eq(cmds_sim.data_en.taps[cwl - wr_preamble_width[1:] - 2] &
+                                   ~cmds_sim.data_en.taps[cwl - wr_preamble_width[1:] - 1] &
                                    cmds_sim.data.source.valid &
-                                   cmds_sim.data.source.we & ~ClockSignal("sys4x_90")),
+                                   cmds_sim.data.source.we),
 
-            read.eq(cmds_sim.data_en.taps[cl-1 + read_skew] & cmds_sim.data.source.valid & ~cmds_sim.data.source.we),
+            read.eq(cmds_sim.data_en.taps[cl-2] & cmds_sim.data.source.valid & ~cmds_sim.data.source.we),
 
             cmds_sim.data.source.ready.eq(write | read),
-            self.dq_wr.masked.eq(write & cmds_sim.data.source.masked),
-            self.dq_wr.trigger.eq(write),
-            self.dq_rd.trigger.eq(read),
+            masked.eq(write & cmds_sim.data.source.masked),
+            self.dq_wr.masked.eq(self.masked_delay.output),
+            self.dq_wr.trigger.eq(self.write_delay.output),
+            self.dq_rd.trigger.eq(self.read_delay.output),
 
             self.dqs_wr.trigger.eq(write),
 
@@ -631,16 +642,24 @@ class DataSim(Module, AutoCSR):
             self.dqs_rd.trigger.eq(read),
         ]
 
+        self.comb += [
+            If(cmds_sim.data.source.ready,
+                If(cmds_sim.data.source.we,
+                    self.log.info("Write Sync: bl_width=%d", bl_width),
+                ).Else(
+                    self.log.info("Read Sync: bl_width=%d", bl_width),
+                ),
+            ),
+        ]
+
         self.sync += [
             If(cmds_sim.data.source.ready,
                 bank.eq(cmds_sim.data.source.bank),
                 row.eq(cmds_sim.data.source.row),
                 col.eq(cmds_sim.data.source.col),
                 bl_width.eq(cmds_sim.data.source.bl_width),
-                self.log.info("Sync: bl_width=%d", bl_width),
-            )
+            ),
         ]
-
 
 class DataBurst(Module, AutoCSR):
     def __init__(self, *, bl_width, bl_max, log_level, clk_freq):
@@ -692,6 +711,16 @@ class DQWrite(DQBurst):
         self.add_fsm(
             on_trigger = [
                 NextValue(masked, self.masked),
+                If(self.masked,
+                    ports[bank].we.eq(~dmi),  # DMI high masks the beat
+                ).Else(
+                    ports[bank].we.eq(2**len(ports[bank].we) - 1),
+                ),
+                ports[bank].adr.eq(self.addr),
+                ports[bank].dat_w.eq(dq),
+                NextValue(self.burst_counter, 1),
+                self.log.debug("WRITE[%d]: bank=%d, row=%d, col=%d, dq=0x%02x, dm=0x%01b",
+                    self.burst_counter, bank, row, self.col_burst, dq, dmi, once=False),
             ],
             ops = [
                 self.log.debug("WRITE[%d]: bank=%d, row=%d, col=%d, dq=0x%02x, dm=0x%01b",
@@ -744,7 +773,7 @@ class DQSWrite(DataBurst):
         post.act("IDLE",
             NextValue(post_counter, 0),
             If(self.burst_counter == self.bl - 1 & ~self.trigger,
-                NextState("POSTCOUNT")
+                NextState("POSTCOUNT"),
             )
         )
         post.act("POSTCOUNT",
@@ -767,8 +796,11 @@ class DQSWrite(DataBurst):
         pre.act("IDLE",
             NextValue(pre_counter, 0),
             If(self.preamble_trigger,
-                NextState("PRECOUNT"),
+                NextState("DELAY1")
             )
+        )
+        pre.act("DELAY1",
+            NextState("PRECOUNT"),
         )
         pre.act("PRECOUNT",
             NextValue(pre_counter, pre_counter + 1),
@@ -789,9 +821,13 @@ class DQSWrite(DataBurst):
         )
 
 class DQSRead(DataBurst):
-    def __init__(self, *, dqs, **kwargs):
+    def __init__(self, *, dqs_t, dqs_c, **kwargs):
         super().__init__(**kwargs)
         dqs0 = Signal()
         self.add_fsm([
-            *[i.eq(self.burst_counter[0]) for i in dqs],
+            *[i.eq(self.burst_counter[0]) for i in dqs_t],
+            *[i.eq(~self.burst_counter[0]) for i in dqs_c],
+        ],
+        [*[i.eq(self.burst_counter[0]) for i in dqs_t],
+         *[i.eq(~self.burst_counter[0]) for i in dqs_c],
         ])
