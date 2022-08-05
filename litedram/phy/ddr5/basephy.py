@@ -261,6 +261,8 @@ class DDR5PHY(Module, AutoCSR):
         dq_oe = Signal()
         self.comb += self.out.dq_oe.eq(dq_oe)
 
+        delayed_rddata = Array([Signal.like(dfi.phases[0].rddata) for _ in range(nphases)])
+
         for bit in range(self.databits):
             # output
             self.wrdata = wrdata = [
@@ -272,8 +274,10 @@ class DDR5PHY(Module, AutoCSR):
             dq_i_bs = Signal(2*nphases)
             self.comb += dq_i_bs.eq(self.out.dq_i[bit])
             for i in range(2*nphases):
-                self.comb += self.dfi.phases[i//2].rddata[i%2 * self.databits + bit].eq(dq_i_bs[i])
+                self.sync += delayed_rddata[i//2][i%2 * self.databits + bit].eq(dq_i_bs[i])
 
+            for i in range(2*nphases):
+                self.comb += self.dfi.phases[i//2].rddata[i%2 * self.databits + bit].eq(dq_i_bs[i])
         # DQS --------------------------------------------------------------------------------------
         dqs_oe        = Signal()
         dqs_preamble  = Signal()
@@ -306,7 +310,7 @@ class DDR5PHY(Module, AutoCSR):
                 self.comb += self.out.dm_n_oe.eq(self.out.dq_oe)
                 wrdata_mask = [
                     dfi.phases[i//2].wrdata_mask[i%2 * strobes + byte]
-                    for i in range(2*nphases)
+                    for i in range(1, 2*nphases)
                 ] + [self.dfi.phases[0].wrdata_mask[byte]]
                 self.comb += self.out.dm_n_o[byte].eq(Cat(*wrdata_mask))
             else:
