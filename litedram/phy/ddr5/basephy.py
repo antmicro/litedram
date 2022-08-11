@@ -267,8 +267,8 @@ class DDR5PHY(Module, AutoCSR):
             # output
             self.wrdata = wrdata = [
                 dfi.phases[i//2].wrdata[i%2 * self.databits + bit]
-                for i in range(1, 2*nphases)
-            ] + [self.dfi.phases[0].wrdata[bit]]
+                for i in range(0, 2*nphases)
+            ]
             self.comb += self.out.dq_o[bit].eq(Cat(*wrdata))
             # input
             dq_i_bs = Signal(2*nphases)
@@ -310,8 +310,8 @@ class DDR5PHY(Module, AutoCSR):
                 self.comb += self.out.dm_n_oe.eq(self.out.dq_oe)
                 wrdata_mask = [
                     dfi.phases[i//2].wrdata_mask[i%2 * strobes + byte]
-                    for i in range(1, 2*nphases)
-                ] + [self.dfi.phases[0].wrdata_mask[byte]]
+                    for i in range(0, 2*nphases)
+                ]
                 self.comb += self.out.dm_n_o[byte].eq(Cat(*wrdata_mask))
             else:
                 self.comb += self.out.dm_n_o[byte].eq(0)

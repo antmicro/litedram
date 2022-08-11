@@ -588,7 +588,7 @@ class DataSim(Module, AutoCSR):
         self.submodules.read_dqs_delay = ClockDomainsRenamer(cd_dq_rd)(TappedDelayLine(read))
         self.submodules.write_delay    = ClockDomainsRenamer(cd_dq_wr)(TappedDelayLine(write, ntaps=1))
         self.submodules.masked_delay   = ClockDomainsRenamer(cd_dq_wr)(TappedDelayLine(masked, ntaps=1))
-        self.submodules.read_delay     = ClockDomainsRenamer(cd_dq_rd)(TappedDelayLine(read, ntaps=2))
+        self.submodules.read_delay     = ClockDomainsRenamer(cd_dq_rd)(TappedDelayLine(read, ntaps=1))
 
         self.comb += [
             Case(cmds_sim.mode_regs[8][3:5] , {
