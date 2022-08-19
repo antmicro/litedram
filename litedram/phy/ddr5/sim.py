@@ -52,15 +52,12 @@ class DDR5Sim(Module, AutoCSR):
     log_level : str
         SimLogger initial logging level (formatted for parsing with `log_level_getter`).
     """
-    def __init__(self, pads, *, sys_clk_freq, cl, cwl, log_level, geom_settings):
+    def __init__(self, pads, *, sys_clk_freq, cl, cwl, log_level, geom_settings,
+                 cd_cmd="sys4x", cd_dq_wr="sys4x_ddr", cd_dqs_wr="sys4x_ddr",
+                 cd_dq_rd="sys4x_ddr", cd_dqs_rd="sys4x_ddr"):
         log_level = log_level_getter(log_level)
 
         bl_max    = 16 # We only support BL8 and BL16, there is no support for BL32
-        cd_cmd    = "sys4x"
-        cd_dq_wr  = "sys4x_ddr"
-        cd_dqs_wr = "sys4x_ddr"
-        cd_dq_rd  = "sys4x_ddr"
-        cd_dqs_rd = "sys4x_ddr"
 
         self.submodules.data_cdc = ClockDomainCrossing(
             [("we", 1),

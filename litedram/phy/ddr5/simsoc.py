@@ -29,12 +29,11 @@ from litedram.phy.sim_utils import Clocks, CRG, Platform
 
 # Platform -----------------------------------------------------------------------------------------
 
-# clocks added in main()
 _io = {
     4: [
         ("ddr5", 0,
-         Subsignal("ck_t",     Pins(1)),
-         Subsignal("ck_c",     Pins(1)),
+         Subsignal("ck_t",      Pins(1)),
+         Subsignal("ck_c",      Pins(1)),
          Subsignal("cs_n",      Pins(1)),
          # dmi is not supported on x4 device, I decided to keep it to make model simpler
          Subsignal("dm_n",      Pins(1)),
@@ -70,21 +69,91 @@ _io = {
          Subsignal("cai",       Pins(1)),
          Subsignal("ca_odt",    Pins(1)),
         ),
+    ],
+    "rcd4": [
+        ("ddr5", 0,
+         Subsignal("ck_t",    Pins(1)),
+         Subsignal("ck_c",    Pins(1)),
+         Subsignal("reset_n", Pins(1)),
+         Subsignal("alert_n", Pins(1)),
+
+         Subsignal("A_cs_n",  Pins(2)),
+         # dmi is not supported on x4 device, I decided to keep it to make model simpler
+         Subsignal("A_dm_n",  Pins(1)),
+
+         Subsignal("A_ca",    Pins(7)),
+         Subsignal("A_par",   Pins(1)),
+         # DQ and DQS are taken from DDR5 Tester board
+         Subsignal("A_dq",    Pins(4)),
+         Subsignal("A_dqs_t", Pins(1)),
+         Subsignal("A_dqs_c", Pins(1)),
+
+         Subsignal("B_cs_n",  Pins(2)),
+         # dmi is not supported on x4 device, I decided to keep it to make model simpler
+         Subsignal("B_dm_n",  Pins(1)),
+
+         Subsignal("B_ca",    Pins(7)),
+         Subsignal("B_par",   Pins(1)),
+         # DQ and DQS are taken from DDR5 Tester board
+         Subsignal("B_dq",    Pins(4)),
+         Subsignal("B_dqs_t", Pins(1)),
+         Subsignal("B_dqs_c", Pins(1)),
+        ),
+        ("i2c", 0,
+         Subsignal("scl", Pins(1)),
+         Subsignal("sda", Pins(1)),
+        ),
+    ],
+    "rcd8": [
+        ("ddr5", 0,
+         Subsignal("ck_t",    Pins(1)),
+         Subsignal("ck_c",    Pins(1)),
+         Subsignal("reset_n", Pins(1)),
+         Subsignal("alert_n", Pins(1)),
+
+         Subsignal("A_cs_n",  Pins(2)),
+         # dmi is not supported on x4 device, I decided to keep it to make model simpler
+         Subsignal("A_dm_n",  Pins(1)),
+
+         Subsignal("A_ca",    Pins(7)),
+         Subsignal("A_par",   Pins(1)),
+         # DQ and DQS are taken from DDR5 Tester board
+         Subsignal("A_dq",    Pins(8)),
+         Subsignal("A_dqs_t", Pins(1)),
+         Subsignal("A_dqs_c", Pins(1)),
+
+         Subsignal("B_cs_n",  Pins(2)),
+         # dmi is not supported on x4 device, I decided to keep it to make model simpler
+         Subsignal("B_dm_n",  Pins(1)),
+
+         Subsignal("B_ca",    Pins(7)),
+         Subsignal("B_par",   Pins(1)),
+         # DQ and DQS are taken from DDR5 Tester board
+         Subsignal("B_dq",    Pins(8)),
+         Subsignal("B_dqs_t", Pins(1)),
+         Subsignal("B_dqs_c", Pins(1)),
+        ),
+        ("i2c", 0,
+         Subsignal("scl", Pins(1)),
+         Subsignal("sda", Pins(1)),
+        ),
     ]
 }
 
+# clocks added in main()
 # Clocks -------------------------------------------------------------------------------------------
 
-def get_clocks(sys_clk_freq):
+def get_clocks(sys_clk_freq, rcd=False):
+    if rcd:
+        return
     return Clocks({
-        "sys":           dict(freq_hz=sys_clk_freq),
-        "sys_11_25":     dict(freq_hz=sys_clk_freq, phase_deg=11.25),
-        "sys2x":         dict(freq_hz=2*sys_clk_freq),
-        "sys4x":         dict(freq_hz=4*sys_clk_freq),
-        "sys4x_ddr":     dict(freq_hz=2*4*sys_clk_freq),
-        "sys4x_90":      dict(freq_hz=4*sys_clk_freq, phase_deg=90),
-        "sys4x_180":     dict(freq_hz=4*sys_clk_freq, phase_deg=180),
-        "sys4x_90_ddr":  dict(freq_hz=2*4*sys_clk_freq, phase_deg=2*90),
+        "sys":             dict(freq_hz=sys_clk_freq),
+        "sys4x":           dict(freq_hz=4*sys_clk_freq),
+        "sys4x_ddr":       dict(freq_hz=2*4*sys_clk_freq),
+        "sys4x_90":        dict(freq_hz=4*sys_clk_freq, phase_deg=90),
+        "sys4x_180":       dict(freq_hz=4*sys_clk_freq, phase_deg=180),
+        "sys4x_90_ddr":    dict(freq_hz=2*4*sys_clk_freq, phase_deg=2*90),
+        "ps50_delay_clk":  dict(freq_hz=int(1e12)/50),
     })
 
 # SoC ----------------------------------------------------------------------------------------------
@@ -308,7 +377,7 @@ def main():
     group.add_argument("--trace-start",          default=0,               help="Cycle to start tracing")
     group.add_argument("--trace-end",            default=-1,              help="Cycle to end tracing")
     group.add_argument("--trace-reset",          default=0,               help="Initial traceing state")
-    group.add_argument("--sys-clk-freq",         default="50e6",          help="Core clock frequency")
+    group.add_argument("--sys-clk-freq",         default="250e6",          help="Core clock frequency")
     group.add_argument("--auto-precharge",       action="store_true",     help="Use DRAM auto precharge")
     group.add_argument("--no-refresh",           action="store_true",     help="Disable DRAM refresher")
     group.add_argument("--log-level",            default="all=INFO",      help="Set simulation logging level")

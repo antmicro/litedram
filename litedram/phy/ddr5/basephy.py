@@ -167,8 +167,7 @@ class DDR5PHY(Module, AutoCSR):
         cwl_sys_latency = get_sys_latency(nphases, cwl)
         # For reads we need to account for ser+des+(1 full MC clock delay to accomodate latency from write) to make sure we get the data in-phase with sys clock
         rdphase = get_sys_phase(nphases, cl_sys_latency, cl + cmd_latency +
-                                ser_latency.sys4x + des_latency.sys4x
-                                )
+                                ser_latency.sys4x + des_latency.sys4x)
         # No need to modify wrphase, because ser_latency applies the same to both CA and DQ
         wrphase = get_sys_phase(nphases, cwl_sys_latency, cwl + cmd_latency)
 
