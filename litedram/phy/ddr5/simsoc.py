@@ -137,18 +137,33 @@ _io = {
     ]
 }
 
+# clocks added in main()
 # Clocks -------------------------------------------------------------------------------------------
 
-def get_clocks(sys_clk_freq):
-    return Clocks({
-        "sys":           dict(freq_hz=sys_clk_freq),
-        "sys4x":         dict(freq_hz=4*sys_clk_freq),
-        "sys4x_ddr":     dict(freq_hz=2*4*sys_clk_freq),
-        "sys4x_90":      dict(freq_hz=4*sys_clk_freq, phase_deg=90),
-        "sys4x_180":     dict(freq_hz=4*sys_clk_freq, phase_deg=180),
-        "sys4x_90_ddr":  dict(freq_hz=2*4*sys_clk_freq, phase_deg=2*90),
-        "sys4x_180s_ddr":  dict(freq_hz=2*4*sys_clk_freq, phase_deg=90),
-    })
+def get_clocks(sys_clk_freq, rcd=False, delay=0): #delay in ps
+    clk_dict = {
+        "sys":             dict(freq_hz=sys_clk_freq),
+        "sys4x":           dict(freq_hz=4*sys_clk_freq),
+        "sys4x_ddr":       dict(freq_hz=2*4*sys_clk_freq),                  # RCD cmd sample
+        "sys4x_180":       dict(freq_hz=4*sys_clk_freq, phase_deg=180),     # phy cs
+        "sys4x_180s_ddr":  dict(freq_hz=2*4*sys_clk_freq, phase_deg=90),    # phy ca
+        "sys4x_90":        dict(freq_hz=4*sys_clk_freq, phase_deg=90),      # phy oe delay
+        "sys4x_90_ddr":    dict(freq_hz=2*4*sys_clk_freq, phase_deg=2*90),  # phy dq/dqs IO
+    }
+    if rcd:
+        nck = delay*4*sys_clk_freq // int(1e12)
+        phase_shift = delay - nck*int(1e12)/(4*sys_clk_freq) # in ps
+        phase_deg_shift = phase_shift*4*sys_clk_freq/int(1e12)*360
+        temp_dict = {
+            "ps50_delay":  dict(freq_hz=int(1e12)/50),
+            "rcd4x":       dict(freq_hz=4*sys_clk_freq,
+                                phase_deg=phase_deg_shift),                 # model cmd sample
+            "rcd4x_ddr":   dict(freq_hz=2*4*sys_clk_freq,
+                                phase_deg=2*phase_deg_shift),               # model dq/dqs sample and change
+        }
+        clk_dict |= temp_dict
+
+    return Clocks(clk_dict)
 
 # SoC ----------------------------------------------------------------------------------------------
 
@@ -384,6 +399,7 @@ def main():
     group.add_argument("--no-masked-write",      action="store_true",     help="Use unmasked variant of WRITE command")
     group.add_argument("--no-run",               action="store_true",     help="Don't run the simulation, just generate files")
     group.add_argument("--with-sub-channels",    action="store_true",     help="Use sim PHY with sub chanels")
+    group.add_argument("--with-rcd",             action="store_true",     help="Use sim PHY with RCD support")
     group.add_argument("--finish-after-memtest", action="store_true",     help="Stop simulation after DRAM memory test")
     group.add_argument("--dq-dqs-ratio",         default=8,               help="Set DQ:DQS ratio", type=int, choices={4, 8})
     args = parser.parse_args()
@@ -392,7 +408,10 @@ def main():
 
     sim_config = SimConfig()
     sys_clk_freq = int(float(args.sys_clk_freq))
-    clocks = get_clocks(sys_clk_freq)
+    delay = randrange(950, 1250, 50)
+    if delay == 1000:
+        delay = delay - 50 if randrange(0,1) else delay + 50
+    clocks = get_clocks(sys_clk_freq, args.with_rcd, delay)
     clocks.add_clockers(sim_config)
 
     # Configuration --------------------------------------------------------------------------------
@@ -411,6 +430,7 @@ def main():
         trace_reset     = int(args.trace_reset),
         log_level       = args.log_level,
         masked_write    = not args.no_masked_write,
+        with_rcd        = args.with_rcd,
         finish_after_memtest = args.finish_after_memtest,
         dq_dqs_ratio    = args.dq_dqs_ratio,
         with_sub_channels = args.with_sub_channels,
