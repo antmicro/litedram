@@ -220,7 +220,8 @@ class Multiplexer(Module, AutoCSR):
             bank_machines,
             refresher,
             dfi,
-            interface):
+            interface,
+            timing_regs):
         assert(settings.phy.nphases == len(dfi.phases))
 
         ras_allowed = Signal(reset=1)
@@ -260,18 +261,18 @@ class Multiplexer(Module, AutoCSR):
         self.submodules += steerer
 
         # tRRD timing (Row to Row delay) -----------------------------------------------------------
-        self.submodules.trrdcon = trrdcon = tXXDController(settings.timing.tRRD)
+        self.submodules.trrdcon = trrdcon = tXXDController(timing_regs['tRRD'])
         self.comb += trrdcon.valid.eq(choose_cmd.accept() & choose_cmd.activate())
 
         # tFAW timing (Four Activate Window) -------------------------------------------------------
-        self.submodules.tfawcon = tfawcon = tFAWController(settings.timing.tFAW)
+        self.submodules.tfawcon = tfawcon = tFAWController(timing_regs['tFAW'])
         self.comb += tfawcon.valid.eq(choose_cmd.accept() & choose_cmd.activate())
 
         # RAS control ------------------------------------------------------------------------------
         self.comb += ras_allowed.eq(trrdcon.ready & tfawcon.ready)
 
         # tCCD timing (Column to Column delay) -----------------------------------------------------
-        self.submodules.tccdcon = tccdcon = tXXDController(settings.timing.tCCD)
+        self.submodules.tccdcon = tccdcon = tXXDController(timing_regs['tCCD'])
         self.comb += tccdcon.valid.eq(choose_req.accept() & (choose_req.write() | choose_req.read()))
 
         # CAS control ------------------------------------------------------------------------------
@@ -279,10 +280,13 @@ class Multiplexer(Module, AutoCSR):
 
         # tWTR timing (Write to Read delay) --------------------------------------------------------
         write_latency = math.ceil(settings.phy.cwl / settings.phy.nphases)
-        self.submodules.twtrcon = twtrcon = tXXDController(
-            settings.timing.tWTR + write_latency +
-            # tCCD must be added since tWTR begins after the transfer is complete
-            settings.timing.tCCD if settings.timing.tCCD is not None else 0)
+        twtrcon_init = Signal(max=timing_regs['tWTR'].nbits + write_latency + timing_regs['tCCD'].nbits)
+        self.comb += twtrcon_init.eq(timing_regs['tWTR'] + write_latency + timing_regs['tCCD'])
+        # self.submodules.twtrcon = twtrcon = tXXDController(
+        #     timing_regs['tWTR'] + write_latency +
+        #     # tCCD must be added since tWTR begins after the transfer is complete
+        #     timing_regs['tCCD'] if timing_regs['tCCD'] is not None else 0)
+        self.submodules.twtrcon = twtrcon = tXXDController(twtrcon_init)
         self.comb += twtrcon.valid.eq(choose_req.accept() & choose_req.write())
 
         # Read/write turnaround --------------------------------------------------------------------
