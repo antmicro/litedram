@@ -9,6 +9,7 @@
 
 from migen import *
 
+from litex.soc.interconnect.csr import CSRStorage, AutoCSR
 from litedram.common import *
 from litedram.phy import dfi
 from litedram.core.refresher import Refresher
@@ -43,6 +44,30 @@ class ControllerSettings(Settings):
         address_mapping     = "ROW_BANK_COL"):
         self.set_attributes(locals())
 
+
+REGISTER_NAMES = ("tRP", "tRCD", "tWR", "tWTR", "tREFI", "tRFC", "tFAW", "tCCD", "tRRD", "tRC", "tRAS", "tZQCS")
+class LiteDRAMControllerRegisterBank(Module, AutoCSR):
+    def __init__(self, initial_timings):
+        for reg in REGISTER_NAMES:
+            try:
+                reset_val = getattr(initial_timings, reg)
+            except AttributeError:
+                reset_val = None
+            csr = CSRStorage(32, name=reg, reset=reset_val if reset_val is not None else 0)
+            setattr(self, reg, csr)
+
+    def get_register_signals(self):
+        regs = {}
+        for reg in REGISTER_NAMES:
+            try:
+                csr = getattr(self, reg)
+            except AttributeError:
+                continue
+            if csr is not None:
+                regs[reg] = csr.storage
+        return regs
+
+
 # Controller ---------------------------------------------------------------------------------------
 
 class LiteDRAMController(Module):
@@ -63,6 +88,11 @@ class LiteDRAMController(Module):
         nranks = phy_settings.nranks
         nbanks = 2**geom_settings.bankbits
 
+        # Registers --------------------------------------------------------------------------------
+
+        self.registers = registers = LiteDRAMControllerRegisterBank(timing_settings)
+        timing_regs = registers.get_register_signals()
+
         # LiteDRAM Interface (User) ----------------------------------------------------------------
         self.interface = interface = LiteDRAMInterface(address_align, self.settings)
 
@@ -78,9 +108,10 @@ class LiteDRAMController(Module):
 
         # Refresher --------------------------------------------------------------------------------
         self.submodules.refresher = self.settings.refresh_cls(self.settings,
-            clk_freq   = clk_freq,
-            zqcs_freq  = self.settings.refresh_zqcs_freq,
-            postponing = self.settings.refresh_postponing)
+            clk_freq    = clk_freq,
+            timing_regs = timing_regs,
+            zqcs_freq   = self.settings.refresh_zqcs_freq,
+            postponing  = self.settings.refresh_postponing)
 
         # Bank Machines ----------------------------------------------------------------------------
         bank_machines = []
@@ -89,7 +120,8 @@ class LiteDRAMController(Module):
                 address_width = interface.address_width,
                 address_align = address_align,
                 nranks        = nranks,
-                settings      = self.settings)
+                settings      = self.settings,
+                timing_regs   = timing_regs)
             bank_machines.append(bank_machine)
             self.submodules += bank_machine
             self.comb += getattr(interface, "bank"+str(n)).connect(bank_machine.req)
@@ -100,7 +132,8 @@ class LiteDRAMController(Module):
             bank_machines = bank_machines,
             refresher     = self.refresher,
             dfi           = self.dfi,
-            interface     = interface)
+            interface     = interface,
+            timing_regs   = timing_regs)
 
     def get_csrs(self):
-        return self.multiplexer.get_csrs()
+        return self.multiplexer.get_csrs() + self.registers.get_csrs()

@@ -26,8 +26,10 @@ class RefreshExecuter(Module):
     - Wait tRFC
     """
     def __init__(self, cmd, trp, trfc):
-        self.start = Signal()
-        self.done  = Signal()
+        self.start    = Signal()
+        self.done     = Signal()
+        self.trp      = Signal(trp.nbits)
+        self.trp_trfc = Signal(max(trfc.nbits, trp.nbits) + 1)
 
         # # #
 
@@ -38,6 +40,10 @@ class RefreshExecuter(Module):
             cmd.ras.eq(0),
             cmd.we.eq( 0),
             self.done.eq(0),
+            If(self.start,
+                self.trp.eq(trp),
+                self.trp_trfc.eq(trfc + trp)
+            ),
             # Wait start
             timeline(self.start, [
                 # Precharge All
@@ -49,7 +55,7 @@ class RefreshExecuter(Module):
                     cmd.we.eq( 1)
                 ]),
                 # Auto Refresh after tRP
-                (trp, [
+                (self.trp, [
                     cmd.a.eq(  2**10),  # all banks in LPDDR4/DDR5, ignored in other memories
                     cmd.ba.eq( 0),
                     cmd.cas.eq(1),
@@ -57,7 +63,7 @@ class RefreshExecuter(Module):
                     cmd.we.eq( 0),
                 ]),
                 # Done after tRP + tRFC
-                (trp + trfc, [
+                (self.trp_trfc, [
                     cmd.a.eq(  0),
                     cmd.ba.eq( 0),
                     cmd.cas.eq(0),
@@ -107,18 +113,20 @@ class RefreshTimer(Module):
     def __init__(self, trefi):
         self.wait  = Signal()
         self.done  = Signal()
-        self.count = Signal(bits_for(trefi))
+        self.count = Signal(trefi.nbits)
 
         # # #
 
         done  = Signal()
-        count = Signal(bits_for(trefi), reset=trefi-1)
+        count = Signal(trefi.nbits)
 
         self.sync += [
             If(self.wait & ~self.done,
                 count.eq(count - 1)
             ).Else(
-                count.eq(count.reset)
+                If(trefi != 0,
+                    count.eq(trefi-1)
+                )
             )
         ]
         self.comb += [
@@ -218,7 +226,7 @@ class Refresher(Module):
     transactions are done, the Refresher can execute the refresh Sequence and release the Controller.
 
     """
-    def __init__(self, settings, clk_freq, zqcs_freq=1e0, postponing=1):
+    def __init__(self, settings, clk_freq, timing_regs, zqcs_freq=1e0, postponing=1):
         assert postponing <= 8
         abits  = settings.geom.addressbits
         babits = settings.geom.bankbits + log2_int(settings.phy.nranks)
@@ -230,9 +238,9 @@ class Refresher(Module):
         wants_zqcs    = Signal()
 
         # Refresh Timer ----------------------------------------------------------------------------
-        if settings.timing.tREFI < 100: # FIXME: Reduce Margin.
-            raise ValueError("Clk/tREFI is ratio too low , please increase Clk frequency or disable Refresh.")
-        timer = RefreshTimer(settings.timing.tREFI)
+        # if settings.timing.tREFI < 100: # FIXME: Reduce Margin.
+        #     raise ValueError("Clk/tREFI is ratio too low , please increase Clk frequency or disable Refresh.")
+        timer = RefreshTimer(timing_regs['tREFI'])
         self.submodules.timer = timer
         self.comb += timer.wait.eq(~timer.done)
 
@@ -243,17 +251,17 @@ class Refresher(Module):
         self.comb += wants_refresh.eq(postponer.req_o)
 
         # Refresh Sequencer ------------------------------------------------------------------------
-        sequencer = RefreshSequencer(cmd, settings.timing.tRP, settings.timing.tRFC, postponing)
+        sequencer = RefreshSequencer(cmd, timing_regs['tRP'], timing_regs['tRFC'], postponing)
         self.submodules.sequencer = sequencer
 
         if settings.timing.tZQCS is not None:
             # ZQCS Timer ---------------------------------------------------------------------------
             zqcs_timer = RefreshTimer(int(clk_freq/zqcs_freq))
             self.submodules.zqcs_timer = zqcs_timer
-            self.comb += wants_zqcs.eq(zqcs_timer.done)
+            self.comb += If(timing_regs['tZQCS'] > 0, wants_zqcs.eq(zqcs_timer.done)).Else(wants_zqcs.eq(0))
 
             # ZQCS Executer ------------------------------------------------------------------------
-            zqcs_executer = ZQCSExecuter(cmd, settings.timing.tRP, settings.timing.tZQCS)
+            zqcs_executer = ZQCSExecuter(cmd, timing_regs['tRP'], timing_regs['tZQCS'])
             self.submodules.zqs_executer = zqcs_executer
             self.comb += zqcs_timer.wait.eq(~zqcs_executer.done)
 
