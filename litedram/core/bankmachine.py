@@ -95,6 +95,14 @@ class BankMachine(Module):
         ba = settings.geom.bankbits + log2_int(nranks)
         self.cmd = cmd = stream.Endpoint(cmd_request_rw_layout(a, ba))
 
+        self.timer = Signal(max(timing_regs['tRP'].nbits, timing_regs['tRCD'].nbits) + 1)
+        self.timer_done = Signal()
+
+        # # #
+
+        self.comb += self.timer_done.eq(self.timer == 0)
+        self.sync += If(~self.timer_done, self.timer.eq(self.timer - 1))
+
         # # #
 
         auto_precharge = Signal()
@@ -203,6 +211,7 @@ class BankMachine(Module):
             If(twtpcon.ready & trascon.ready,
                 cmd.valid.eq(1),
                 If(cmd.ready,
+                    NextValue(self.timer, timing_regs['tRP'] - 1),
                     NextState("TRP")
                 ),
                 cmd.ras.eq(1),
@@ -213,9 +222,15 @@ class BankMachine(Module):
         )
         fsm.act("AUTOPRECHARGE",
             If(twtpcon.ready & trascon.ready,
+                NextValue(self.timer, timing_regs['tRP'] - 1),
                 NextState("TRP")
             ),
             row_close.eq(1)
+        )
+        fsm.act("TRP",
+            If(self.timer_done,
+                NextState("ACTIVATE")
+            )
         )
         fsm.act("ACTIVATE",
             If(trccon.ready,
@@ -224,9 +239,15 @@ class BankMachine(Module):
                 cmd.valid.eq(1),
                 cmd.is_cmd.eq(1),
                 If(cmd.ready,
+                    NextValue(self.timer, timing_regs['tRCD'] - 1),
                     NextState("TRCD")
                 ),
                 cmd.ras.eq(1)
+            )
+        )
+        fsm.act("TRCD",
+            If(self.timer_done,
+                NextState("REGULAR")
             )
         )
         fsm.act("REFRESH",
@@ -239,5 +260,3 @@ class BankMachine(Module):
                 NextState("REGULAR")
             )
         )
-        fsm.delayed_enter("TRP", "ACTIVATE", timing_regs['tRP'] - 1)
-        fsm.delayed_enter("TRCD", "REGULAR", timing_regs['tRCD'] - 1)

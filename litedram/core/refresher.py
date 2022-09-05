@@ -254,9 +254,10 @@ class Refresher(Module):
         sequencer = RefreshSequencer(cmd, timing_regs['tRP'], timing_regs['tRFC'], postponing)
         self.submodules.sequencer = sequencer
 
-        if settings.timing.tZQCS is not None:
+        if timing_regs['tZQCS'] is not None:
             # ZQCS Timer ---------------------------------------------------------------------------
-            zqcs_timer = RefreshTimer(int(clk_freq/zqcs_freq))
+            zqcs_timer_init = Signal(reset=int(clk_freq/zqcs_freq))
+            zqcs_timer = RefreshTimer(zqcs_timer_init)
             self.submodules.zqcs_timer = zqcs_timer
             self.comb += If(timing_regs['tZQCS'] > 0, wants_zqcs.eq(zqcs_timer.done)).Else(wants_zqcs.eq(0))
 
