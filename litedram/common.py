@@ -423,10 +423,13 @@ class tFAWController(Module):
         # # #
 
         if tfaw is not None:
-            count  = Signal(max=max(tfaw, 2))
-            window = Signal(tfaw)
+            count  = Signal(max=max(tfaw.nbits, 2))
+            window = Signal(tfaw.nbits)
+            window_pass = Signal(tfaw.nbits)
             self.sync += window.eq(Cat(valid, window))
-            self.comb += count.eq(reduce(add, [window[i] for i in range(tfaw)]))
+            for i in range(tfaw.nbits):
+                self.comb += If(tfaw > i, window_pass[i].eq(window[i])).Else(window_pass[i].eq(0))
+            self.comb += count.eq(reduce(add, [window_pass[i] for i in range(tfaw.nbits)]))
             self.sync += \
                 If(count < 4,
                     If(count == 3,
