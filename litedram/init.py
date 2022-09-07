@@ -860,7 +860,7 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
 
     def ck(sec):
         # FIXME: use sys_clk_freq (should be added e.g. to TimingSettings), using arbitrary value for now
-        fmax = 200e6
+        fmax = 50e6
         return int(math.ceil(sec * fmax))
 
     if not phy_settings.with_sub_channels:
@@ -1085,6 +1085,8 @@ def get_sdram_phy_c_header(phy_settings, timing_settings):
     r.define("SDRAM_PHY_MODULES", phy_settings.strobes)
     if phy_settings.delays > 0:
         r.define("SDRAM_PHY_DELAYS", phy_settings.delays)
+        if phy_settings.with_per_dq_idelay:
+            r.define("SDRAM_DELAY_PER_DQ")
     if phy_settings.bitslips > 0:
         r.define("SDRAM_PHY_BITSLIPS", phy_settings.bitslips)
 
