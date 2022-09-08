@@ -26,12 +26,18 @@ class RefreshExecuter(Module):
     - Wait tRFC
     """
     def __init__(self, cmd, trp, trfc):
-        self.start    = Signal()
-        self.done     = Signal()
-        self.trp      = Signal(trp.nbits)
-        self.trp_trfc = Signal(max(trfc.nbits, trp.nbits) + 1)
+        self.start = Signal()
+        self.done  = Signal()
 
         # # #
+
+        tlc = TimelineCounter(max(trp.nbits, trfc.nbits) + 1)
+        self.submodules += tlc
+
+        self.comb += [
+            tlc.trigger.eq(self.start),
+            tlc.target.eq(trp+trfc),
+        ]
 
         self.sync += [
             cmd.a.eq(  0),
@@ -40,38 +46,30 @@ class RefreshExecuter(Module):
             cmd.ras.eq(0),
             cmd.we.eq( 0),
             self.done.eq(0),
-            If(self.start,
-                self.trp.eq(trp),
-                self.trp_trfc.eq(trfc + trp)
+        ]
+        self.sync += [
+            If(tlc.trigger & (tlc.counter == 0),
+                cmd.a.eq(  2**10),
+                cmd.ba.eq( 0),
+                cmd.cas.eq(0),
+                cmd.ras.eq(1),
+                cmd.we.eq( 1)
             ),
-            # Wait start
-            timeline(self.start, [
-                # Precharge All
-                (0, [
-                    cmd.a.eq(  2**10),
-                    cmd.ba.eq( 0),
-                    cmd.cas.eq(0),
-                    cmd.ras.eq(1),
-                    cmd.we.eq( 1)
-                ]),
-                # Auto Refresh after tRP
-                (self.trp, [
-                    cmd.a.eq(  2**10),  # all banks in LPDDR4/DDR5, ignored in other memories
-                    cmd.ba.eq( 0),
-                    cmd.cas.eq(1),
-                    cmd.ras.eq(1),
-                    cmd.we.eq( 0),
-                ]),
-                # Done after tRP + tRFC
-                (self.trp_trfc, [
-                    cmd.a.eq(  0),
-                    cmd.ba.eq( 0),
-                    cmd.cas.eq(0),
-                    cmd.ras.eq(0),
-                    cmd.we.eq( 0),
-                    self.done.eq(1),
-                ]),
-            ])
+            If(tlc.counter == trp,
+                cmd.a.eq(  2**10),  # all banks in LPDDR4/DDR5, ignored in other memories
+                cmd.ba.eq( 0),
+                cmd.cas.eq(1),
+                cmd.ras.eq(1),
+                cmd.we.eq( 0),
+            ),
+            If(tlc.counter == (trp + trfc),
+                cmd.a.eq(  0),  # all banks in LPDDR4/DDR5, ignored in other memories
+                cmd.ba.eq( 0),
+                cmd.cas.eq(0),
+                cmd.ras.eq(0),
+                cmd.we.eq( 0),
+                self.done.eq(1),
+            )
         ]
 
 # RefreshSequencer ---------------------------------------------------------------------------------
@@ -174,40 +172,48 @@ class ZQCSExecuter(Module):
     def __init__(self, cmd, trp, tzqcs):
         self.start = Signal()
         self.done  = Signal()
+        self.trp = Signal(trp.nbits)
+        self.tzqcs = Signal(tzqcs.nbits)
 
         # # #
+
+        tlc = TimelineCounter(max(trp.nbits, tzqcs.nbits) + 1)
+        self.submodules += tlc
 
         self.sync += [
             # Note: Don't set cmd to 0 since already done in RefreshExecuter
             self.done.eq(0),
-            # Wait start
-            timeline(self.start, [
-                # Precharge All
-                (0, [
-                    cmd.a.eq(  2**10),
-                    cmd.ba.eq( 0),
-                    cmd.cas.eq(0),
-                    cmd.ras.eq(1),
-                    cmd.we.eq( 1)
-                ]),
-                # ZQ Short Calibration after tRP
-                (trp, [
-                    cmd.a.eq(  0),
-                    cmd.ba.eq( 0),
-                    cmd.cas.eq(0),
-                    cmd.ras.eq(0),
-                    cmd.we.eq( 1),
-                ]),
-                # Done after tRP + tZQCS
-                (trp + tzqcs, [
-                    cmd.a.eq(  0),
-                    cmd.ba.eq( 0),
-                    cmd.cas.eq(0),
-                    cmd.ras.eq(0),
-                    cmd.we.eq( 0),
-                    self.done.eq(1)
-                ]),
-            ])
+            If(self.start,
+                tlc.trigger.eq(1),
+                tlc.target.eq(trp+tzqcs),
+                self.trp.eq(trp),
+                self.tzqcs.eq(tzqcs),
+            ),
+        ]
+
+        self.sync += [
+            If(tlc.trigger & tlc.counter == 0,
+                cmd.a.eq(  2**10),
+                cmd.ba.eq( 0),
+                cmd.cas.eq(0),
+                cmd.ras.eq(1),
+                cmd.we.eq( 1)
+            ),
+            If(tlc.counter == self.trp,
+                cmd.a.eq(  0),
+                cmd.ba.eq( 0),
+                cmd.cas.eq(0),
+                cmd.ras.eq(0),
+                cmd.we.eq( 1),
+            ),
+            If(tlc.counter == self.trp + self.tzqcs,
+                cmd.a.eq(  0),
+                cmd.ba.eq( 0),
+                cmd.cas.eq(0),
+                cmd.ras.eq(0),
+                cmd.we.eq( 0),
+                self.done.eq(1),
+            )
         ]
 
 # Refresher ----------------------------------------------------------------------------------------

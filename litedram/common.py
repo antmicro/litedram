@@ -435,3 +435,21 @@ class tFAWController(Module):
                         ready.eq(1)
                     )
                 )
+
+
+class TimelineCounter(Module):
+    def __init__(self, width):
+        self.counter = Signal(width)
+        self.target = Signal(self.counter.nbits)
+        self.trigger = Signal()
+
+        self.sync += [
+            If(self.counter != 0,
+                self.counter.eq(self.counter + 1)
+            ).Elif(self.trigger,
+                self.counter.eq(1)
+            ),
+            If(self.counter == self.target,
+                self.counter.eq(0)
+            ),
+        ]
