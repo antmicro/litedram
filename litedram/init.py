@@ -1023,6 +1023,24 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
 
     return r.generate()
 
+REGISTER_NAMES = ("tRP", "tRCD", "tWR", "tWTR", "tREFI", "tRFC", "tFAW", "tCCD", "tRRD", "tRC", "tRAS", "tZQCS")
+
+def get_sdram_timings_c_header(timing_settings):
+    r = CGenerator()
+    r.header_guard("__GENERATED_SDRAM_TIMINGS_H")
+    r.newline()
+
+    for reg in REGISTER_NAMES:
+        try:
+            reg_val = getattr(timing_settings, reg)
+        except AttributeError:
+            reg_val = None
+        r.define("SDRAM_TIMINGS_DEFAULT_{}".format(reg.upper()), reg_val if reg_val is not None else 0)
+
+    r.newline()
+
+    return r.generate()
+
 # Python Header ------------------------------------------------------------------------------------
 
 def get_sdram_phy_py_header(phy_settings, timing_settings):
