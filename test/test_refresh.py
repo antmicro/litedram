@@ -10,6 +10,7 @@ from migen import *
 
 from litedram.core.multiplexer import cmd_request_rw_layout
 from litedram.core.refresher import RefreshSequencer, RefreshTimer, Refresher
+from litedram.core.controller import LiteDRAMControllerRegisterBank
 
 
 def c2bool(c):
@@ -21,15 +22,21 @@ class TestRefresh(unittest.TestCase):
         def generator(dut):
             dut.errors = 0
             for start, done, cas, ras in zip(starts, dones, cmds.cas, cmds.ras):
-                yield dut.start.eq(c2bool(start))
+                yield dut.sequencer.start.eq(c2bool(start))
                 yield
-                if (yield dut.done) != c2bool(done):
+                if (yield dut.sequencer.done) != c2bool(done):
                     dut.errors += 1
                 if (yield cmd.cas) != c2bool(cas):
                     dut.errors += 1
                 if (yield cmd.ras) != c2bool(ras):
                     dut.errors += 1
-        dut = RefreshSequencer(cmd, trp, trfc)
+        class DUT(Module):
+            def __init__(self, cmd, trp, trfc):
+                trp_sig = Signal(32, reset=trp)
+                trfc_sig = Signal(32, reset=trfc)
+                self.submodules.sequencer = RefreshSequencer(cmd, trp_sig, trfc_sig)
+
+        dut = DUT(cmd, trp, trfc)
         run_simulation(dut, [generator(dut)])
         self.assertEqual(dut.errors, 0)
 
@@ -47,6 +54,8 @@ class TestRefresh(unittest.TestCase):
     def refresh_timer_test(self, trefi):
         def generator(dut):
             dut.errors = 0
+            if (yield dut.refresh.done) != 0:
+                yield
             for i in range(16*trefi):
                 if i%trefi == (trefi - 1):
                     if (yield dut.refresh.done) != 1:
@@ -58,7 +67,8 @@ class TestRefresh(unittest.TestCase):
 
         class DUT(Module):
             def __init__(self, trefi):
-                self.submodules.refresh = RefreshTimer(trefi)
+                trefi_sig = Signal(32, reset=trefi)
+                self.submodules.refresh = RefreshTimer(trefi_sig)
                 self.comb += self.refresh.wait.eq(~self.refresh.done)
 
         dut = DUT(trefi)
@@ -88,22 +98,28 @@ class TestRefresh(unittest.TestCase):
 
         def generator(dut):
             dut.errors = 0
-            yield dut.cmd.ready.eq(1)
+            yield dut.refresher.cmd.ready.eq(1)
             for i in range(16):
-                while (yield dut.cmd.valid) == 0:
+                while (yield dut.refresher.cmd.valid) == 0:
                     yield
                 cmd_valid_gap = 0
-                while (yield dut.cmd.valid) == 1:
+                while (yield dut.refresher.cmd.valid) == 1:
                     cmd_valid_gap += 1
                     yield
-                while (yield dut.cmd.valid) == 0:
+                while (yield dut.refresher.cmd.valid) == 0:
                     cmd_valid_gap += 1
                     yield
                 if cmd_valid_gap != postponing*settings.timing.tREFI:
                     print(cmd_valid_gap)
                     dut.errors += 1
 
-        dut = Refresher(settings, clk_freq=100e6, postponing=postponing)
+        class DUT(Module):
+            def __init__(self, settings, clk_freq, postponing):
+                self.registers = LiteDRAMControllerRegisterBank(settings.timing)
+                timing_regs = self.registers.get_register_signals()
+                self.submodules.refresher = Refresher(settings=settings, clk_freq=clk_freq, timing_regs=timing_regs, postponing=postponing)
+
+        dut = DUT(settings, clk_freq=100e6, postponing=postponing)
         run_simulation(dut, [generator(dut)])
         self.assertEqual(dut.errors, 0)
 
