@@ -11,6 +11,7 @@ from migen import *
 
 from litedram.common import *
 from litedram.core.bankmachine import BankMachine
+from litedram.core.controller import LiteDRAMControllerRegisterBank
 
 from test.common import timeout_generator
 
@@ -74,11 +75,15 @@ class BankMachineDUT(Module):
         self.address_align = log2_int(burst_lengths[settings.phy.memtype])
         self.address_width = LiteDRAMInterface(self.address_align, settings).address_width
 
+        self.submodules.registers = LiteDRAMControllerRegisterBank(settings.timing)
+        timing_regs = self.registers.get_register_signals()
+
         bankmachine = BankMachine(n=n,
             address_width = self.address_width,
             address_align = self.address_align,
             nranks        = settings.phy.nranks,
-            settings      = settings)
+            settings      = settings,
+            timing_regs   = timing_regs)
         self.submodules.bankmachine = bankmachine
 
     def get_cmd(self):
