@@ -543,45 +543,50 @@ class DDR5PHY(Module, AutoCSR):
 
             # wrtap is at least 5
             self.comb += [
-                older_tap.eq(Cat(wrdata_en.taps[wrtap + 1][1:], wrdata_en.taps[wrtap    ][0])),
-                old_tap.eq(  Cat(wrdata_en.taps[wrtap    ][1:], wrdata_en.taps[wrtap - 1][0])),
-                now_tap.eq(  Cat(wrdata_en.taps[wrtap - 1][1:], wrdata_en.taps[wrtap - 2][0])),
-                next_tap.eq( Cat(wrdata_en.taps[wrtap - 2][1:], wrdata_en.taps[wrtap - 3][0])),
+                old_tap.eq( Cat(wrdata_en.taps[wrtap + 1][1:], wrdata_en.taps[wrtap    ][0])),
+                now_tap.eq( Cat(wrdata_en.taps[wrtap    ][1:], wrdata_en.taps[wrtap - 1][0])),
+                next_tap.eq(Cat(wrdata_en.taps[wrtap - 1][1:], wrdata_en.taps[wrtap - 2][0])),
             ]
 
             dqs_oe        = Signal(2*nphases)
             dqs_pattern   = DDR5DQSPattern(
-                old_tap       = older_tap,
-                now_tap       = old_tap,
-                next_tap      = now_tap,
+                old_tap       = old_tap,
+                now_tap       = now_tap,
+                next_tap      = next_tap,
                 wlevel_en     = getattr(self, prefix+'wlevel_en').storage,
                 wlevel_strobe = getattr(self, prefix+'wlevel_strobe').re)
             self.submodules += dqs_pattern
 
             dq_oe        = Signal(2*nphases)
-            dq_pattern   = DDR5DQOePattern(old_tap=older_tap, now_tap=old_tap)
+            dq_pattern   = DDR5DQOePattern(old_tap=old_tap, now_tap=now_tap)
             self.submodules += dq_pattern
 
             for byte in range(strobes):
                 # output
                 dqs_bitslip    = BitSlip(8,
                     i      = dqs_pattern.o,
-                    rst    = (getattr(self, prefix+'dly_sel').storage[byte] & _l[prefix+'wdly_dq_bitslip_rst']) | self._rst.storage,
-                    slp    = getattr(self, prefix+'dly_sel').storage[byte] & _l[prefix+'wdly_dq_bitslip'],
+                    rst    = (getattr(self, prefix+'dly_sel').storage[byte] &
+                              getattr(self, prefix+'wdly_dq_bitslip_rst').re) |
+                             self._rst.storage,
+                    slp    = getattr(self, prefix+'dly_sel').storage[byte] & getattr(self, prefix+'wdly_dq_bitslip').re,
                     cycles = 1)
                 self.submodules += dqs_bitslip
 
                 dqs_oe_bitslip    = BitSlip(8,
                     i      = dqs_pattern.oe,
-                    rst    = (getattr(self, prefix+'dly_sel').storage[byte] & _l[prefix+'wdly_dq_bitslip_rst']) | self._rst.storage,
-                    slp    = getattr(self, prefix+'dly_sel').storage[byte] & _l[prefix+'wdly_dq_bitslip'],
+                    rst    = (getattr(self, prefix+'dly_sel').storage[byte] &
+                              getattr(self, prefix+'wdly_dq_bitslip_rst').re) |
+                            self._rst.storage,
+                    slp    = getattr(self, prefix+'dly_sel').storage[byte] & getattr(self, prefix+'wdly_dq_bitslip').re,
                     cycles = 1)
                 self.submodules += dqs_oe_bitslip
 
                 dq_oe_bitslip    = BitSlip(8,
                     i      = dq_pattern.oe,
-                    rst    = (getattr(self, prefix+'dly_sel').storage[byte] & _l[prefix+'wdly_dq_bitslip_rst']) | self._rst.storage,
-                    slp    = getattr(self, prefix+'dly_sel').storage[byte] & _l[prefix+'wdly_dq_bitslip'],
+                    rst    = (getattr(self, prefix+'dly_sel').storage[byte] &
+                              getattr(self, prefix+'wdly_dq_bitslip_rst').re) |
+                             self._rst.storage,
+                    slp    = getattr(self, prefix+'dly_sel').storage[byte] & getattr(self, prefix+'wdly_dq_bitslip').re,
                     cycles = 1)
                 self.submodules += dq_oe_bitslip
 
@@ -606,8 +611,10 @@ class DDR5PHY(Module, AutoCSR):
                     ]
                     dm_o_bitslip = BitSlip(8,
                         i      = dm_i,
-                        rst    = (getattr(self, prefix+'dly_sel').storage[byte] & _l[prefix+'wdly_dq_bitslip_rst']) | self._rst.storage,
-                        slp    = getattr(self, prefix+'dly_sel').storage[byte] & _l[prefix+'wdly_dq_bitslip'],
+                        rst    = (getattr(self, prefix+'dly_sel').storage[byte] &
+                                  getattr(self, prefix+'wdly_dq_bitslip_rst').re) |
+                                 self._rst.storage,
+                        slp    = getattr(self, prefix+'dly_sel').storage[byte] & getattr(self, prefix+'wdly_dq_bitslip').re,
                         cycles = 1)
 
                     self.submodules += dm_o_bitslip
@@ -626,9 +633,10 @@ class DDR5PHY(Module, AutoCSR):
                 ]
                 dq_o_bitslip = BitSlip(8,
                     i      = Cat(*wrdata),
-                    rst    = (getattr(self, prefix+'dly_sel').storage[bit//dq_dqs_ratio] & \
-                              _l[prefix+'wdly_dq_bitslip_rst']) | self._rst.storage,
-                    slp    = getattr(self, prefix+'dly_sel').storage[bit//dq_dqs_ratio] & _l[prefix+'wdly_dq_bitslip'],
+                    rst    = (getattr(self, prefix+'dly_sel').storage[bit//dq_dqs_ratio] &
+                              getattr(self, prefix+'wdly_dq_bitslip_rst').re) |
+                              self._rst.storage,
+                    slp    = getattr(self, prefix+'dly_sel').storage[bit//dq_dqs_ratio] & getattr(self, prefix+'wdly_dq_bitslip').re,
                     cycles = 1)
 
                 self.submodules += dq_o_bitslip
@@ -638,9 +646,10 @@ class DDR5PHY(Module, AutoCSR):
                 dq_i_bs = Signal(2*nphases)
                 dq_i_bitslip = BitSlip(8,
                     i      = getattr(self.out, prefix+'dq_i')[bit],
-                    rst    = (getattr(self, prefix+'dly_sel').storage[bit//dq_dqs_ratio] & \
-                              _l[prefix+'rdly_dq_bitslip_rst']) | self._rst.storage,
-                    slp    = getattr(self, prefix+'dly_sel').storage[bit//dq_dqs_ratio] & _l[prefix+'rdly_dq_bitslip'],
+                    rst    = (getattr(self, prefix+'dly_sel').storage[bit//dq_dqs_ratio] &
+                              getattr(self, prefix+'rdly_dq_bitslip_rst').re) |
+                             self._rst.storage,
+                    slp    = getattr(self, prefix+'dly_sel').storage[bit//dq_dqs_ratio] & getattr(self, prefix+'rdly_dq_bitslip').re,
                     cycles = 1)
                 self.submodules += dq_i_bitslip
 
