@@ -16,6 +16,7 @@ from litex.soc.interconnect import stream
 from litedram.common import *
 from litedram.phy import dfi
 from litedram.core.multiplexer import Multiplexer
+from litedram.core.controller import LiteDRAMControllerRegisterBank
 
 # load after "* imports" to avoid using Migen version of vcd.py
 from litex.gen.sim import run_simulation
@@ -125,9 +126,13 @@ class MultiplexerDUT(Module):
         address_align = log2_int(burst_lengths[settings.phy.memtype])
         self.interface = LiteDRAMInterface(address_align=address_align, settings=settings)
 
+        # Add Registers
+        self.submodules.registers = LiteDRAMControllerRegisterBank(settings.timing)
+        timing_regs = self.registers.get_register_signals()
+
         # Add Multiplexer
         self.submodules.multiplexer = Multiplexer(settings, self.bank_machines, self.refresher,
-            self.dfi, self.interface)
+            self.dfi, self.interface, timing_regs)
 
         # Add helpers for driving bank machines/refresher
         self.bm_drivers = [CmdRequestRWDriver(bm.cmd, i) for i, bm in enumerate(self.bank_machines)]
