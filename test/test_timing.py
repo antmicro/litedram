@@ -28,7 +28,8 @@ class TestTiming(unittest.TestCase):
         
         class DUT(Module):
             def __init__(self, txxd):
-                txxd_sig = Signal(32, reset=txxd)
+                txxd_sig = Signal(32)
+                self.comb += txxd_sig.eq(txxd)
                 self.submodules.txxd = tXXDController(txxd_sig)
 
         dut = DUT(txxd)
@@ -38,22 +39,22 @@ class TestTiming(unittest.TestCase):
     def test_txxd_controller(self):
         txxd = 1
         valids = "__-______"
-        readys = "_--------"
+        readys = "---------"
         self.txxd_controller_test(txxd, valids, readys)
 
         txxd = 2
         valids = "__-______"
-        readys = "_--_-----"
+        readys = "---_-----"
         self.txxd_controller_test(txxd, valids, readys)
 
         txxd = 3
         valids = "____-______"
-        readys = "___--__----"
+        readys = "-----__----"
         self.txxd_controller_test(txxd, valids, readys)
 
         txxd = 4
         valids = "____-______"
-        readys = "___--___---"
+        readys = "-----___---"
         self.txxd_controller_test(txxd, valids, readys)
 
     def txxd_controller_random_test(self, txxd, loops):
@@ -69,6 +70,8 @@ class TestTiming(unittest.TestCase):
         @passive
         def checker(dut):
             dut.ready_gaps = []
+            while (yield dut.txxd.valid) == 0:
+                yield
             while True:
                 while (yield dut.txxd.ready) != 0:
                     yield
@@ -80,7 +83,8 @@ class TestTiming(unittest.TestCase):
 
         class DUT(Module):
             def __init__(self, txxd):
-                txxd_sig = Signal(32, reset=txxd)
+                txxd_sig = Signal(32)
+                self.comb += txxd_sig.eq(txxd)
                 self.submodules.txxd = tXXDController(txxd_sig)
 
         dut = DUT(txxd)
