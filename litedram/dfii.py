@@ -67,7 +67,24 @@ class CmdInjector(Module, AutoCSR):
 
         self.comb += self._sampled_rddata.status.eq(Cat(sampled_rddata_array))
 
+        wrdata_array = Array([Signal(len(phase.wrdata)) for phase in phases])
+        self._wrdata = CSRStorage(
+            sum(len(s) for s in wrdata_array),
+            description="Value to set wrdata bus to",
+        )
+
+        self.comb += Cat(wrdata_array).eq(self._wrdata.storage)
+
         for n, phase in enumerate(phases):
+            phase_wrdata_en_csr = CSRStorage(
+                size=1,
+                description=f"wrdata_en for phase {n}",
+                name=f"wrdata_en{n}",
+            )
+            self.comb += phase.wrdata_en.eq(phase_wrdata_en_csr.storage)
+            self.comb += phase.wrdata.eq(wrdata_array[n])
+            setattr(self, f"_wrdata_en{n}", phase_wrdata_en_csr)
+
             phase_ca_csr = CSRStorage(
                 size=len(phase.address),
                 description="DFI Command/Address bus",
