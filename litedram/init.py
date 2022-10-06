@@ -1087,7 +1087,8 @@ def get_sdram_phy_c_header(phy_settings, timing_settings):
     # Define DQ / DQS ratio
     r.define("SDRAM_PHY_DQ_DQS_RATIO", phy_settings.databits // phy_settings.strobes)
 
-    # Define number of modules/delays/bitslips
+    # Define number of ranks/modules/delays/bitslips
+    r.define("SDRAM_PHY_RANKS", phy_settings.nranks)
     r.define("SDRAM_PHY_MODULES", phy_settings.strobes)
     if phy_settings.delays > 0:
         r.define("SDRAM_PHY_DELAYS", phy_settings.delays)
