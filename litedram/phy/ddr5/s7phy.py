@@ -211,7 +211,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                 simple_cdc = SimpleCDC(
                     clkdiv="sys", clk="sys2x",
                     i_dw=len(out_dqs_oe), o_dw=len(cdc_out_dqs_oe),
-                    i=out_dqs_oe, o=cdc_out_dqs_oe,
+                    i=~out_dqs_oe, o=cdc_out_dqs_oe,
                     name=f"{prefix}dqs_t_oe",
                     register=True,
                 )
@@ -289,7 +289,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                     simple_cdc = SimpleCDC(
                         clkdiv="sys", clk="sys2x",
                         i_dw=len(out_dq_oe), o_dw=len(cdc_out_dq_oe),
-                        i=out_dq_oe, o=cdc_out_dq_oe,
+                        i=~out_dq_oe, o=cdc_out_dq_oe,
                         name=f"{prefix}dq_oe{it//modules}",
                         register=True,
                     )
