@@ -57,7 +57,37 @@ class PhaseInjector(Module, AutoCSR):
 
 class CmdInjector(Module, AutoCSR):
     def __init__(self, phases):
-        pass
+        self._sample_rddata = CSR() # description="Force sampling of rddata bus"
+
+        sampled_rddata_array = Array([Signal(len(phase.rddata)) for phase in phases])
+        self._sampled_rddata = CSRStatus(
+            sum(len(s) for s in sampled_rddata_array),
+            description="Sampled rddata bus",
+        )
+
+        self.comb += self._sampled_rddata.status.eq(Cat(sampled_rddata_array))
+
+        for n, phase in enumerate(phases):
+            phase_ca_csr = CSRStorage(
+                size=len(phase.address),
+                description="DFI Command/Address bus",
+                name=f"ca{n}",
+            )
+            setattr(self, f"_ca{n}", phase_ca_csr)
+
+            phase_cs_csr = CSRStorage(
+                size=len(phase.cs_n),
+                description="DFI chip select bus",
+                name=f"cs{n}",
+            )
+            setattr(self, f"_cs{n}", phase_cs_csr)
+
+            self.comb += [
+                phase.cs_n.eq(~phase_cs_csr.storage),
+                phase.address.eq(phase_ca_csr.storage),
+            ]
+
+            self.sync += If(self._sample_rddata.re, sampled_rddata_array[n].eq(phase.rddata))
 
 # CSInjector ------------------------------------------------------------------------------------
 
@@ -172,6 +202,7 @@ class DFIInjector(Module, AutoCSR):
             for i, prefix in enumerate(prefixes):
                 setattr(self.submodules, prefix.lower()+"constinjector", ConstInjector(csr2_dfi.get_subchannel(prefix)))
                 setattr(self.submodules, prefix.lower()+"nopinjector", NOPInjector(csr3_dfi.get_subchannel(prefix)))
+                setattr(self.submodules, prefix.lower()+"cmdinjector", CmdInjector(csr4_dfi.get_subchannel(prefix)))
 
             for ddr5_phase, inter_phase in zip(ddr5_dfi.phases, self.intermediate.phases):
                 self.comb += [
