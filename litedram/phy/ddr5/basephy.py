@@ -552,7 +552,6 @@ class DDR5PHY(Module, AutoCSR):
                 next_tap.eq(Cat(wrdata_en.taps[wrtap - 1][1:], wrdata_en.taps[wrtap - 2][0])),
             ]
 
-            dqs_oe        = Signal(2*nphases)
             dqs_pattern   = DDR5DQSPattern(
                 old_tap       = old_tap,
                 now_tap       = now_tap,
@@ -561,7 +560,6 @@ class DDR5PHY(Module, AutoCSR):
                 wlevel_strobe = getattr(self, prefix+'wlevel_strobe').re)
             self.submodules += dqs_pattern
 
-            dq_oe        = Signal(2*nphases)
             dq_pattern   = DDR5DQOePattern(old_tap=old_tap, now_tap=now_tap)
             self.submodules += dq_pattern
 
