@@ -1060,16 +1060,29 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
     r.define("SDRAM_PHY_WRPHASE", wrphase)
 
     # Define Read/Write Leveling capability
-    if phy_settings.write_leveling:
-        r.define("SDRAM_PHY_WRITE_LEVELING_CAPABLE")
-    if phy_settings.write_latency_calibration:
-        r.define("SDRAM_PHY_WRITE_LATENCY_CALIBRATION_CAPABLE")
-    if phy_settings.write_dq_dqs_training:
-        r.define("SDRAM_PHY_WRITE_DQ_DQS_TRAINING_CAPABLE")
-    if phy_settings.read_leveling:
-        r.define("SDRAM_PHY_READ_LEVELING_CAPABLE")
-    if phy_settings.with_alert:
-        r.define("SDRAM_PHY_ALERT_CAPABLE")
+    if phy_settings.memtype != "DDR5":
+        if phy_settings.write_leveling:
+            r.define("SDRAM_PHY_WRITE_LEVELING_CAPABLE")
+        if phy_settings.write_latency_calibration:
+            r.define("SDRAM_PHY_WRITE_LATENCY_CALIBRATION_CAPABLE")
+        if phy_settings.write_dq_dqs_training:
+            r.define("SDRAM_PHY_WRITE_DQ_DQS_TRAINING_CAPABLE")
+        if phy_settings.read_leveling:
+            r.define("SDRAM_PHY_READ_LEVELING_CAPABLE")
+        if phy_settings.with_alert:
+            r.define("SDRAM_PHY_ALERT_CAPABLE")
+    else:
+        if phy_settings.with_clock_odelay or phy_settings.with_odelay:
+            r.define("SDRAM_PHY_CLK_DELAY_CAPABLE")
+        if phy_settings.with_address_odelay or phy_settings.with_odelay:
+            r.define("SDRAM_PHY_ADDRESS_DELAY_CAPABLE")
+        if phy_settings.with_odelay:
+            r.define("SDRAM_OUTPUT_DELAY_CAPABLE")
+        if phy_settings.with_idelay:
+            r.define("SDRAM_INPUT_DELAY_CAPABLE")
+        if phy_settings.with_alert:
+            r.define("SDRAM_PHY_ALERT_CAPABLE")
+        r.define("SDRAM_BITSLIP_CAPABLE")
 
     # Define DQ / DQS ratio
     r.define("SDRAM_PHY_DQ_DQS_RATIO", phy_settings.databits // phy_settings.strobes)

@@ -226,7 +226,6 @@ class PhySettings(Settings):
             bitslips: int = 0,  # number of write/read bitslip taps
             delays: int = 0,  # number of write/read delay taps
             with_alert: bool = False, # phy has CSRs for reading and reseting alert condition
-            with_per_dq_idelay: bool = False,
             # PHY training capabilities
             write_leveling: bool = False,
             write_dq_dqs_training: bool = False,
@@ -235,6 +234,11 @@ class PhySettings(Settings):
             with_sub_channels: bool = False,
             # DDR5 specific
             address_lines: int = 13,
+            with_per_dq_idelay: bool = False,
+            with_address_odelay: bool = False, # Concrete PHY has ODELAYs on all address lines
+            with_clock_odelay: bool = False, # Concrete PHY has ODELAYs on clk lines
+            with_odelay: bool = False, # Concrete PHY has ODELAYs on all lines: CLK, CS/CA, DQ/DQS
+            with_idelay: bool = False, # Concrete PHY has IDELAYs on DQ/DQS lines
         ):
         if strobes is None:
             strobes = databits // 8
