@@ -200,7 +200,8 @@ class SimSoC(SoCCore):
             aligned_reset_zero = True,
             masked_write       = masked_write,
             dq_dqs_ratio       = dq_dqs_ratio,
-            with_sub_channels  = with_sub_channels
+            with_sub_channels  = with_sub_channels,
+            address_lines      = sdram_module.address_bits,
         )
 
         for p in _io[io_type][0][2:]:
