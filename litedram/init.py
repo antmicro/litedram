@@ -860,7 +860,7 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
     else:
         prefixes = ["a_", "b_"]
 
-    dfii_control = [f"DFII_CONTROL_{prefix.upper()}CMDINJECTOR" for prefix in prefixes]
+    dfii_control = [f"DFII_CONTROL_{prefix.upper()}CMDINJECTOR" for prefix in prefixes] + ["DFII_CONTROL_2N_MODE"]
     dfii_control = '|'.join(dfii_control)
 
     all_cs        = 2**phy_settings.nranks-1
@@ -1046,6 +1046,7 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
     r.define("SDRAM_PHY_DATABITS", phy_settings.databits)
     r.define("SDRAM_PHY_DFI_DATABITS", phy_settings.dfi_databits)
     r.define("SDRAM_PHY_PHASES", nphases)
+    r.define("SDRAM_PHY_RANKS", phy_settings.nranks)
     for setting in ["cl", "cwl", "cmd_latency", "cmd_delay"]:
         if getattr(phy_settings, setting, None) is not None:
             r.define(f"SDRAM_PHY_{setting.upper()}", getattr(phy_settings, setting))
