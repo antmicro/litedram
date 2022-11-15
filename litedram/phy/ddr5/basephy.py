@@ -54,229 +54,46 @@ class DDR5Output:
 
 
 class DDR5DQOePattern(Module):
-    def __init__(self, old_tap: Signal(4), now_tap: Signal(4)):
-        self.oe = Signal(8)
-
+    def __init__(self, nphases):
+        self.window = window = Signal(nphases+2)
+        self.oe = Signal(2*nphases)
         self.comb += [
-            self.oe.eq(0),
-            Case(old_tap, {
-                0b0010 : [
-                    Case(now_tap, {
-                        0b0000 :
-                            self.oe.eq(0b00000011),
-                        0b0010 :
-                            self.oe.eq(0b11111111),
-                        0b0100 :
-                            self.oe.eq(0b11110011),
-                        0b1000 :
-                            self.oe.eq(0b11000011),
-                    })
-                ],
-                0b0100   : [
-                    Case(now_tap, {
-                        0b0000 :
-                            self.oe.eq(0b00001111),
-                        0b0100 :
-                            self.oe.eq(0b11111111),
-                        0b1000 :
-                            self.oe.eq(0b11001111),
-                    })
-                ],
-                0b1000   : [
-                    Case(now_tap, {
-                        0b0000 :
-                            self.oe.eq(0b00111111),
-                        0b1000 :
-                            self.oe.eq(0b11111111),
-                    })
-                ],
-                "default": [
-                    Case(now_tap, {
-                        0b0001 :
-                            self.oe.eq(0b11111111),
-                        0b0010 :
-                            self.oe.eq(0b11111100),
-                        0b0100 :
-                            self.oe.eq(0b11110000),
-                        0b1000 :
-                            self.oe.eq(0b11000000),
-                    })
-                ],
-            })
+            self.oe.eq(Cat([Replicate(window[i], 2) for i in range(nphases)])),
         ]
 
 
 class DDR5DQSPattern(Module):
-    def __init__(self, old_tap: Signal(4), now_tap: Signal(4), next_tap:Signal(4),
-                 wlevel_en: Signal(), wlevel_strobe: Signal()):
-        self.o  = Signal(8)
-        self.oe = Signal(8)
+    def __init__(self, nphases, wlevel_en: Signal()):
+        self.window = window = Signal(nphases + 2)
+        self.o  = Signal(2*nphases)
+        self.oe = Signal(2*nphases)
 
         # # #
 
         # DQS Pattern transmitted as LSB-first.
         # Always enabled in write leveling mode, else during transfers
-        # Assumptions: read/writes start in phase 0, preamble is 2 cycles and post amble is 0.5 cycle
+        # Preamble is 2 cycles and postamble is 0.5 cycle
+
+        cases = []
+
+        for i in range(nphases):
+            cases.extend([
+                If(reduce(or_, window[i:i+2]),
+                    self.o[2*i:2*i+2].eq(0b01),
+                ).Else(
+                    self.o[2*i:2*i+2].eq(0),
+                ),
+                If(reduce(or_, window[i:i+3]) | wlevel_en,
+                    self.oe[2*i:2*i+2].eq(0b11),
+                ).Else(
+                    self.o[2*i:2*i+2].eq(0),
+                ),
+            ])
 
         self.comb += [
             self.o.eq(0),
             self.oe.eq(0),
-            If(wlevel_en,
-                self.o.eq(0b00000000),
-                self.oe.eq(0b11111111),
-                If(wlevel_strobe,
-                    # use 2 toggles as, according to datasheet, the first one may not be registered
-                    self.o.eq(0b00000101)
-                )
-            ).Else(
-                Case(old_tap, {
-                    0b0001   : [
-                        Case(now_tap, {
-                            0b0000 : [
-                                Case(next_tap, {
-                                    0b0001   : [
-                                        self.o.eq( 0b01000000),
-                                        self.oe.eq(0b11110000),
-                                    ],
-                                    0b0010   : [
-                                        self.o.eq( 0b00000000),
-                                        self.oe.eq(0b11000000),
-                                    ],
-                                })
-                            ],
-                            0b0001 : [
-                                self.o.eq( 0b01010101),
-                                self.oe.eq(0b11111111)
-                            ],
-                            0b0010 : [
-                                self.o.eq( 0b01010101),
-                                self.oe.eq(0b11111111)
-                            ],
-                            0b0100 : [
-                                self.o.eq( 0b01010100),
-                                self.oe.eq(0b11111111)
-                            ],
-                            0b1000 : [
-                                self.o.eq( 0b01010000),
-                                self.oe.eq(0b11111100)
-                            ],
-                        })
-                    ],
-                    0b0010   : [
-                        Case(now_tap, {
-                            0b0000 : [
-                                Case(next_tap, {
-                                    0b0001   : [
-                                        self.o.eq( 0b01000001),
-                                        self.oe.eq(0b11110011),
-                                    ],
-                                    0b0010   : [
-                                        self.o.eq( 0b00000001),
-                                        self.oe.eq(0b11000011),
-                                    ],
-                                    "default": [
-                                        self.o.eq( 0b00000001),
-                                        self.oe.eq(0b00000011),
-                                    ],
-                                })
-                            ],
-                            0b0010 : [
-                                self.o.eq( 0b01010101),
-                                self.oe.eq(0b11111111)
-                            ],
-                            0b0100 : [
-                                self.o.eq( 0b01010101),
-                                self.oe.eq(0b11111111)
-                            ],
-                            0b1000 : [
-                                self.o.eq( 0b01010001),
-                                self.oe.eq(0b11111111)
-                            ],
-                        })
-                    ],
-                    0b0100   : [
-                        Case(now_tap, {
-                            0b0000 : [
-                                Case(next_tap, {
-                                    0b0001   : [
-                                        self.o.eq( 0b01000101),
-                                        self.oe.eq(0b11111111),
-                                    ],
-                                    0b0010   : [
-                                        self.o.eq( 0b00000101),
-                                        self.oe.eq(0b11001111),
-                                    ],
-                                    "default": [
-                                        self.o.eq( 0b00000101),
-                                        self.oe.eq(0b00001111),
-                                    ],
-                                })
-                            ],
-                            0b0100 : [
-                                self.o.eq( 0b01010101),
-                                self.oe.eq(0b11111111)
-                            ],
-                            0b1000 : [
-                                self.o.eq( 0b01010101),
-                                self.oe.eq(0b11111111)
-                            ],
-                        })
-                    ],
-                    0b1000   : [
-                        Case(now_tap, {
-                            0b0000 : [
-                                Case(next_tap, {
-                                    0b0001   : [
-                                        self.o.eq( 0b01010101),
-                                        self.oe.eq(0b11111111),
-                                    ],
-                                    0b0010   : [
-                                        self.o.eq( 0b00010101),
-                                        self.oe.eq(0b11111111),
-                                    ],
-                                    "default": [
-                                        self.o.eq( 0b00010101),
-                                        self.oe.eq(0b00111111),
-                                    ],
-                                })
-                            ],
-                            0b1000 : [
-                                self.o.eq( 0b01010101),
-                                self.oe.eq(0b11111111)
-                            ],
-                        })
-                    ],
-                    "default": [
-                        Case(now_tap, {
-                            0b0000 : [
-                                If(next_tap == 0b0001,
-                                    self.o.eq( 0b01000000),
-                                    self.oe.eq(0b11110000),
-                                ).Elif(next_tap == 0b0010,
-                                    self.o.eq( 0b00000000),
-                                    self.oe.eq(0b11000000),
-                                )
-                            ],
-                            0b0001 : [
-                                self.o.eq( 0b01010101),
-                                self.oe.eq(0b11111111)
-                            ],
-                            0b0010 : [
-                                self.o.eq( 0b01010101),
-                                self.oe.eq(0b11111111)
-                            ],
-                            0b0100 : [
-                                self.o.eq( 0b01010100),
-                                self.oe.eq(0b11111111)
-                            ],
-                            0b1000 : [
-                                self.o.eq( 0b01010000),
-                                self.oe.eq(0b11111100)
-                            ],
-                        })
-                    ],
-                })
-            )
+            *cases,
         ]
 
 
@@ -322,7 +139,9 @@ class DDR5PHY(Module, AutoCSR):
     def __init__(self, pads, *,
                  sys_clk_freq, ser_latency, des_latency, phytype, with_sub_channels=False,
                  cmd_delay=None, masked_write=False, extended_overlaps_check=False,
-                 with_odelay=False, csr_cdc=None, rd_extra_delay=Latency(sys=0), address_lines=13):
+                 with_odelay=False, with_clock_odelay=False, with_address_odelay=False,
+                 csr_cdc=None, rd_extra_delay=Latency(sys=0),
+                 address_lines=13, default_read_latency=0):
 
         self.pads        = pads
         self.memtype     = memtype     = "DDR5"
@@ -359,30 +178,23 @@ class DDR5PHY(Module, AutoCSR):
 
         cl              = get_cl_cw(memtype, tck)
         cwl = cl - 2
-        cl_sys_latency  = get_sys_latency(nphases, cl)
-        cwl_sys_latency = get_sys_latency(nphases, cwl)
-        # For reads we need to account for ser+des+(1 full MC clock delay to accomodate latency from write) to make sure we get the data in-phase with sys clock
-        # BitSlip adds delay
-        rdphase = get_sys_phase(nphases, cl_sys_latency, cmd_latency + rd_extra_delay.sys4x +
-                                ser_latency.sys4x + cl + des_latency.sys4x + 4 + 4)
-        # BitSlip applies at least 1 cycle of delay to DQS and DQ lines, make MC think it need to send data earlier
-        wrphase = get_sys_phase(nphases, cwl_sys_latency, cwl - 1 + cmd_latency - 4)
-
-        # When the calculated phase is negative, it means that we need to increase sys latency
-        def updated_latency(phase, sys_latency):
-            while phase < 0:
-                phase += nphases
-                sys_latency += 1
-            return phase, sys_latency
-
-        wrphase, cwl_sys_latency = updated_latency(wrphase, cwl_sys_latency)
-        rdphase, cl_sys_latency = updated_latency(rdphase, cl_sys_latency)
-
         # Read latency
-        read_latency  = cl_sys_latency
-
+        # This value should be the worst case delay between sending a read cmd and
+        # getting data back. There will be exact delay may vary based on the training result.
+        self.min_read_latency  = min_read_latency = (
+            cmd_latency +        # CMD latency + extra clock cycle for 2N mode
+            ser_latency.sys4x +  # CMD serialization latency
+            des_latency.sys4x +  # Data deserialization latency
+            4 +                  # Data bitslips
+            rd_extra_delay.sys4x # Delays like CDCs
+        ) # CL 0
+        self.max_read_latency = max_read_latency = min_read_latency + 64 + 1 # CL 64 and 2N mode
+        read_latency = (max_read_latency + nphases - 1) // nphases
         # Write latency
-        write_latency = cwl_sys_latency
+        # Set to 0, Training PHY will align DQS and DQ for write commands
+        # See write leveling training in JESD79-5A
+        # Max supported latency is 63 DRAm bus cycles
+        write_latency = 0
 
         # Registers --------------------------------------------------------------------------------
 
@@ -395,8 +207,8 @@ class DDR5PHY(Module, AutoCSR):
         self._rst_cdc       = cdc(self._rst.storage)
         self._rdimm_mode    = CSRStorage()
 
-        self._rdphase = CSRStorage(log2_int(nphases), reset=rdphase)
-        self._wrphase = CSRStorage(log2_int(nphases), reset=wrphase)
+        self._rdphase = CSRStorage(log2_int(nphases), reset=0)
+        self._wrphase = CSRStorage(log2_int(nphases), reset=0)
 
         prefixes = [""] if not with_sub_channels else ["A_", "B_"]
 
@@ -404,7 +216,7 @@ class DDR5PHY(Module, AutoCSR):
 
         dq_dqs_ratio = databits // strobes
 
-        if with_odelay:
+        if with_odelay or with_clock_odelay:
             setattr(self, 'ckdly_rst' , CSR(name='ckdly_rst'))
             setattr(self, 'ckdly_inc' , CSR(name='ckdly_inc'))
             _l['ckdly_rst'] = cdc(getattr(self, 'ckdly_rst').re | self._rst.storage)
@@ -412,13 +224,15 @@ class DDR5PHY(Module, AutoCSR):
 
         for prefix in prefixes:
             setattr(self, prefix+'wlevel_en', CSRStorage(name=prefix+'wlevel_en'))
-            setattr(self, prefix+'wlevel_strobe', CSR(name=prefix+'wlevel_strobe'))
+            setattr(self, prefix+'wtodqsdl', CSRStorage(6, name=prefix+'wtodqsdl', reset=0))
+
+            setattr(self, prefix+'rtodatadl', CSRStorage(6, name=prefix+'rtodatadl', reset=default_read_latency))
 
             setattr(self, prefix+'dly_sel', CSRStorage(max(strobes, databits, 14, nranks), name=prefix+'dly_sel'))
             getattr(self, prefix+'dly_sel').storage.attr.add("mr_ff")
             getattr(self, prefix+'dly_sel').storage.attr.add("keep")
 
-            if with_odelay:
+            if with_odelay or with_address_odelay:
                 setattr(self, prefix+'csdly_rst' , CSR(name=prefix+'csdly_rst'))
                 setattr(self, prefix+'csdly_inc' , CSR(name=prefix+'csdly_inc'))
                 setattr(self, prefix+'cadly_rst' , CSR(name=prefix+'cadly_rst'))
@@ -432,6 +246,8 @@ class DDR5PHY(Module, AutoCSR):
             setattr(self, prefix+'rdly_dqs_inc', CSR(name=prefix+'rdly_dqs_inc'))
             setattr(self, prefix+'rdly_dq_bitslip_rst', CSR(name=prefix+'rdly_dq_bitslip_rst'))
             setattr(self, prefix+'rdly_dq_bitslip'    , CSR(name=prefix+'rdly_dq_bitslip'))
+            setattr(self, prefix+'rdly_dqs_bitslip_rst', CSR(name=prefix+'rdly_dqs_bitslip_rst'))
+            setattr(self, prefix+'rdly_dqs_bitslip'    , CSR(name=prefix+'rdly_dqs_bitslip'))
 
             if with_odelay:
                 setattr(self, prefix+'wdly_dq_rst', CSR(name=prefix+'wdly_dq_rst'))
@@ -451,14 +267,16 @@ class DDR5PHY(Module, AutoCSR):
             _l[prefix+'rdly_dqs_inc']  = cdc(getattr(self, prefix+'rdly_dqs_inc').re)
             _l[prefix+'rdly_dq_bitslip_rst']  = cdc(getattr(self, prefix+'rdly_dq_bitslip_rst').re)
             _l[prefix+'rdly_dq_bitslip']  = cdc(getattr(self, prefix+'rdly_dq_bitslip').re)
-            _l[prefix+'wlevel_strobe'] = cdc(getattr(self, prefix+'wlevel_strobe').re)
-            if with_odelay:
+
+            if with_odelay or with_address_odelay:
                 _l[prefix+'csdly_rst']    = cdc(getattr(self, prefix+'csdly_rst').re | self._rst.storage)
                 _l[prefix+'csdly_inc']    = cdc(getattr(self, prefix+'csdly_inc').re)
                 _l[prefix+'cadly_rst']    = cdc(getattr(self, prefix+'cadly_rst').re | self._rst.storage)
                 _l[prefix+'cadly_inc']    = cdc(getattr(self, prefix+'cadly_inc').re)
                 _l[prefix+'pardly_rst']   = cdc(getattr(self, prefix+'pardly_rst').re | self._rst.storage)
                 _l[prefix+'pardly_inc']   = cdc(getattr(self, prefix+'pardly_inc').re)
+
+            if with_odelay:
                 _l[prefix+'wdly_dq_rst']  = cdc(getattr(self, prefix+'wdly_dq_rst').re | self._rst.storage)
                 _l[prefix+'wdly_dq_inc']  = cdc(getattr(self, prefix+'wdly_dq_inc').re)
                 _l[prefix+'wdly_dqs_rst'] = cdc(getattr(self, prefix+'wdly_dqs_rst').re | self._rst.storage)
@@ -485,7 +303,7 @@ class DDR5PHY(Module, AutoCSR):
             cl            = cl,
             cwl           = cwl,
             read_latency  = read_latency,
-            write_latency = write_latency,
+            write_latency = 0,
             cmd_latency   = cmd_latency,
             cmd_delay     = cmd_delay,
             bitslips      = 8,
@@ -584,44 +402,98 @@ class DDR5PHY(Module, AutoCSR):
                 self.comb += getattr(self.out, prefix+'ca')[bit].eq(
                     Cat([getattr(phase, prefix).address[bit] for phase in dfi.phases for _ in range (2)]))
 
-            # DQS --------------------------------------------------------------------------------------
+            # Read Control Path ------------------------------------------------------------------------
+            # Creates a delay line of read commands coming from the DFI interface. The output is used to
+            # signal a valid read data to the DFI interface.
+            #
+            # The read data valid is asserted for 1 sys_clk cycle when the data is available on the DFI
+            # interface, the latency is the sum of the OSERDESE2, CAS, ISERDESE2 and Bitslip latencies.
+            rddata_en = TappedDelayLine(
+                signal = Cat([getattr(dfi.phases[i], prefix).rddata_en for i in range(nphases)]),
+                ntaps  = self.settings.read_latency
+            )
+            self.submodules += rddata_en
+
+            rd_window   = Signal(nphases)
+            rd_index    = Signal(max=4*read_latency, reset=((min_read_latency + default_read_latency) >> log2_int(nphases)))
+            rd_offset   = \
+                Signal(max=nphases, reset=((min_read_latency + default_read_latency) % nphases)) if nphases > 1 else Signal(1, reset=0)
+            rd_to_data_dl = getattr(self, prefix+'rtodatadl')
+
+            self.sync += [
+                If(rd_to_data_dl.re,
+                    rd_index.eq((rd_to_data_dl.storage + min_read_latency) >> log2_int(nphases)),
+                    rd_offset.eq((rd_to_data_dl.storage + min_read_latency) & (2**log2_int(nphases)-1)),
+                ),
+            ]
+
+            rd_cases = {}
+            rd_cases[0] = rd_window.eq(rddata_en.taps[rd_index])
+            if nphases > 1:
+                for i in range(1, nphases-1):
+                    rd_cases[i] = rd_window.eq(Cat(rddata_en.taps[rd_index+1][:i], rddata_en.taps[rd_index][i:]))
+
+            self.comb += [
+                Case(rd_offset,
+                    rd_cases,
+                )
+            ]
+
+            self.comb += [
+                getattr(phase, prefix).rddata_valid.eq(rd_window[i] | getattr(self, prefix+'wlevel_en').storage)
+                for i, phase in enumerate(self.dfi.phases)
+            ]
 
             # Write Control Path -----------------------------------------------------------------------
-            wrtap = cwl_sys_latency - 1
+            wrtap = 64//nphases - 1
             assert wrtap >= 0
 
             # Create a delay line of write commands coming from the DFI interface. This taps are used to
             # control DQ/DQS tristates.
             wrdata_en = TappedDelayLine(
-                signal = Cat([getattr(dfi.phases[i], prefix).wrdata_en for i in range(nphases-1, -1, -1)]),
-                ntaps  = wrtap + 2
+                signal = Cat([getattr(dfi.phases[i], prefix).wrdata_en for i in range(nphases)]),
+                ntaps  = wrtap
             )
             self.submodules += wrdata_en
 
-            # Assumptions: nphases = 4
+            wr_window   = Signal(nphases + 2)
+            wr_index    = Signal(max=64//nphases)
+            wr_offset   = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
+            wr_to_dqs_dl = getattr(self, prefix+'wtodqsdl')
 
-            old_tap  = Signal(4)
-            now_tap  = Signal(4)
-            next_tap = Signal(4)
+            self.sync += [
+                If(wr_to_dqs_dl.re,
+                    wr_index.eq(wr_to_dqs_dl.storage[log2_int(nphases):]),
+                    wr_offset.eq(wr_to_dqs_dl.storage[:log2_int(nphases)]) if nphases > 1 else offset.eq(0),
+                ),
+            ]
 
-            # wrtap is at least 5
+            wr_cases = {}
+            if nphases == 1:
+                wr_cases[0] = wr_window.eq(Cat(wrdata_en.taps[wr_index+2], wrdata_en.taps[wr_index+1], wrdata_en.taps[wr_index]))
+            else:
+                for i in range(nphases-2):
+                    wr_cases[i] = wr_window.eq(Cat(wrdata_en.taps[wr_index+1][nphases-i-2:], wrdata_en.taps[wr_index][:nphases-i]))
+                wr_cases[nphases-1] = wr_window.eq(Cat(wrdata_en.taps[wr_index+2][nphases-1],
+                                                   wrdata_en.taps[wr_index+1],
+                                                   wrdata_en.taps[wr_index][0]))
             self.comb += [
-                old_tap.eq( Cat(wrdata_en.taps[wrtap + 1])),
-                now_tap.eq( Cat(wrdata_en.taps[wrtap    ])),
-                next_tap.eq(Cat(wrdata_en.taps[wrtap - 1])),
+                Case(wr_offset,
+                    wr_cases,
+                )
             ]
 
             dqs_oe        = Signal(2*nphases)
             dqs_pattern   = DDR5DQSPattern(
-                old_tap       = old_tap,
-                now_tap       = now_tap,
-                next_tap      = next_tap,
+                nphases       = nphases,
                 wlevel_en     = getattr(self, prefix+'wlevel_en').storage,
-                wlevel_strobe = getattr(self, prefix+'wlevel_strobe').re)
+            )
+            self.comb += dqs_pattern.window.eq(wr_window)
             self.submodules += dqs_pattern
 
             dq_oe        = Signal(2*nphases)
-            dq_pattern   = DDR5DQOePattern(old_tap=old_tap, now_tap=now_tap)
+            dq_pattern   = DDR5DQOePattern(nphases=nphases)
+            self.comb += dq_pattern.window.eq(wr_window)
             self.submodules += dq_pattern
 
             for byte in range(strobes):
@@ -654,17 +526,75 @@ class DDR5PHY(Module, AutoCSR):
                     getattr(self.out, prefix+'dq_oe')[byte].eq(dq_oe_bitslip.o),
                 ]
 
+            # DMI and DQ --------------------------------------------------------------------------
+
+            write_head = Signal(5)
+            wrdata     = []
+            self.sync += write_head.eq(write_head + 1)
+            output_memories = []
+            for i in range(nphases):
+                phase = getattr(dfi.phases[i], prefix)
+                mem = Memory(2 * databits + 2 * strobes, 32)
+                output_memories.append(mem)
+                self.specials += mem
+                write = mem.get_port(write_capable=True)
+                self.comb += [
+                    write.adr.eq(write_head),
+                    write.we.eq(phase.wrdata_en),
+                    write.dat_w.eq(Cat(phase.wrdata, phase.wrdata_mask)),
+                ]
+                read_head = Signal(5, reset= -1 if i<nphases-2 else -2)
+                cases = {}
+                for j in range(nphases):
+                    sub = 0
+                    if i+j < nphases-2:
+                        sub = 1
+                    elif i+j < nphases+2:
+                        sub = 2
+                    else:
+                        sub = 3
+                    cases[j] = read_head.eq(
+                        write_head -
+                        wr_to_dqs_dl.storage[log2_int(nphases):] -
+                        sub)
+                _offset = wr_to_dqs_dl.storage[:log2_int(nphases)] if nphases > 1 else Signal(1, reset=0)
+                self.sync += [
+                    If(wr_to_dqs_dl.re,
+                        Case(_offset,
+                            cases
+                        )
+                    ).Else(
+                        read_head.eq(read_head+1),
+                    ),
+                ]
+                read = mem.get_port(async_read=True)
+                _wrdata = Signal(2 * databits + 2 * strobes)
+                self.comb += [
+                    read.adr.eq(read_head),
+                    _wrdata.eq(read.dat_r),
+                ]
+                wrdata.append(_wrdata)
 
             # DMI --------------------------------------------------------------------------------------
             # DMI signal is used for Data Mask or Data Bus Invertion depending on Mode Registers values.
             # With DM and DBI disabled, this signal is a Don't Care.
             # With DM enabled, masking is performed only when the command used is WRITE-MASKED.
             # We don't support DBI, DM support is configured statically with `masked_write`.
+            _cases = {}
+
+            _wrdata_mem_mask = Signal(2*nphases*strobes)
+            for i in range(nphases):
+                _cases[i] = _wrdata_mem_mask.eq(Cat([wrdata[(i+j+2)%4][2*databits:] for j in range(nphases)]))
+
+            self.comb += [
+                Case(wr_offset,
+                    _cases
+                ),
+            ]
             for byte in range(strobes):
                 if isinstance(masked_write, Signal) or masked_write:
                     dm_i = [
-                        getattr(dfi.phases[i//2], prefix).wrdata_mask[i%2 * strobes + byte]
-                        for i in range(2*nphases)
+                        _wrdata_mem_mask[i * strobes + byte] for i in range(2*nphases)
                     ]
                     dm_o_bitslip = BitSlip(8,
                         i      = dm_i,
@@ -681,18 +611,31 @@ class DDR5PHY(Module, AutoCSR):
             # DQ ---------------------------------------------------------------------------------------
             delayed_rddata = Array([Signal.like(getattr(dfi.phases[0], prefix).rddata) for _ in range(nphases)])
 
-            for bit in range(self.databits):
+            _cases = {}
+
+            _wrdata_mem = Signal(2*nphases*databits)
+            for i in range(nphases):
+                _cases[i] = _wrdata_mem.eq(Cat([wrdata[(i+j+2)%4][:2*databits] for j in range(nphases)]))
+
+            self.comb += [
+                Case(wr_offset,
+                    _cases
+                ),
+            ]
+
+            for bit in range(databits):
                 # output
-                wrdata = [
-                    getattr(dfi.phases[i//2], prefix).wrdata[i%2 * self.databits + bit] for i in range(2*nphases)
+                _wrdata = [
+                    _wrdata_mem[i * self.databits + bit] for i in range(2*nphases)
                 ]
+
                 dq_o_bitslip = BitSlip(8,
-                    i      = Cat(*wrdata),
+                    i      = Cat(*_wrdata),
                     rst    = self.get_rst(bit//dq_dqs_ratio, getattr(self, prefix+'wdly_dq_bitslip_rst').re, prefix),
                     slp    = self.get_inc(bit//dq_dqs_ratio, getattr(self, prefix+'wdly_dq_bitslip').re, prefix),
                     cycles = 1)
 
-                self.submodules += dq_o_bitslip
+                setattr(self.submodules, prefix+f'dq_o_bitslip_{bit}', dq_o_bitslip)
                 self.comb += getattr(self.out, prefix+'dq_o')[bit].eq(dq_o_bitslip.o)
 
                 # input
@@ -707,23 +650,6 @@ class DDR5PHY(Module, AutoCSR):
                 self.comb += dq_i_bs.eq(dq_i_bitslip.o)
                 for i in range(2*nphases):
                     self.comb += getattr(self.dfi.phases[i//2], prefix).rddata[i%2 * self.databits + bit].eq(dq_i_bs[i])
-
-            # Read Control Path ------------------------------------------------------------------------
-            # Creates a delay line of read commands coming from the DFI interface. The output is used to
-            # signal a valid read data to the DFI interface.
-            #
-            # The read data valid is asserted for 1 sys_clk cycle when the data is available on the DFI
-            # interface, the latency is the sum of the OSERDESE2, CAS, ISERDESE2 and Bitslip latencies.
-            rddata_en = TappedDelayLine(
-                signal = reduce(or_, [getattr(dfi.phases[i], prefix).rddata_en for i in range(nphases)]),
-                ntaps  = self.settings.read_latency
-            )
-            self.submodules += rddata_en
-
-            self.comb += [
-                getattr(phase, prefix).rddata_valid.eq(rddata_en.output | getattr(self, prefix+'wlevel_en').storage)
-                for phase in self.dfi.phases
-            ]
 
     def get_rst(self, byte, rst, prefix="", clk="sys"):
         cd_clk = getattr(self.sync, clk)
