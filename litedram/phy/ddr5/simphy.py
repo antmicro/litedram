@@ -5,6 +5,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 from migen import *
+from migen.genlib.cdc import PulseSynchronizer
 
 from litex.soc.interconnect.csr import CSR
 
@@ -56,11 +57,22 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
         else:
             raise NotImplementedError(f"Unspupported DQ:DQS ratio: {dq_dqs_ratio}")
 
+        def cdc(i):
+            o = Signal()
+            psync = PulseSynchronizer("sys", "sys2x")
+            self.submodules += psync
+            self.comb += [
+                psync.i.eq(i),
+                o.eq(psync.o),
+            ]
+            return o
+
         self.submodules += pads
         super().__init__(pads,
             ser_latency       = Latency(sys2x=Serializer.LATENCY),
             des_latency       = Latency(sys=(Deserializer.LATENCY-1 if aligned_reset_zero else Deserializer.LATENCY)),
             phytype           = "DDR5SimPHY",
+            csr_cdc           = cdc,
             with_sub_channels = with_sub_channels,
             rd_extra_delay    = Latency(sys2x=3),
             with_odelay       = with_delays,
