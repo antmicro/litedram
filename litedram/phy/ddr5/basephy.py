@@ -35,8 +35,10 @@ class DDR5Output:
         prefixes = [""] if not with_sub_channels else ["A_", "B_"]
 
         for prefix in prefixes:
-            setattr(self, prefix+'cs_n', [Signal(2*nphases, reset=2*nphases-1, name=name and f"{name}_{i}_cs_n") for i in range(nranks)])
-            setattr(self, prefix+'ca',   [Signal(2*nphases, name=name and f"{name}_{i}_ca") for i in range(14)]) # 2*nphases, as phy will run in ddr mode
+            setattr(self, prefix+'cs_n', [Signal(2*nphases, reset=2**(2*nphases)-1, name=name and f"{name}_{i}_cs_n") for i in range(nranks)])
+            setattr(self, prefix+'ca',   [Signal(2*nphases, name=name and f"{name}_{i}_ca") for i in range(14)])
+            # 2*nphases, as phy will run in ddr mode
+
             setattr(self, prefix+'par',  Signal(2*nphases, name=name and name+"par_n"))
 
             setattr(self, prefix+'dq_o',  [Signal(2*nphases, name=name and f"{name}_{i}_dq_o") for i in range(databits)])
@@ -143,8 +145,8 @@ class DDR5PHY(Module, AutoCSR):
                  sys_clk_freq, ser_latency, des_latency, phytype, with_sub_channels=False,
                  cmd_delay=None, masked_write=False, extended_overlaps_check=False,
                  with_odelay=False, with_clock_odelay=False, with_address_odelay=False,
-                 csr_cdc=None, rd_extra_delay=Latency(sys=0),
-                 default_read_latency=0, default_write_latency=0):
+                 with_idelay=False, with_per_dq_idelay=False, csr_cdc=None,
+                 rd_extra_delay=Latency(sys=0), default_read_latency=0, default_write_latency=0):
 
         self.pads        = pads
         self.memtype     = memtype     = "DDR5"
@@ -157,6 +159,8 @@ class DDR5PHY(Module, AutoCSR):
         self.with_sub_channels         = with_sub_channels
         self.tck         = tck         = 1 / (nphases*sys_clk_freq)
         assert databits % 4 == 0
+
+        self.with_per_dq_idelay = with_per_dq_idelay
 
         # Parameters -------------------------------------------------------------------------------
         def get_cl_cw(memtype, tck):
@@ -197,7 +201,11 @@ class DDR5PHY(Module, AutoCSR):
         # Set to 0, Training PHY will align DQS and DQ for write commands
         # See write leveling training in JESD79-5A
         # Max supported latency is 63 DRAm bus cycles
-        write_latency = 0
+        self.min_write_latency = min_write_latency = (
+            4 + # wrdata_en 0 tap delay
+            4 + # Bitslip
+            2   # We need to look 2 cycles "into the future" to properly generate write preable
+        )
 
         # Registers --------------------------------------------------------------------------------
 
@@ -217,7 +225,7 @@ class DDR5PHY(Module, AutoCSR):
 
         self._l = _l = dict()
 
-        dq_dqs_ratio = databits // strobes
+        self.dq_dqs_ratio = dq_dqs_ratio = databits // strobes
 
         if with_odelay or with_clock_odelay:
             setattr(self, 'ckdly_rst' , CSR(name='ckdly_rst'))
@@ -230,9 +238,13 @@ class DDR5PHY(Module, AutoCSR):
             setattr(self, prefix+'wtodqsdl', CSRStorage(6, name=prefix+'wtodqsdl', reset=default_write_latency))
             setattr(self, prefix+'rtodatadl', CSRStorage(6, name=prefix+'rtodatadl', reset=default_read_latency))
 
-            setattr(self, prefix+'dly_sel', CSRStorage(max(strobes, databits, 14, nranks), name=prefix+'dly_sel'))
+            setattr(self, prefix+'dly_sel', CSRStorage(max(strobes, 14, nranks), name=prefix+'dly_sel'))
             getattr(self, prefix+'dly_sel').storage.attr.add("mr_ff")
             getattr(self, prefix+'dly_sel').storage.attr.add("keep")
+            if with_per_dq_idelay :
+                setattr(self, prefix+'dq_dly_sel', CSRStorage(dq_dqs_ratio))
+                getattr(self, prefix+'dq_dly_sel').storage.attr.add("mr_ff")
+                getattr(self, prefix+'dq_dly_sel').storage.attr.add("keep")
 
             if with_odelay or with_address_odelay:
                 setattr(self, prefix+'csdly_rst' , CSR(name=prefix+'csdly_rst'))
@@ -242,10 +254,12 @@ class DDR5PHY(Module, AutoCSR):
                 setattr(self, prefix+'pardly_rst' , CSR(name=prefix+'pardly_rst'))
                 setattr(self, prefix+'pardly_inc' , CSR(name=prefix+'pardly_inc'))
 
-            setattr(self, prefix+'rdly_dq_rst', CSR(name=prefix+'rdly_dq_rst'))
-            setattr(self, prefix+'rdly_dq_inc', CSR(name=prefix+'rdly_dq_inc'))
-            setattr(self, prefix+'rdly_dqs_rst', CSR(name=prefix+'rdly_dqs_rst'))
-            setattr(self, prefix+'rdly_dqs_inc', CSR(name=prefix+'rdly_dqs_inc'))
+            if with_idelay:
+                setattr(self, prefix+'rdly_dq_rst', CSR(name=prefix+'rdly_dq_rst'))
+                setattr(self, prefix+'rdly_dq_inc', CSR(name=prefix+'rdly_dq_inc'))
+                setattr(self, prefix+'rdly_dqs_rst', CSR(name=prefix+'rdly_dqs_rst'))
+                setattr(self, prefix+'rdly_dqs_inc', CSR(name=prefix+'rdly_dqs_inc'))
+
             setattr(self, prefix+'rdly_dq_bitslip_rst', CSR(name=prefix+'rdly_dq_bitslip_rst'))
             setattr(self, prefix+'rdly_dq_bitslip'    , CSR(name=prefix+'rdly_dq_bitslip'))
             setattr(self, prefix+'rdly_dqs_bitslip_rst', CSR(name=prefix+'rdly_dqs_bitslip_rst'))
@@ -254,19 +268,22 @@ class DDR5PHY(Module, AutoCSR):
             if with_odelay:
                 setattr(self, prefix+'wdly_dq_rst', CSR(name=prefix+'wdly_dq_rst'))
                 setattr(self, prefix+'wdly_dq_inc', CSR(name=prefix+'wdly_dq_inc'))
+                setattr(self, prefix+'wdly_dm_rst', CSR(name=prefix+'wdly_dm_rst'))
+                setattr(self, prefix+'wdly_dm_inc', CSR(name=prefix+'wdly_dm_inc'))
                 setattr(self, prefix+'wdly_dqs_rst', CSR(name=prefix+'wdly_dqs_rst'))
                 setattr(self, prefix+'wdly_dqs_inc', CSR(name=prefix+'wdly_dqs_inc'))
-
 
             setattr(self, prefix+'wdly_dq_bitslip_rst', CSR(name=prefix+'wdly_dq_bitslip_rst'))
             setattr(self, prefix+'wdly_dq_bitslip'    , CSR(name=prefix+'wdly_dq_bitslip'))
             setattr(self, prefix+'wdly_dqs_bitslip_rst', CSR(name=prefix+'wdly_dqs_bitslip_rst'))
             setattr(self, prefix+'wdly_dqs_bitslip'    , CSR(name=prefix+'wdly_dqs_bitslip'))
 
-            _l[prefix+'rdly_dq_rst']  = cdc(getattr(self, prefix+'rdly_dq_rst').re)
-            _l[prefix+'rdly_dq_inc']  = cdc(getattr(self, prefix+'rdly_dq_inc').re)
-            _l[prefix+'rdly_dqs_rst']  = cdc(getattr(self, prefix+'rdly_dqs_rst').re)
-            _l[prefix+'rdly_dqs_inc']  = cdc(getattr(self, prefix+'rdly_dqs_inc').re)
+            if with_idelay:
+                _l[prefix+'rdly_dq_rst']  = cdc(getattr(self, prefix+'rdly_dq_rst').re)
+                _l[prefix+'rdly_dq_inc']  = cdc(getattr(self, prefix+'rdly_dq_inc').re)
+                _l[prefix+'rdly_dqs_rst']  = cdc(getattr(self, prefix+'rdly_dqs_rst').re)
+                _l[prefix+'rdly_dqs_inc']  = cdc(getattr(self, prefix+'rdly_dqs_inc').re)
+
             _l[prefix+'rdly_dq_bitslip_rst']  = cdc(getattr(self, prefix+'rdly_dq_bitslip_rst').re)
             _l[prefix+'rdly_dq_bitslip']  = cdc(getattr(self, prefix+'rdly_dq_bitslip').re)
 
@@ -281,6 +298,8 @@ class DDR5PHY(Module, AutoCSR):
             if with_odelay:
                 _l[prefix+'wdly_dq_rst']  = cdc(getattr(self, prefix+'wdly_dq_rst').re | self._rst.storage)
                 _l[prefix+'wdly_dq_inc']  = cdc(getattr(self, prefix+'wdly_dq_inc').re)
+                _l[prefix+'wdly_dm_rst']  = cdc(getattr(self, prefix+'wdly_dm_rst').re | self._rst.storage)
+                _l[prefix+'wdly_dm_inc']  = cdc(getattr(self, prefix+'wdly_dm_inc').re)
                 _l[prefix+'wdly_dqs_rst'] = cdc(getattr(self, prefix+'wdly_dqs_rst').re | self._rst.storage)
                 _l[prefix+'wdly_dqs_inc'] = cdc(getattr(self, prefix+'wdly_dqs_inc').re)
 
@@ -313,6 +332,11 @@ class DDR5PHY(Module, AutoCSR):
             min_write_latency   = min_write_latency,
             min_read_latency    = min_read_latency,
             with_sub_channels   = with_sub_channels,
+            with_clock_odelay   = with_clock_odelay,
+            with_address_odelay = with_address_odelay,
+            with_odelay         = with_odelay,
+            with_idelay         = with_idelay,
+            with_per_dq_idelay  = with_per_dq_idelay,
         )
 
         # DFI Interface ----------------------------------------------------------------------------
@@ -329,7 +353,7 @@ class DDR5PHY(Module, AutoCSR):
 
         # Simple commands --------------------------------------------------------------------------
         self.comb += self.out.reset_n.eq(Cat((phase.reset_n, phase.reset_n) for phase in dfi.phases))
-        self.comb += [phase.alert_n.eq(self.out.alert_n[i*2] | self.out.alert_n[i*2+1]) for i, phase in enumerate(self.dfi.phases)]
+        self.comb += [phase.alert_n.eq(self.out.alert_n[i*2] & self.out.alert_n[i*2+1]) for i, phase in enumerate(self.dfi.phases)]
 
         for prefix in prefixes:
             # DDR5 Commands --------------------------------------------------------------------------
@@ -530,7 +554,7 @@ class DDR5PHY(Module, AutoCSR):
             output_memories = []
             for i in range(nphases):
                 phase = getattr(dfi.phases[i], prefix)
-                mem = Memory(2 * databits + 2 * strobes, 32)
+                mem = Memory(2 * databits + 2 * strobes, 32, name=f"phase_{i}")
                 output_memories.append(mem)
                 self.specials += mem
                 write = mem.get_port(write_capable=True)
@@ -570,6 +594,7 @@ class DDR5PHY(Module, AutoCSR):
                     _wrdata.eq(read.dat_r),
                 ]
                 wrdata.append(_wrdata)
+                self.specials += read, write
 
             # DMI --------------------------------------------------------------------------------------
             # DMI signal is used for Data Mask or Data Bus Invertion depending on Mode Registers values.
@@ -647,14 +672,27 @@ class DDR5PHY(Module, AutoCSR):
                 for i in range(2*nphases):
                     self.comb += getattr(self.dfi.phases[i//2], prefix).rddata[i%2 * self.databits + bit].eq(dq_i_bs[i])
 
-    def get_rst(self, byte, rst, prefix="", clk="sys"):
+    def get_rst(self, byte, rst, prefix="", clk="sys", dq=False):
         cd_clk = getattr(self.sync, clk)
         t = Signal()
-        cd_clk += t.eq((getattr(self, prefix+'dly_sel').storage[byte] & rst) | self._rst.storage)
+        if not dq or not self.with_per_dq_idelay:
+            cd_clk += t.eq((getattr(self, prefix+'dly_sel').storage[byte] & rst) | self._rst.storage)
+        elif not self.with_per_dq_idelay:
+            cd_clk += t.eq((getattr(self, prefix+'dly_sel').storage[byte//self.dq_dqs_ratio] & rst) | self._rst.storage)
+        else:
+            cd_clk += t.eq((getattr(self, prefix+'dly_sel').storage[byte//self.dq_dqs_ratio] &
+                            getattr(self, prefix+'dq_dly_sel').storage[byte%self.dq_dqs_ratio] & rst) |
+                            self._rst.storage)
         return t
 
-    def get_inc(self, byte, inc, prefix="", clk="sys"):
+    def get_inc(self, byte, inc, prefix="", clk="sys", dq=False):
         cd_clk = getattr(self.sync, clk)
         t = Signal()
-        cd_clk += t.eq(getattr(self, prefix+"dly_sel").storage[byte] & inc)
+        if not dq or not self.with_per_dq_idelay:
+            cd_clk += t.eq(getattr(self, prefix+'dly_sel').storage[byte] & inc)
+        elif not self.with_per_dq_idelay:
+            cd_clk += t.eq(getattr(self, prefix+'dly_sel').storage[byte//self.dq_dqs_ratio] & inc)
+        else:
+            cd_clk += t.eq(getattr(self, prefix+'dly_sel').storage[byte//self.dq_dqs_ratio] &
+                            getattr(self, prefix+'dq_dly_sel').storage[byte%self.dq_dqs_ratio] & inc)
         return t
