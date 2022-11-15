@@ -490,8 +490,15 @@ class DDR5PHY(Module, AutoCSR):
             cmd_delay     = cmd_delay,
             bitslips      = 8,
             strobes       = combined_strobes,
+            min_write_latency   = min_write_latency,
+            min_read_latency    = 2,
             address_lines       = address_lines,
             with_sub_channels   = with_sub_channels,
+            with_clock_odelay   = with_clock_odelay,
+            with_address_odelay = with_address_odelay,
+            with_odelay         = with_odelay,
+            with_idelay         = with_idelay,
+            with_per_dq_idelay  = with_per_dq_idelay,
         )
 
         # DFI Interface ----------------------------------------------------------------------------
