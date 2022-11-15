@@ -145,10 +145,7 @@ def get_clocks(sys_clk_freq):
         "sys":             dict(freq_hz=sys_clk_freq),
         "sys2x":           dict(freq_hz=2*sys_clk_freq),
         "sys4x":           dict(freq_hz=4*sys_clk_freq),
-        "sys4x_ddr":       dict(freq_hz=2*4*sys_clk_freq),                  # RCD cmd sample
-        "sys4x_180":       dict(freq_hz=4*sys_clk_freq, phase_deg=180),     # phy cs
-        "sys4x_180_ddr":   dict(freq_hz=2*4*sys_clk_freq),                  # phy ca
-        "sys4x_90":        dict(freq_hz=4*sys_clk_freq, phase_deg=90),      # phy oe delay
+        "sys4x_ddr":       dict(freq_hz=2*4*sys_clk_freq),
         "sys4x_90_ddr":    dict(freq_hz=2*4*sys_clk_freq, phase_deg=2*90),  # phy dq/dqs IO
     }
     return Clocks(clk_dict)
@@ -195,12 +192,16 @@ class SimSoC(SoCCore):
 
         pads = platform.request("ddr5")
         sim_phy_cls = DDR5SimPHY
+        self.platform.add_source(os.path.join(os.path.dirname(__file__), "iodly.sv"))
         self.submodules.ddrphy = sim_phy_cls(
             sys_clk_freq       = sys_clk_freq,
             aligned_reset_zero = True,
             masked_write       = masked_write,
             dq_dqs_ratio       = dq_dqs_ratio,
-            with_sub_channels  = with_sub_channels
+            with_sub_channels  = with_sub_channels,
+            with_delays        = True,
+            num_of_steps       = 4,
+            step_interval_fs   = 78125,#39062
         )
 
         for p in _io[io_type][0][2:]:
@@ -371,7 +372,7 @@ def main():
     group.add_argument("--trace-start",          default=0,               help="Cycle to start tracing")
     group.add_argument("--trace-end",            default=-1,              help="Cycle to end tracing")
     group.add_argument("--trace-reset",          default=0,               help="Initial traceing state")
-    group.add_argument("--sys-clk-freq",         default="250e6",          help="Core clock frequency")
+    group.add_argument("--sys-clk-freq",         default="200e6",          help="Core clock frequency")
     group.add_argument("--auto-precharge",       action="store_true",     help="Use DRAM auto precharge")
     group.add_argument("--no-refresh",           action="store_true",     help="Disable DRAM refresher")
     group.add_argument("--log-level",            default="all=INFO",      help="Set simulation logging level")
@@ -427,6 +428,7 @@ def main():
         trace_end   = int(args.trace_end),
         pre_run_callback = pre_run_callback,
         jobs="$(nproc)", # so CI doesn't get killed by OOM
+        timing      = True,
     )
     builder.build(run=not args.no_run, **build_kwargs)
 
