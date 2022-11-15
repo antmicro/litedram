@@ -1082,7 +1082,6 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
             r.define("SDRAM_INPUT_DELAY_CAPABLE")
         if phy_settings.with_alert:
             r.define("SDRAM_PHY_ALERT_CAPABLE")
-        r.define("SDRAM_BITSLIP_CAPABLE")
 
     # Define DQ / DQS ratio
     r.define("SDRAM_PHY_DQ_DQS_RATIO", phy_settings.databits // phy_settings.strobes)
@@ -1102,6 +1101,8 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
         r.define("SDRAM_PHY_DDR4_RDIMM")
     if phy_settings.memtype == "DDR5":
         r.define("SDRAM_PHY_ADDRESS_LINES", phy_settings.address_lines)
+        r.define("SDRAM_PHY_MIN_WR_LATENCY", phy_settings.min_write_latency)
+        r.define("SDRAM_PHY_MIN_RD_LATENCY", phy_settings.min_read_latency)
         if phy_settings.with_sub_channels:
             r.define("SDRAM_PHY_SUBCHANNELS")
 

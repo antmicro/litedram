@@ -226,6 +226,12 @@ class PhySettings(Settings):
             bitslips: int = 0,  # number of write/read bitslip taps
             delays: int = 0,  # number of write/read delay taps
             with_alert: bool = False, # phy has CSRs for reading and reseting alert condition
+            # Minimal delay between data being send to phy and them showing on DQ lines
+            # If CLW is delay from write command to data on DQ, SW should add CLW-min_write_latency delay cycles
+            min_write_latency: int = 0,
+            # Minimal delay between read command being send and DQ lines being captured
+            # If CL is delay from read command to data on DQ, SW should add CL-min_read_latency delay cycles
+            min_read_latency: int = 0,
             # PHY training capabilities
             write_leveling: bool = False,
             write_dq_dqs_training: bool = False,
