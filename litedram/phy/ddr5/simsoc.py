@@ -200,7 +200,7 @@ class SimSoC(SoCCore):
             dq_dqs_ratio       = dq_dqs_ratio,
             with_sub_channels  = with_sub_channels,
             with_delays        = True,
-            num_of_steps       = 4,
+            num_of_steps       = 16,
             step_interval_fs   = 78125,#39062
         )
 
