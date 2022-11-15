@@ -141,7 +141,7 @@ class DDR5PHY(Module, AutoCSR):
                  cmd_delay=None, masked_write=False, extended_overlaps_check=False,
                  with_odelay=False, with_clock_odelay=False, with_address_odelay=False,
                  csr_cdc=None, rd_extra_delay=Latency(sys=0),
-                 address_lines=13, default_read_latency=0):
+                 address_lines=13, default_read_latency=0, default_write_latency=0):
 
         self.pads        = pads
         self.memtype     = memtype     = "DDR5"
@@ -224,8 +224,7 @@ class DDR5PHY(Module, AutoCSR):
 
         for prefix in prefixes:
             setattr(self, prefix+'wlevel_en', CSRStorage(name=prefix+'wlevel_en'))
-            setattr(self, prefix+'wtodqsdl', CSRStorage(6, name=prefix+'wtodqsdl', reset=0))
-
+            setattr(self, prefix+'wtodqsdl', CSRStorage(6, name=prefix+'wtodqsdl', reset=default_write_latency))
             setattr(self, prefix+'rtodatadl', CSRStorage(6, name=prefix+'rtodatadl', reset=default_read_latency))
 
             setattr(self, prefix+'dly_sel', CSRStorage(max(strobes, databits, 14, nranks), name=prefix+'dly_sel'))
@@ -311,6 +310,8 @@ class DDR5PHY(Module, AutoCSR):
             min_write_latency   = min_write_latency,
             min_read_latency    = 2,
             address_lines       = address_lines,
+            min_write_latency   = min_write_latency,
+            min_read_latency    = min_read_latency,
             with_sub_channels   = with_sub_channels,
             with_clock_odelay   = with_clock_odelay,
             with_address_odelay = with_address_odelay,
