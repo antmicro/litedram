@@ -40,7 +40,7 @@ class RCDCS(Module):
 
         self.sync += [
             self.ca_ce.eq(1),
-            If(~self.rc_access,
+            If(~self.rc_access | (self.cs_n == 0b11),
                 self.ca_ce.eq(0)
             )
         ]
@@ -84,7 +84,7 @@ class RCDChannel(Module):
 
         # Cross-submodule
         self.sync += [
-            self.control_word.rc_access.eq(self.cs_logic.rc_access),
+            self.cs_logic.rc_access.eq(self.control_word.rc_access),
         ]
 
         # Channel outputs
