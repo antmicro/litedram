@@ -45,12 +45,18 @@ jobs:
           # temporary hack until merged to master
           git -C ../litex remote add antmicro https://github.com/antmicro/litex.git
           git -C ../litex fetch antmicro
-          git -C ../litex checkout antmicro/mdudek/liblitedram_ddr5support
+          git -C ../litex checkout antmicro/mdudek/liblitedram_ddr5support_rw_training
+          git -C ../litex-boards checkout 6c05ddae1ba4d2b363e80001919e4682745cc3cf
 
       # Install RISC-V GCC
       - name: Install RISC-V GCC
         run: |
-          sudo python3 litex_setup.py --gcc=riscv
+          wget https://raw.githubusercontent.com/enjoy-digital/litex/master/litex_setup.py
+          # python3 litex_setup.py gcc
+          curl -L https://static.dev.sifive.com/dev-tools/freedom-tools/v2020.08/riscv64-unknown-elf-gcc-10.1.0-2020.08.2-x86_64-linux-ubuntu14.tar.gz | tar -xzf -
+          mv riscv64-unknown-elf-gcc-10.1.0-2020.08.2-x86_64-linux-ubuntu14 ../riscv64-unknown-elf-gcc
+          sudo mkdir /usr/local/riscv
+          sudo cp -r $PWD/../riscv64-*/* /usr/local/riscv
 
       # Build / Install Verilator
       - name: Build Verilator
