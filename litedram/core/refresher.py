@@ -192,7 +192,7 @@ class ZQCSExecuter(Module):
         ]
 
         self.sync += [
-            If(tlc.trigger & tlc.counter == 0,
+            If(tlc.trigger & (tlc.counter == 0),
                 cmd.a.eq(  2**10),
                 cmd.ba.eq( 0),
                 cmd.cas.eq(0),
