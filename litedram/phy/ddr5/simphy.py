@@ -60,8 +60,8 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
 
         self.submodules += pads
         super().__init__(pads,
-            ser_latency       = Latency(sys2x=Serializer.LATENCY),
-            des_latency       = Latency(sys=Deserializer.LATENCY),
+            ser_latency       = Latency(sys2x=Serializer.LATENCY+1),
+            des_latency       = Latency(sys=(Deserializer.LATENCY-1 if aligned_reset_zero else Deserializer.LATENCY)),
             phytype           = "DDR5SimPHY",
             with_sub_channels = with_sub_channels,
             rd_extra_delay    = Latency(sys2x=2),
@@ -74,12 +74,12 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
         channels_prefix = [""] if not with_sub_channels else ["A_", "B_"]
         delay = lambda sig, cycles: delayed(self, sig, cycles=cycles)
 
-        cs      = dict(clkdiv="sys2x", clk="sys4x_ddr", xilinx=True)
-        cmd     = dict(clkdiv="sys2x", clk="sys4x_ddr", xilinx=True)
-        ddr     = dict(clkdiv="sys2x", clk="sys4x_ddr", xilinx=True)
-        ddr_90  = dict(clkdiv="sys2x", clk="sys4x_90_ddr", xilinx=True)
-        recv_ddr     = dict(clkdiv="sys", clk="sys4x_ddr", xilinx=True)
-        recv_ddr_90  = dict(clkdiv="sys", clk="sys4x_90_ddr", xilinx=True)
+        cs          = dict(clkdiv="sys2x", clk="sys4x_ddr", xilinx=True)
+        cmd         = dict(clkdiv="sys2x", clk="sys4x_ddr", xilinx=True)
+        ddr         = dict(clkdiv="sys2x", clk="sys4x_ddr", xilinx=True)
+        ddr_90      = dict(clkdiv="sys2x", clk="sys4x_90_ddr", xilinx=True)
+        recv_ddr    = dict(clkdiv="sys", clk="sys4x_ddr", xilinx=True)
+        recv_ddr_90 = dict(clkdiv="sys", clk="sys4x_90_ddr", xilinx=True)
 
         # This configuration mimics Xilinx 7-series serdes behavior
         if aligned_reset_zero:
@@ -253,10 +253,8 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
                          name=f'{prefix}dq_o{it}', **ddr_90)
 
                 basephy_dq_i =  getattr(self.out, prefix+'dq_i')[it]
-                in_dq = Signal.like(basephy_dq_i)
-                self.des(o=in_dq, i=getattr(self.pads, prefix+'dq')[it],
-                         name=f'{prefix}dq_i{it}', reset_cnt=-2, **recv_ddr_90)
-                self.comb += basephy_dq_i.eq(in_dq)
+                self.des(o=basephy_dq_i, i=getattr(self.pads, prefix+'dq')[it],
+                         name=f'{prefix}dq_i{it}', reset_cnt=0, **recv_ddr_90)
 
             # Output enable signals can be and should be serialized as well
             out_dqs_t_oe = getattr(self.out, prefix+'dqs_oe')[0]
