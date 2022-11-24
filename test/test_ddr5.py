@@ -630,14 +630,10 @@ class DDR5Tests(unittest.TestCase):
 
     def test_ddr5_dq_in_rddata_valid(self):
         # Test that rddata_valid is set with correct delay
-        min_read_latency = self.phy.min_read_latency
-        read_cycle_latency = min_read_latency//self.NPHASES
-        read_shift = min_read_latency%self.NPHASES
         dfi_sequence = [
             {p: dict(rddata_en=1) for p in range(self.NPHASES)},  # command is issued by MC (appears on next cycle)
-            *[{p: dict(rddata_valid=0) for p in range(self.NPHASES)} for _ in range(read_cycle_latency)],  # nothing is sent during read latency
-            {p: dict(rddata_valid=1) for p in range(read_shift, self.NPHASES)},
-            {p: dict(rddata_valid=1) for p in range(read_shift)},
+            *[{p: dict(rddata_valid=0) for p in range(self.NPHASES)} for _ in range(self.phy.settings.read_latency-1)],  # nothing is sent during read latency
+            {p: dict(rddata_valid=1) for p in range(self.NPHASES)},
             {},
         ]
 
@@ -661,43 +657,56 @@ class DDR5Tests(unittest.TestCase):
 
         expected_data = [
             {
-                3: dict(rddata=0x1122),
-            },{
-                0: dict(rddata=0x3344),
-                1: dict(rddata=0x5566),
-                2: dict(rddata=0x7788),
+                0: dict(rddata=0x1122, rddata_valid=1),
+                1: dict(rddata=0x3344, rddata_valid=1),
+                2: dict(rddata=0x5566, rddata_valid=1),
+                3: dict(rddata=0x7788, rddata_valid=1),
             }
         ]
 
-        def sim_dq(pads):
-            for _ in range(self.NPHASES * 4):  # wait reset
-                yield
-            for _ in range(self.NPHASES * 2):  # wait 1 sysclk cycle
-                yield
-            for cyc in range(self.BURST_LENGTH):  # send a burst of data on pads
+        def sim_dq_gen(i):
+            def sim_dq(pads):
+                for _ in range(self.NPHASES * 4):  # wait reset
+                    yield
+                for _ in range(self.NPHASES * 4):  # wait 2 sysclk cycle
+                    yield
+                for _ in range(self.phy.min_read_latency * 2 + i*2):  # wait minimum read latency without deserialization
+                    yield
+                for cyc in range(self.BURST_LENGTH):  # send a burst of data on pads
+                    for bit in range(self.DATABITS):
+                        yield pads.dq_i[bit].eq(int(self.dq_pattern(bit, dfi_data, "rddata")[cyc]))
+                    yield
                 for bit in range(self.DATABITS):
-                    yield pads.dq_i[bit].eq(int(self.dq_pattern(bit, dfi_data, "rddata")[cyc]))
+                    yield pads.dq_i[bit].eq(0)
                 yield
-            for bit in range(self.DATABITS):
-                yield pads.dq_i[bit].eq(0)
-            yield
+            return sim_dq
 
         dfi_sequence = [
-            {},  # wait 1 sysclk cycle
-            *[{} for _ in range(Deserializer.LATENCY - 1)],
-            {},  # bitslip delay
+            {},  # wait 2 sysclk cycle
+            {},
+            {
+                0: dict(rddata_en=1),
+                1: dict(rddata_en=1),
+                2: dict(rddata_en=1),
+                3: dict(rddata_en=1)
+            },  # wait 1 sysclk cycle
+            *[{} for _ in range(self.phy.settings.read_latency - 1)],
             *expected_data,
             {},
         ]
+        base_phy = self.phy
 
-        self.run_test(
-            dfi_sequence = dfi_sequence,
-            pad_checkers = {},
-            pad_generators = {
-                "sys4x_ddr": sim_dq,
-            },
-            vcd_name="ddr5_dq_in_rddata.vcd"
-        )
+        for i in range(self.phy.max_read_latency+1-self.phy.min_read_latency):
+            self.phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, aligned_reset_zero=True, masked_write=True, default_read_latency=i)
+            self.run_test(
+                dfi_sequence = dfi_sequence,
+                pad_checkers = {},
+                pad_generators = {
+                    "sys4x_ddr": sim_dq_gen(i),
+                },
+                vcd_name=f"ddr5_dq_in_rddata.vcd"
+            )
+        self.phy=base_phy
 
     def test_ddr5_cmd_read_1N_mode(self):
         # Test whole READ command sequence simulating DRAM response and verifying read_latency from MC perspective
