@@ -411,31 +411,86 @@ class DFIInjector(Module, AutoCSR):
             for prefix in prefixes:
                 setattr(self.submodules, prefix.lower()+"cmdinjector", CmdInjector(csr2_dfi.get_subchannel(prefix), masked_writes))
 
+            # DRAM controller is not DFI compliant. It creats only single wrdata_en/rddata_en strobe,
+            # but DFI requires wrdata_en/rddata_en per each data slice,
+            # so in BL16 it should create 8 and in BL8 , it should do 4
+
+            # We need to store at least 16 wrdata_en and rddata en.
+            # Code assumes that wrdata_en/rddata_en are transmitted
+            # in the same DFI cycle and in the phase as WRITE/READ commands
+            data_en_depth = max(16//nphases + 1, 2)
+
+            data_en_delays = [None] * data_en_depth
+
+            for i in range(data_en_depth):
+                assert data_en_delays[i] == None
+                data_en_delays[i] = []
+                for _ in range(nphases):
+                    _input  = Signal(2)
+                    _output = Signal(2)
+                    self.comb += _output.eq(_input)
+                    if i:
+                        tap_line = TappedDelayLine(signal=_input, ntaps=i)
+                        self.submodules += tap_line
+                        self.comb += _output.eq(tap_line.output)
+                    assert i <= data_en_depth, (i, data_en_depth)
+                    data_en_delays[i].append((_input, _output))
+
+            for i, adapter in enumerate(adapters):
+                _bl8_acts = []
+                _bl16_acts = []
+                origin_phase = self.intermediate.phases[i]
+                for j in range(4):
+                    phase_num = (i+j)  % nphases
+                    delay     = (i+j) // nphases
+                    _input, _ = data_en_delays[delay][phase_num]
+                    _bl8_acts.append(_input.eq(_input | Cat(origin_phase.wrdata_en, origin_phase.rddata_en)))
+
+                for j in range(8):
+                    phase_num = (i+j)  % nphases
+                    delay     = (i+j) // nphases
+                    _input, _ = data_en_delays[delay][phase_num]
+                    _bl16_acts.append(_input.eq(_input | Cat(origin_phase.wrdata_en, origin_phase.rddata_en)))
+
+                self.comb += [
+                    If(adapter.bl16,
+                        *_bl16_acts,
+                    ).Else(
+                        *_bl8_acts,
+                    )
+                ]
+
             for ddr5_phase, inter_phase in zip(ddr5_dfi.phases, self.intermediate.phases):
                 self.comb += [
                     ddr5_phase.wrdata.eq(inter_phase.wrdata),
-                    ddr5_phase.wrdata_en.eq(inter_phase.wrdata_en),
                     ddr5_phase.wrdata_mask.eq(inter_phase.wrdata_mask),
-                    ddr5_phase.rddata_en.eq(inter_phase.rddata_en),
                     inter_phase.rddata.eq(ddr5_phase.rddata),
                     inter_phase.rddata_valid.eq(ddr5_phase.rddata_valid),
                 ]
+            for i in range(data_en_depth):
+                for (_, _output), phase in zip(data_en_delays[i], ddr5_dfi.phases):
+                    self.comb += [
+                        phase.wrdata_en.eq(phase.wrdata_en | _output[0]),
+                        phase.rddata_en.eq(phase.rddata_en | _output[1]),
+                    ]
 
-            # DDR5 has commands that take either 1 or 2 CA cycles. It also has
-            # a 2N mode that is enabled by default. It is designed to stretch
-            # single CA packet to 2 clock cycles. It is necessary when CA and
+            # DDR5 has commands that take either 1 or 2 CA cycles.
+            # It also has the 2N mode, that is enabled by default.
+            # It stretches single CA packet to 2 clock cycles. It is necessary when CA and
             # CS aren't trained. Adapter modules from phy/ddr5/commands.py solve
             # translation from the old DDR4 commands to DDR5 type. If an adapter
             # creates 2 beat command, and command was in phase 3 and DFI has 4
-            # phases, we have to carry next part of command to next clock cycle.
+            # phases, we have to carry next part of command to the next clock cycle.
             # This issue is even more profound when 2N mode is used. All commands
             # will take 2 or 4 cycles to be correctly transmitted.
 
-            depth = max(nphases//4, 1)
+            depth = max(4//nphases + 1, 2)
 
-            delays = [[] * depth]
+            delays = [None] * depth
 
             for i in range(depth):
+                assert delays[i] == None
+                delays[i] = []
                 for _ in range(nphases):
                     _input = Signal(14+nranks)
                     tap_line = TappedDelayLine(signal=_input, ntaps=i+1)
