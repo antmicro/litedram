@@ -74,6 +74,7 @@ class DFIPhaseAdapter(Module):
         self.mode_2n  = Array([Signal() for _ in range(2)])
         self.ca       = Array([Signal(14) for _ in range(2)])
         self.valid = Signal()
+        self.bl16  = bl16  = Signal()
 
         # # #
 
@@ -107,21 +108,21 @@ class DFIPhaseAdapter(Module):
 
         self.comb += If(dfi_phase.cs_n == 0,  # require dfi.cs_n
             Case(dfi_cmd, {
-                _cmd["ACT"]: cmds("ACTIVATE"),
-                _cmd["RD"]:  cmds("READ"),
-                _cmd["WR"]:  cmds("WRITE"),
-                _cmd["PRE"]: cmds("PRECHARGE ALL"),
-                _cmd["REF"]: cmds("REFRESH ALL"),
+                _cmd["ACT"]: [*cmds("ACTIVATE"), bl16.eq(0)],
+                _cmd["RD"]:  [*cmds("READ"), bl16.eq(0)],
+                _cmd["WR"]:  [*cmds("WRITE"), bl16.eq(0)],
+                _cmd["PRE"]: [*cmds("PRECHARGE ALL"), bl16.eq(0)],
+                _cmd["REF"]: [*cmds("REFRESH ALL"), bl16.eq(0)],
                 # Use bank address to select command type
                 _cmd["ZQC"]: Case(dfi_phase.bank, {
-                    SpecialCmd.MPC: cmds("MPC"),
-                    SpecialCmd.MRR: cmds("MRR"),
-                    "default": cmds("DESELECT", valid=0),
+                    SpecialCmd.MPC: [*cmds("MPC"), bl16.eq(0)],
+                    SpecialCmd.MRR: [*cmds("MRR"), bl16.eq(0)],
+                    "default": [*cmds("DESELECT", valid=0), bl16.eq(0)],
                 }),
-                _cmd["MRS"]: cmds("MRW"),
-                "default": cmds("DESELECT", valid=0),
+                _cmd["MRS"]: [*cmds("MRW", valid=0), bl16.eq(0)],
+                "default": [*cmds("DESELECT", valid=0), bl16.eq(0)],
             })
-        ).Else(cmds("DESELECT", valid=0))
+        ).Else(*cmds("DESELECT", valid=0), bl16.eq(0))
 
 
 class Command(Module):
