@@ -78,7 +78,6 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
         cmd         = dict(clkdiv="sys2x", clk="sys4x_ddr", xilinx=True)
         ddr         = dict(clkdiv="sys2x", clk="sys4x_ddr", xilinx=True)
         ddr_90      = dict(clkdiv="sys2x", clk="sys4x_90_ddr", xilinx=True)
-        recv_ddr    = dict(clkdiv="sys", clk="sys4x_ddr", xilinx=True)
         recv_ddr_90 = dict(clkdiv="sys", clk="sys4x_90_ddr", xilinx=True)
 
         # This configuration mimics Xilinx 7-series serdes behavior
@@ -190,7 +189,7 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
                          name=f'{prefix}dqs_t_o{it}', **ddr)
                 self.des(o=getattr(self.out, prefix+'dqs_t_i')[it],
                          i=getattr(self.pads, prefix+'dqs_t')[it],
-                         name=f'{prefix}dqs_t_i{it}', **recv_ddr)
+                         name=f'{prefix}dqs_t_i{it}', reset_cnt=0, **recv_ddr_90)
 
                 dqs_c_o = getattr(self.out, prefix+'dqs_c_o')[it]
                 cdc_dqs_c_o = Signal(len(dqs_c_o)//2)
@@ -207,7 +206,7 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
                          name=f'{prefix}dqs_c_o{it}', **ddr)
                 self.des(o=getattr(self.out, prefix+'dqs_c_i')[it],
                          i=getattr(self.pads, prefix+'dqs_c')[it],
-                         name=f'{prefix}dqs_c_i{it}', **recv_ddr)
+                         name=f'{prefix}dqs_c_i{it}', reset_cnt=0, **recv_ddr_90)
 
                 basephy_dm = getattr(self.out, prefix+'dm_n_o')[it]
                 delay_dm = Signal.like(basephy_dm)
