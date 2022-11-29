@@ -84,8 +84,6 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
         if aligned_reset_zero:
             ddr["reset_cnt"] = 0
             ddr["aligned"] = True
-            recv_ddr["reset_cnt"] = 0
-            recv_ddr["aligned"] = True
             cs["reset_cnt"] = 0
             cs["aligned"] = True
             cmd["reset_cnt"] = 0
