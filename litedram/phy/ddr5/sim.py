@@ -167,6 +167,7 @@ class CommandsSim(Module, AutoCSR):
         cmds_enabled = Signal()
         cmd_handlers = OrderedDict(
             MRW  = self.mrw_handler(prefix),
+            MRR  = self.mrr_handler(prefix),
             REF  = self.refresh_handler(prefix),
             ACT  = self.activate_handler(prefix),
             PRE  = self.precharge_handler(prefix),
@@ -299,7 +300,8 @@ class CommandsSim(Module, AutoCSR):
         )
         fsm.act("MRW",
             cmds_enabled.eq(1),
-            If(self.handle_2_tick_cmd & ~cmd_handlers["MRW"] & ~cmd_handlers["MPC"] & ~self.handled_1_tick_cmd,
+            If(self.handle_2_tick_cmd & ~cmd_handlers["MRW"] & ~cmd_handlers["MRR"] & \
+                ~cmd_handlers["MPC"] & ~self.handled_1_tick_cmd,
                 self.log.warn(prefix+"Only MPC/MRW/MRR commands expected before ZQ calibration"),
                 self.log.warn(" ".join("{}=%d".format(cmd) for cmd in cmd_handlers.keys()), *cmd_handlers.values()),
                 self.log.warn(prefix+"Unexpected command: cs_n_low=0b%14b cs_n_high=0b%14b", self.cs_n_low, self.cs_n_high)
@@ -474,6 +476,28 @@ class CommandsSim(Module, AutoCSR):
                     self.mode_regs[ma].eq(op),
                 ),
             ],
+        )
+
+    def mrr_handler(self, prefix):
+        ma  = Signal(8)
+        op  = Signal(8)
+        return self.cmd_one_step("MRR",
+            cond = self.cs_n_low[:5] == 0b10101,
+            comb = [
+                ma.eq(self.cs_n_low[5:13]),
+                op.eq(self.mode_regs[ma]),
+                self.log.info(prefix+"MRR: MR[%d] = 0x%02x", ma, op),
+                self.data_en.input.eq(1),
+                self.data.sink.valid.eq(1),
+                self.data.sink.we.eq(0),
+                self.data.sink.bl_width.eq(16),
+                self.data.sink.mrr.eq(1),
+                self.data.sink.mrr_data.eq(op),
+                If(~self.data.sink.ready,
+                   self.log.error(prefix+"Simulator data FIFO overflow")
+                ),
+            ],
+            handle_cmd = self.handle_2_tick_cmd,
         )
 
     def nop_handler(self, prefix):
@@ -723,6 +747,9 @@ class DataSim(Module, AutoCSR):
             log_level=log_level, clk_freq=clk_freq, prefix=prefix)
         dqs_kwargs = dict(bl_max=bl_max, log_level=log_level, clk_freq=clk_freq, prefix=prefix)
 
+        mrr          = Signal()
+        mrr_data     = Array(Signal() for _ in range(16))
+
         self.submodules.dq_wr = ClockDomainsRenamer(cd_dq_wr)(
             DQWrite(dq=getattr(pads, prefix+'dq'),
                     dmi=getattr(pads, prefix+'dm_n'),
@@ -736,6 +763,8 @@ class DataSim(Module, AutoCSR):
                    bl_width=bl_width,
                    ports=ports,
                    negedge_domain="sys4x_n_dimm",
+                   mrr=mrr,
+                   mrr_data=mrr_data,
                    direct_dq_control=direct_dq_control,
                    dq_value=dq_value,
                    **dq_kwargs)
@@ -751,6 +780,7 @@ class DataSim(Module, AutoCSR):
             DQSRead(dqs_t=getattr(pads, prefix+'dqs_t_i'),
                     dqs_c=getattr(pads, prefix+'dqs_c_i'),
                     bl_width=bl_width,
+                    posedge_domain=cd_dqs_rd,
                     negedge_domain="sys4x_n_dimm",
                     **dqs_kwargs)
         )
@@ -859,7 +889,9 @@ class DataSim(Module, AutoCSR):
             self.dqs_wr.postamble_width.eq(wr_postamble_width),
             [self.dqs_wr.postamble[i].eq(wr_postamble[i]) for i in range(2)],
 
-            self.dqs_rd.trigger.eq(read),
+            self.dqs_rd.trigger.eq(self.read_delay.output),
+
+            self.dqs_rd.preamble_trigger.eq(rd_preamble_trigger),
             self.dqs_rd.preamble_width.eq(rd_preamble_width),
             [self.dqs_rd.preamble[i].eq(rd_preamble[i]) for i in range(8)],
 
@@ -883,6 +915,8 @@ class DataSim(Module, AutoCSR):
                 row.eq(cmds_sim.data.source.row),
                 col.eq(cmds_sim.data.source.col),
                 bl_width.eq(cmds_sim.data.source.bl_width),
+                mrr.eq(cmds_sim.data.source.mrr),
+                *[mrr_data[i+8].eq(cmds_sim.data.source.mrr_data[i]) for i in range(8)],
             ),
         ]
 
@@ -998,36 +1032,61 @@ class DQWrite(DQBurst):
 
 class DQRead(DQBurst):
     def __init__(self, *, dq, ports, direct_dq_control, dq_value,
-                 nrows, ncols, bank, row, col, prefix, **kwargs):
+                 nrows, ncols, bank, row, col, prefix, mrr, mrr_data, **kwargs):
         super().__init__(nrows=nrows, ncols=ncols, row=row, col=col, **kwargs)
         self.add_fsm(
             on_trigger = [
-                self.log.debug(prefix+"READ[%d]: bank=%d, row=%d, col=%d, dq=0x%02x",
-                    self.burst_counter, bank, row, self.col_burst, dq, once=False),
-                ports[bank][0].we.eq(0),
-                ports[bank][0].adr.eq(self.addr_p),
-                NextValue(self.burst_counter, 2),
-                If(ClockSignal(),
-                    dq.eq(ports[bank][0].dat_r),
+                If(~mrr,
+                    ports[bank][0].we.eq(0),
+                    ports[bank][0].adr.eq(self.addr_p),
+                    NextValue(self.burst_counter, 2),
+                    If(ClockSignal(),
+                        dq.eq(ports[bank][0].dat_r),
+                    ),
+                    self.log.debug(prefix+"P_READ[%d]: bank=%d, row=%d, col=%d, dq=0x%02x",
+                        self.burst_counter, bank, row, self.col_burst, dq),
+                ).Else(
+                    NextValue(self.burst_counter, 2),
+                    If(ClockSignal(),
+                        *[dq[i].eq(mrr_data[self.burst_counter]^(i&1)) for i in range(len(dq))],
+                    ),
+                    self.log.debug(prefix+"P_MRR[%d]: dq=0x%02x",
+                        self.burst_counter, dq),
                 )
             ],
             ops = [
-                self.log.debug(prefix+"READ[%d]: bank=%d, row=%d, col=%d, dq=0x%02x",
-                    self.burst_counter, bank, row, self.col_burst, dq, once=False),
-                ports[bank][0].we.eq(0),
-                ports[bank][0].adr.eq(self.addr_p),
-                If(ClockSignal(),
-                    dq.eq(ports[bank][0].dat_r),
+                If(~mrr,
+                    ports[bank][0].we.eq(0),
+                    ports[bank][0].adr.eq(self.addr_p),
+                    If(ClockSignal(),
+                        dq.eq(ports[bank][0].dat_r),
+                    ),
+                    self.log.debug(prefix+"P_READ[%d]: bank=%d, row=%d, col=%d, dq=0x%02x",
+                        self.burst_counter, bank, row, self.col_burst, dq, once=False),
+                ).Else(
+                    If(ClockSignal(),
+                        *[dq[i].eq(mrr_data[self.burst_counter]^(i&1)) for i in range(len(dq))],
+                    ),
+                    self.log.debug(prefix+"P_MRR[%d]: dq=0x%02x",
+                        self.burst_counter, dq),
                 )
             ],
             n_ops = [
-                self.log.debug(prefix+"READ[%d]: bank=%d, row=%d, col=%d, dq=0x%02x",
-                    self.burst_counter_n, bank, row, self.col_burst, dq, once=False),
-                ports[bank][1].we.eq(0),
-                ports[bank][1].adr.eq(self.addr_n),
-                If(ClockSignal(self.cd_negedge),
-                    dq.eq(ports[bank][1].dat_r),
-                ),
+                If(~mrr,
+                    ports[bank][1].we.eq(0),
+                    ports[bank][1].adr.eq(self.addr_n),
+                    If(ClockSignal(self.cd_negedge),
+                        dq.eq(ports[bank][1].dat_r),
+                    ),
+                    self.log.debug(prefix+"N_READ[%d]: bank=%d, row=%d, col=%d, dq=0x%02x",
+                        self.burst_counter_n, bank, row, self.col_burst, dq, once=False),
+                ).Else(
+                    If(ClockSignal(),
+                        *[dq[i].eq(mrr_data[self.burst_counter]^(i&1)) for i in range(len(dq))],
+                    ),
+                    self.log.debug(prefix+"N_MRR[%d]: dq=0x%02x",
+                        self.burst_counter, dq),
+                )
             ],
         )
         self.comb += [
@@ -1273,9 +1332,8 @@ class DQSWrite(DataBurst):
         n_pre.finalize()
 
 class DQSRead(DataBurst):
-    def __init__(self, *, dqs_t, dqs_c, prefix, negedge_domain, **kwargs):
+    def __init__(self, *, dqs_t, dqs_c, prefix, posedge_domain, negedge_domain, **kwargs):
         super().__init__(**kwargs, negedge_domain=negedge_domain)
-        dqs0 = Signal()
 
         self.preamble_trigger   = Signal()
         self.preamble_width     = Signal(max=8)
@@ -1284,14 +1342,57 @@ class DQSRead(DataBurst):
         self.postamble_width    = Signal(max=2)
         self.postamble          = Array(Signal() for _ in range(2))
 
-        clk = ClockSignal()
-        n_clk = ClockSignal(negedge_domain)
+        clk = ClockSignal(posedge_domain)
 
-        self.add_fsm(
-            ops = [],
-            n_ops = [],
-            on_trigger = [],
+        p_pre_counter = Signal(max=8)
+        n_pre_counter = Signal(max=8)
+        self.submodules.p_pre = p_pre = FSM()
+        self.submodules.n_pre = n_pre = ClockDomainsRenamer(self.cd_negedge)(FSM())
+        p_pre.act("IDLE",
+            NextValue(p_pre_counter, 0),
+            If(self.preamble_trigger,
+                NextState("PRECOUNT"),
+            )
+        )
+        p_pre.act("PRECOUNT",
+            *[i.eq(self.preamble[p_pre_counter] & clk) for i in dqs_t],
+            *[i.eq(~self.preamble[p_pre_counter] & clk) for i in dqs_c],
+            NextValue(p_pre_counter, p_pre_counter + 2),
+            If((p_pre_counter == self.preamble_width - 2),
+                NextValue(p_pre_counter, 0),
+                NextState("IDLE"),
+            ),
+        )
+        n_pre.act("IDLE",
+            NextValue(n_pre_counter, 1),
+            If(self.preamble_trigger,
+                NextState("DELAY"),
+            ),
+        )
+        n_pre.act("DELAY",
+            NextState("PRECOUNT"),
+        )
+        n_pre.act("PRECOUNT",
+            *[i.eq(self.preamble[n_pre_counter] & clk) for i in dqs_t],
+            *[i.eq(~self.preamble[n_pre_counter] & clk) for i in dqs_c],
+            NextValue(n_pre_counter, n_pre_counter + 2),
+            If((n_pre_counter == self.preamble_width - 1),
+                NextValue(n_pre_counter, 0),
+                NextState("IDLE"),
+            ),
         )
 
-        self.comb += [If(self.trigger|self.fsm.ongoing("BURST"),i.eq(clk)) for i in dqs_t] +\
-                     [If(self.trigger|self.fsm.ongoing("BURST"),i.eq(~clk)) for i in dqs_c]
+        self.add_fsm(
+            ops = [
+                *[i.eq(clk) for i in dqs_t],
+                *[i.eq(~clk) for i in dqs_c],
+            ],
+            n_ops = [
+                *[i.eq(clk) for i in dqs_t],
+                *[i.eq(~clk) for i in dqs_c],
+            ],
+            on_trigger = [
+                *[i.eq(clk) for i in dqs_t],
+                *[i.eq(~clk) for i in dqs_c],
+            ],
+        )
