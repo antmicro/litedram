@@ -36,7 +36,7 @@ class SimSerDesMixin:
 # Platform -----------------------------------------------------------------------------------------
 
 class SimPad(Settings):
-    def __init__(self, name, width, io=False):
+    def __init__(self, name, width, io=False, granularity=-1):
         self.set_attributes(locals())
 
 
@@ -59,12 +59,25 @@ class SimulationPads(Module):
                 setattr(self, pad.name, Signal(pad.width))
                 setattr(self, o, Signal(pad.width, name=o))
                 setattr(self, i, Signal(pad.width, name=i))
-                setattr(self, oe, Signal(name=oe))
-                self.comb += If(getattr(self, oe),
-                    getattr(self, pad.name).eq(getattr(self, o))
-                ).Else(
-                    getattr(self, pad.name).eq(getattr(self, i))
-                )
+                if pad.granularity == -1:
+                    setattr(self, oe, Signal(name=oe))
+                    self.comb += If(getattr(self, oe),
+                        getattr(self, pad.name).eq(getattr(self, o))
+                    ).Else(
+                        getattr(self, pad.name).eq(getattr(self, i))
+                    )
+                else:
+                    gran = pad.granularity
+                    width = pad.width
+                    assert width % gran == 0, "granularity must divide width"
+                    setattr(self, oe, Signal(width//gran, name=oe))
+                    for it in range(width//gran):
+                        start, stop = (it*gran, (it+1)*gran)
+                        self.comb += [If(getattr(self, oe)[it],
+                            getattr(self, pad.name)[start:stop].eq(getattr(self, o)[start:stop])
+                        ).Else(
+                            getattr(self, pad.name)[start:stop].eq(getattr(self, i)[start:stop])
+                        )]
             else:
                 setattr(self, pad.name, Signal(pad.width, name=pad.name))
 
@@ -210,6 +223,68 @@ class SimLogger(Module, AutoCSR):
                 fmt = f"[%16d ps] {fmt}"
                 args = (self.time_ps, *args)
             self.sync += If((level >= self.level) & cond, Display(fmt, *args))
+
+class SimLoggerComb(Module, AutoCSR):
+    """Logger for use in simulation
+
+    This module allows for easier message logging when running simulation designs.
+    The logger can be used from `comb` context so it the methods can be directly
+    used inside `FSM` code. It also provides logging levels that can be used to
+    filter messages, either by specifying the default `log_level` or in runtime
+    by driving to the `level` signal or using a corresponding CSR.
+    """
+    # Allows to use Display inside FSM and to filter log messages by level (statically or dynamically)
+    DEBUG = 0
+    INFO  = 1
+    WARN  = 2
+    ERROR = 3
+    NONE  = 4
+
+    # Regex pattern for parsing logs
+    LOG_PATTERN = re.compile(r"\[\s*{time} ps] \[{level}]\s*{msg}".format(
+        time  = ng("time", r"[0-9]+"),
+        level = ng("level", r"DEBUG|INFO|WARN|ERROR"),
+        msg   = ng("msg", ".*"),
+    ))
+
+    def __init__(self, log_level=INFO, use_time=False, with_csrs=False):
+        self.ops = []
+        self.level = Signal(reset=log_level, max=self.NONE + 1)
+        self.use_time = use_time
+        if with_csrs:
+            self.add_csrs()
+
+    def debug(self, fmt, *args, **kwargs):
+        return self.log("[DEBUG] " + fmt, *args, level=self.DEBUG, **kwargs)
+
+    def info(self, fmt, *args, **kwargs):
+        return self.log("[INFO] " + fmt, *args, level=self.INFO, **kwargs)
+
+    def warn(self, fmt, *args, **kwargs):
+        return self.log("[WARN] " + fmt, *args, level=self.WARN, **kwargs)
+
+    def error(self, fmt, *args, **kwargs):
+        return self.log("[ERROR] " + fmt, *args, level=self.ERROR, **kwargs)
+
+    def log(self, fmt, *args, level=DEBUG, once=True):
+        cond = Signal()
+        if once:  # make the condition be triggered only on rising edge
+            condition = edge(self, cond)
+        else:
+            condition = cond
+
+        self.ops.append((level, condition, fmt, args))
+        return cond.eq(1)
+
+    def add_csrs(self):
+        self._level = CSRStorage(len(self.level), reset=self.level.reset.value)
+        self.comb += self.level.eq(self._level.storage)
+
+    def do_finalize(self):
+        for level, cond, fmt, args in self.ops:
+            if self.use_time:
+                fmt = f"[%0t %s] {fmt}\", $time/1000, \"ps"
+            self.comb += If((level >= self.level) & cond, Display(fmt, *args))
 
 def log_level_getter(log_level):
     """Parse logging level description
