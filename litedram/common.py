@@ -244,6 +244,18 @@ class PhySettings(Settings):
             with_clock_odelay: bool = False, # Concrete PHY has ODELAYs on clk lines
             with_odelay: bool = False, # Concrete PHY has ODELAYs on all lines: CLK, CS/CA, DQ/DQS
             with_idelay: bool = False, # Concrete PHY has IDELAYs on DQ/DQS lines
+            # DFI timings
+            t_ctrl_delay: int = 0,  # Time from the DFI command to its appearance on DRAM bus
+            t_parin_lat: int = 0,   # Time from the DFI command to its parity
+            t_cmd_lat: int = 0,     # Time from the CS to DFI command
+            t_phy_wrdata: int  = 0, # Time from the wrdata_en to wrdata an wrdata_mask
+            t_phy_wrlat: int = 0,   # Time from the DFI Write command to wrdata_en
+            t_phy_wrcsgap: int = 0, # Additional delay when changing physical ranks (wrdata_cs/cs)
+            t_phy_wrcslat: int = 0, # Time from the DFI Write command to wrdata_cs
+            t_phy_rdlat: int = 0,   # Max delay from the DFI rddata_en to rddata_valid
+            t_rddata_en: int = 0,   # Time from the DFI Read command to rddata_en
+            t_phy_rdcsgap: int  = 0,# Additional delay when changing physical ranks (rddata_cs/cs)
+            t_phy_rdcslat: int = 0, # Time from the DFI Write command to rddata_cs
         ):
         if strobes is None:
             strobes = databits // 8
