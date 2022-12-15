@@ -1079,7 +1079,6 @@ def get_sdram_phy_c_header(phy_settings, timing_settings):
             r.define("SDRAM_FULL_OUTPUT_DELAY_CAPABLE")
         if phy_settings.with_idelay:
             r.define("SDRAM_INPUT_DELAY_CAPABLE")
-        r.define("SDRAM_BITSLIP_CAPABLE")
 
     # Define DQ / DQS ratio
     r.define("SDRAM_PHY_DQ_DQS_RATIO", phy_settings.databits // phy_settings.strobes)
