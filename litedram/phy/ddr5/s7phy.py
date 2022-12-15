@@ -321,8 +321,8 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                     self.odelaye2(
                         din  = dq_ser,
                         dout = dq_dly,
-                        rst  = self.get_rst(it, _l[prefix+'wdly_dq_rst'], prefix, "sys2x"),
-                        inc  = self.get_inc(it, _l[prefix+'wdly_dq_inc'], prefix, "sys2x"),
+                        rst  = self.get_rst(it//modules, _l[prefix+'wdly_dq_rst'], prefix, "sys2x"),
+                        inc  = self.get_inc(it//modules, _l[prefix+'wdly_dq_inc'], prefix, "sys2x"),
                         clk="sys2x",
                     )
                 self.iobuf(
@@ -339,8 +339,8 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                 self.idelaye2(
                     din  = dq_i,
                     dout = dq_i_dly,
-                    rst  = self.get_rst(it, _l[prefix+'rdly_dq_rst'], prefix, "sys2x"),
-                    inc  = self.get_inc(it, _l[prefix+'rdly_dq_inc'], prefix, "sys2x"),
+                    rst  = self.get_rst(it//modules, _l[prefix+'rdly_dq_rst'], prefix, "sys2x"),
+                    inc  = self.get_inc(it//modules, _l[prefix+'rdly_dq_inc'], prefix, "sys2x"),
                     clk="sys2x",
                 )
                 self.iserdese2_ddr(

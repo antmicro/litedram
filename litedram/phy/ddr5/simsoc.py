@@ -202,6 +202,7 @@ class SimSoC(SoCCore):
             dq_dqs_ratio       = dq_dqs_ratio,
             with_sub_channels  = with_sub_channels,
             address_lines      = sdram_module.address_bits,
+            default_write_latency   = 20,
         )
 
         for p in _io[io_type][0][2:]:

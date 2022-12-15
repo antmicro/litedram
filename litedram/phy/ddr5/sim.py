@@ -131,10 +131,12 @@ class CommandsSim(Module, AutoCSR):
                 registers.append(Signal(8, reset=8))
             elif i == 15:
                 registers.append(Signal(8, reset=3))
-            elif i == 28:
+            elif i == 26:
                 registers.append(Signal(8, reset=0x5A))
-            elif i == 29:
+            elif i == 27:
                 registers.append(Signal(8, reset=0x3C))
+            elif i == 30:
+                registers.append(Signal(8, reset=0xFE))
             else:
                 registers.append(Signal(8))
 
@@ -491,11 +493,14 @@ class CommandsSim(Module, AutoCSR):
 
     def lfsr(self, reg):
         t = [1, 2, 4, 8, 17, 35, 71, 142, 28, 56, 113, 226, 196, 137, 18, 37] # First 16 bits from LFSR
+        temp = []
         ret = [Signal() for _ in range(16)]
         for i in range(16):
+            temp.append([])
             for j in range(8):
                if t[i] & 1<<j:
-                    self.comb += ret[i].eq(ret[i] ^ reg[j])
+                    temp[i].append(reg[j])
+        self.comb += [ret[i].eq(reduce(xor, temp[i])) for i in range(16)]
         return ret
 
     def mrr_handler(self, prefix):
@@ -1154,9 +1159,9 @@ class DQRead(DQBurst):
                 ).Else(
                     If(ClockSignal(),
                         *[If(~mrr_sel[i],
-                            dq[i].eq(mrr_data0[self.burst_counter]^mrr_inv[i])
+                            dq[i].eq(mrr_data0[self.burst_counter_n]^mrr_inv[i])
                           ).Else(
-                            dq[i].eq(mrr_data1[self.burst_counter]^mrr_inv[i])
+                            dq[i].eq(mrr_data1[self.burst_counter_n]^mrr_inv[i])
                           ) for i in range(len(dq))],
                     ),
                     self.log.debug(prefix+"N_MRR[%d]: dq=0x%02x",
@@ -1505,7 +1510,7 @@ class DQSRead(DataBurst):
         self.comb += [
             If(read_pre_training & \
                 p_pre.ongoing("IDLE") & \
-                n_pre.ongoing("IDLE") & \
+                (n_pre.ongoing("IDLE") | n_pre.ongoing("DELAY")) & \
                 self.fsm.ongoing("IDLE") & \
                 self.n_fsm.ongoing("IDLE"),
                 *[i.eq(0) for i in dqs_t],
