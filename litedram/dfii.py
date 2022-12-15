@@ -284,15 +284,25 @@ class CmdInjector(Module, AutoCSR):
             self._rddata.status.eq(self.rddata[self._rddata_select.storage])
         ]
 
-        rddata_valids = [phase.rddata_valid for phase in phases]
-        any_rddata_valid = reduce(or_, rddata_valids)
+        self.rddata_valids    = rddata_valids    = Array([Signal(4) for _ in range(len(phases))])
+        self.comb += [
+            rddata_valids[i].eq(
+                reduce(or_,
+                    [phase.rddata_valid[j] for j in range(len(phase.rddata_valid))]
+                )
+            ) for i, phase in enumerate(phases)]
 
-        self.read_fsm = read_fsm = FSM()
-        read_cnt = Signal(max=9)
-        read_counts_tmp = Array(Signal(max=9) for _ in range(8))
+        self.any_rddata_valid = any_rddata_valid = Signal()
+        self.comb += any_rddata_valid.eq(reduce(or_, rddata_valids))
+
+        self.submodules.read_fsm = read_fsm = FSM()
+        self.read_cnt = read_cnt = Signal(max=9)
+        self.read_counts_tmp = read_counts_tmp = Array(Signal(4) for _ in range(8))
+
         read_fsm.act("IDLE",
+            NextValue(read_cnt, 0),
             If(any_rddata_valid,
-                *[read_counts_tmp[i].eq(read_cnt + reduce(add, rddata_valids[:i], 0)) for i, _ in enumerate(phases)],
+                *[read_counts_tmp[i].eq(read_cnt + reduce(add, rddata_valids[:i], 0)) for i in range(len(phases))],
                 *[If(phase.rddata_valid,
                     NextValue(self.rddata[read_counts_tmp[i]], phases[i].rddata)
                 ) for i, phase in enumerate(phases)],
@@ -302,13 +312,14 @@ class CmdInjector(Module, AutoCSR):
         )
         read_fsm.act("CAPTURE",
             If(any_rddata_valid,
-                *[read_counts_tmp[i].eq(read_cnt + reduce(add, rddata_valids[:i], 0)) for i, _ in enumerate(phases)],
+                *[read_counts_tmp[i].eq(read_cnt + reduce(add, rddata_valids[:i], 0)) for i in range(len(phases))],
                 *[If(phase.rddata_valid,
                     NextValue(self.rddata[read_counts_tmp[i]], phase.rddata),
                 ) for i, phase in enumerate(phases)],
                 NextValue(read_cnt, (read_cnt + reduce(add, rddata_valids))),
             ),
-            If((self._rddata_capture_cnt.storage == read_cnt),
+            If((self._rddata_capture_cnt.storage <= read_cnt),
+                NextValue(read_cnt, 0),
                 NextState("IDLE"),
             ),
         )
