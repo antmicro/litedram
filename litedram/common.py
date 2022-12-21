@@ -224,6 +224,7 @@ class PhySettings(Settings):
             cmd_delay: Optional[int] = None,  # used to force cmd delay during initialization in BIOS
             bitslips: int = 0,  # number of write/read bitslip taps
             delays: int = 0,  # number of write/read delay taps
+            with_alert: bool = False, # phy has CSRs for reading and reseting alert condition
             # PHY training capabilities
             write_leveling: bool = False,
             write_dq_dqs_training: bool = False,
