@@ -155,6 +155,7 @@ class S7DDRPHY(Module, AutoCSR):
             delays                    = 32,
             bitslips                  = 8,
             with_per_dq_idelay        = with_per_dq_idelay,
+            with_alert                = hasattr(pads, "alert_n"),
         )
 
         if is_rdimm:
@@ -222,6 +223,30 @@ class S7DDRPHY(Module, AutoCSR):
                     o_O  = pads.clk_p[i],
                     o_OB = pads.clk_n[i]
                 )
+
+            # Return -------------------------------------------------------------------------------
+
+            if hasattr(pads, "alert_n"):
+                self.alert = Signal()
+                self._alert     = CSRStatus()
+                self._rst_alert = CSR()
+                alert_n_ = Signal()
+                self.specials += Instance("IBUF",
+                    p_BUF_LOW_PWR = "False",
+                    p_IOSTANDARD  = "LVCMOS12",
+                    i_I = getattr(pads, "alert_n"),
+                    o_O = alert_n_,
+                )
+                self.comb += [
+                    self._alert.status.eq(self.alert),
+                ]
+                self.sync += [
+                    If(~alert_n_,
+                        self.alert.eq(1),
+                    ).Elif(self._rst_alert.re,
+                        self.alert.eq(0),
+                    )
+                ]
 
             # Commands -----------------------------------------------------------------------------
             pads_ba = Signal(bankbits)
