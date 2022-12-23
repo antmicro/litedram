@@ -36,7 +36,7 @@ class SimSerDesMixin:
 # Platform -----------------------------------------------------------------------------------------
 
 class SimPad(Settings):
-    def __init__(self, name, width, io=False):
+    def __init__(self, name, width, io=False, granularity=-1):
         self.set_attributes(locals())
 
 
@@ -59,12 +59,25 @@ class SimulationPads(Module):
                 setattr(self, pad.name, Signal(pad.width))
                 setattr(self, o, Signal(pad.width, name=o))
                 setattr(self, i, Signal(pad.width, name=i))
-                setattr(self, oe, Signal(name=oe))
-                self.comb += If(getattr(self, oe),
-                    getattr(self, pad.name).eq(getattr(self, o))
-                ).Else(
-                    getattr(self, pad.name).eq(getattr(self, i))
-                )
+                if pad.granularity == -1:
+                    setattr(self, oe, Signal(name=oe))
+                    self.comb += If(getattr(self, oe),
+                        getattr(self, pad.name).eq(getattr(self, o))
+                    ).Else(
+                        getattr(self, pad.name).eq(getattr(self, i))
+                    )
+                else:
+                    gran = pad.granularity
+                    width = pad.width
+                    assert width % gran == 0, "granularity must divide width"
+                    setattr(self, oe, Signal(width//gran, name=oe))
+                    for it in range(width//gran):
+                        start, stop = (it*gran, (it+1)*gran)
+                        self.comb += [If(getattr(self, oe)[it],
+                            getattr(self, pad.name)[start:stop].eq(getattr(self, o)[start:stop])
+                        ).Else(
+                            getattr(self, pad.name)[start:stop].eq(getattr(self, i)[start:stop])
+                        )]
             else:
                 setattr(self, pad.name, Signal(pad.width, name=pad.name))
 

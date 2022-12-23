@@ -192,7 +192,8 @@ class CmdInjector(Module, AutoCSR):
         # Wrdata path
 
         self._wrdata_select = CSRStorage(int(8).bit_length())
-        self._wrdata = CSRStorage(wrdata_width)
+        self._wrdata   = CSRStorage(wrdata_width)
+        self._wrdata_s = CSRStatus(wrdata_width)
         self._wrdata_store = CSR()
 
         self.wrdata = Array(Signal(wrdata_width) for _ in range(8)) # DDR5 max length BL/2
@@ -201,6 +202,10 @@ class CmdInjector(Module, AutoCSR):
             If(self._wrdata_store.re,
                 self.wrdata[self._wrdata_select.storage].eq(self._wrdata.storage)
             ),
+        ]
+
+        self.sync += [
+            self._wrdata_s.status.eq(self.wrdata[self._wrdata_select.storage])
         ]
 
         for phase in phases:

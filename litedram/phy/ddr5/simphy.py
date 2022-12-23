@@ -22,17 +22,17 @@ class DDR5SimulationPads(SimulationPads):
             SimPad("alert_n", 1),
         ]
         per_channel = [
-            ('cs_n', nranks, False),
-            ('ca', 14, False),
-            ('par', 1, False),
-            ('dq', databits, True),
-            ('dm_n',  databits // dq_dqs_ratio, True),
-            ('dqs_t',  databits // dq_dqs_ratio, True),
-            ('dqs_c',  databits // dq_dqs_ratio, True),
+            ('cs_n', nranks, False, -1),
+            ('ca', 14, False, -1),
+            ('par', 1, False, -1),
+            ('dq', databits, True, dq_dqs_ratio),
+            ('dm_n',  databits // dq_dqs_ratio, True, 1),
+            ('dqs_t',  databits // dq_dqs_ratio, True, 1),
+            ('dqs_c',  databits // dq_dqs_ratio, True, 1),
         ]
         channels_prefix = [""] if not with_sub_channels else ["A_", "B_"]
         return common + \
-                [SimPad(prefix+name, size, io) for prefix in channels_prefix for name, size, io in per_channel]
+                [SimPad(prefix+name, size, io, gran) for prefix in channels_prefix for name, size, io, gran in per_channel]
 
 
 class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
@@ -40,18 +40,15 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
 
     For simulation purpose two additional "DDR" clock domains are requires.
     """
-    def __init__(self, aligned_reset_zero=False, dq_dqs_ratio=8, nranks=1, with_sub_channels=False, **kwargs):
-        databits = 0
+    def __init__(self, aligned_reset_zero=False, dq_dqs_ratio=8, nranks=1, with_sub_channels=False, databits=8, **kwargs):
         if dq_dqs_ratio == 8:
-            databits=8
-            pads = DDR5SimulationPads(databits=8,
+            pads = DDR5SimulationPads(databits=databits,
                                       nranks=nranks,
                                       dq_dqs_ratio=8,
                                       with_sub_channels=with_sub_channels)
         elif dq_dqs_ratio == 4:
-            databits=4
             # databits length taken from DDR5 Tester
-            pads = DDR5SimulationPads(databits=4,
+            pads = DDR5SimulationPads(databits=databits,
                                       nranks=nranks,
                                       dq_dqs_ratio=4,
                                       with_sub_channels=with_sub_channels)
@@ -254,52 +251,53 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
                          name=f'{prefix}dq_i{it}', reset_cnt=0, **recv_ddr_90)
 
             # Output enable signals can be and should be serialized as well
-            out_dqs_t_oe = getattr(self.out, prefix+'dqs_oe')[0]
-            cdc_out_dqs_t_oe = Signal(len(out_dqs_t_oe)//2)
-            simple_cdc = SimpleCDC(
-                clkdiv="sys", clk="sys2x",
-                i_dw=len(out_dqs_t_oe), o_dw=len(cdc_out_dqs_t_oe),
-                i=out_dqs_t_oe, o=cdc_out_dqs_t_oe,
-                name=f"{prefix}dqs_t_oe",
-                register=True,
-            )
-            self.submodules += simple_cdc
-            self.ser(i=cdc_out_dqs_t_oe,
-                     o=getattr(self.pads, prefix+'dqs_t_oe'),
-                     name=f'{prefix}dqs_t_oe', **ddr)
+            for strobe in range(databits//dq_dqs_ratio):
+                out_dqs_t_oe = getattr(self.out, prefix+'dqs_oe')[strobe]
+                cdc_out_dqs_t_oe = Signal(len(out_dqs_t_oe)//2)
+                simple_cdc = SimpleCDC(
+                    clkdiv="sys", clk="sys2x",
+                    i_dw=len(out_dqs_t_oe), o_dw=len(cdc_out_dqs_t_oe),
+                    i=out_dqs_t_oe, o=cdc_out_dqs_t_oe,
+                    name=f"{prefix}dqs_t_oe",
+                    register=True,
+                )
+                self.submodules += simple_cdc
+                self.ser(i=cdc_out_dqs_t_oe,
+                         o=getattr(self.pads, prefix+'dqs_t_oe')[strobe],
+                         name=f'{prefix}dqs_t_oe', **ddr)
 
-            out_dqs_c_oe = getattr(self.out, prefix+'dqs_oe')[0]
-            cdc_out_dqs_c_oe = Signal(len(out_dqs_c_oe)//2)
-            simple_cdc = SimpleCDC(
-                clkdiv="sys", clk="sys2x",
-                i_dw=len(out_dqs_c_oe), o_dw=len(cdc_out_dqs_c_oe),
-                i=out_dqs_c_oe, o=cdc_out_dqs_c_oe,
-                name=f"{prefix}dqs_c_oe",
-                register=True,
-            )
-            self.submodules += simple_cdc
-            self.ser(i=cdc_out_dqs_c_oe,
-                     o=getattr(self.pads, prefix+'dqs_c_oe'),
-                     name=f'{prefix}dqs_c_oe', **ddr)
+                out_dqs_c_oe = getattr(self.out, prefix+'dqs_oe')[strobe]
+                cdc_out_dqs_c_oe = Signal(len(out_dqs_c_oe)//2)
+                simple_cdc = SimpleCDC(
+                    clkdiv="sys", clk="sys2x",
+                    i_dw=len(out_dqs_c_oe), o_dw=len(cdc_out_dqs_c_oe),
+                    i=out_dqs_c_oe, o=cdc_out_dqs_c_oe,
+                    name=f"{prefix}dqs_c_oe",
+                    register=True,
+                )
+                self.submodules += simple_cdc
+                self.ser(i=cdc_out_dqs_c_oe,
+                         o=getattr(self.pads, prefix+'dqs_c_oe')[strobe],
+                         name=f'{prefix}dqs_c_oe', **ddr)
 
-            basephy_dq_oe = getattr(self.out, prefix+'dq_oe')[0]
-            delay_dq_oe = Signal.like(basephy_dq_oe)
-            out_dq_oe = Signal.like(basephy_dq_oe)
-            self.sync += delay_dq_oe.eq(basephy_dq_oe[1:])
-            self.comb += out_dq_oe.eq(Cat(delay_dq_oe[:-1], basephy_dq_oe[0]))
-            cdc_out_dq_oe = Signal(len(out_dq_oe)//2)
-            simple_cdc = SimpleCDC(
-                clkdiv="sys", clk="sys2x",
-                i_dw=len(out_dq_oe), o_dw=len(cdc_out_dq_oe),
-                i=out_dq_oe, o=cdc_out_dq_oe,
-                name=f"{prefix}dq_oe",
-                register=True,
-            )
-            self.submodules += simple_cdc
-            self.ser(i=cdc_out_dq_oe,
-                     o=getattr(self.pads, prefix+'dq_oe'),
-                     name=f'{prefix}dq_oe', **ddr_90)
+                basephy_dq_oe = getattr(self.out, prefix+'dq_oe')[strobe]
+                delay_dq_oe = Signal.like(basephy_dq_oe)
+                out_dq_oe = Signal.like(basephy_dq_oe)
+                self.sync += delay_dq_oe.eq(basephy_dq_oe[1:])
+                self.comb += out_dq_oe.eq(Cat(delay_dq_oe[:-1], basephy_dq_oe[0]))
+                cdc_out_dq_oe = Signal(len(out_dq_oe)//2)
+                simple_cdc = SimpleCDC(
+                    clkdiv="sys", clk="sys2x",
+                    i_dw=len(out_dq_oe), o_dw=len(cdc_out_dq_oe),
+                    i=out_dq_oe, o=cdc_out_dq_oe,
+                    name=f"{prefix}dq_oe",
+                    register=True,
+                )
+                self.submodules += simple_cdc
+                self.ser(i=cdc_out_dq_oe,
+                         o=getattr(self.pads, prefix+'dq_oe')[strobe],
+                         name=f'{prefix}dq_oe', **ddr_90)
 
-            self.ser(i=cdc_out_dq_oe,
-                     o=getattr(self.pads, prefix+'dm_n_oe'),
-                     name=f'{prefix}dm_n_oe', **ddr_90)
+                self.ser(i=cdc_out_dq_oe,
+                         o=getattr(self.pads, prefix+'dm_n_oe')[strobe],
+                         name=f'{prefix}dm_n_oe', **ddr_90)
