@@ -1178,7 +1178,7 @@ class VerilatorDDR5Tests(unittest.TestCase):
 
         self.check_logs(p.before.decode())
 
-    def test_ddr5_sim_dq_dqs_ratio_4(self):
+    def test_ddr5_sim_dq_dqs_ratio_4_with_sub_channels_false_modules_per_rank_1(self):
         # Test simulation with regular delays, intermediate serialization stage,
         # refresh and with L2 cache (masked write doesn't work for x4)
         self.run_test([
@@ -1188,7 +1188,7 @@ class VerilatorDDR5Tests(unittest.TestCase):
             "--dq-dqs-ratio", "4",
         ])
 
-    def test_ddr5_sim_dq_dqs_ratio_8(self):
+    def test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_false_modules_per_rank_1(self):
         # Test simulation with regular delays, intermediate serialization stage,
         # refresh and no L2 cache (masked write must work)
         self.run_test([
@@ -1198,7 +1198,7 @@ class VerilatorDDR5Tests(unittest.TestCase):
             "--dq-dqs-ratio", "8",
         ])
 
-    def test_ddr5_sim_dq_dqs_ratio_4_with_sub_channels(self):
+    def test_ddr5_sim_dq_dqs_ratio_4_with_sub_channels_true_modules_per_rank_1(self):
         # Test simulation with regular delays, intermediate serialization stage,
         # refresh and with L2 cache (masked write doesn't work for x4)
         self.run_test([
@@ -1209,7 +1209,7 @@ class VerilatorDDR5Tests(unittest.TestCase):
             "--with-sub-channels",
         ])
 
-    def test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels(self):
+    def test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_true_modules_per_rank_1(self):
         # Test simulation with regular delays, intermediate serialization stage,
         # refresh and no L2 cache (masked write must work)
         self.run_test([
@@ -1220,7 +1220,7 @@ class VerilatorDDR5Tests(unittest.TestCase):
             "--with-sub-channels",
         ])
 
-    def test_ddr5_sim_dq_dqs_ratio_4_modules_per_rank_2(self):
+    def test_ddr5_sim_dq_dqs_ratio_4_with_sub_channels_false_modules_per_rank_2(self):
         # Test simulation with regular delays, intermediate serialization stage,
         # refresh and with L2 cache (masked write doesn't work for x4)
         self.run_test([
@@ -1231,7 +1231,7 @@ class VerilatorDDR5Tests(unittest.TestCase):
             "--modules-in-rank", "2",
         ])
 
-    def test_ddr5_sim_dq_dqs_ratio_8_modules_per_rank_2(self):
+    def test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_false_modules_per_rank_2(self):
         # Test simulation with regular delays, intermediate serialization stage,
         # refresh and no L2 cache (masked write must work)
         self.run_test([
@@ -1242,7 +1242,7 @@ class VerilatorDDR5Tests(unittest.TestCase):
             "--modules-in-rank", "2",
         ])
 
-    def test_ddr5_sim_dq_dqs_ratio_4_with_sub_channels_modules_per_rank_2(self):
+    def test_ddr5_sim_dq_dqs_ratio_4_with_sub_channels_true_modules_per_rank_2(self):
         # Test simulation with regular delays, intermediate serialization stage,
         # refresh and with L2 cache (masked write doesn't work for x4)
         self.run_test([
@@ -1254,7 +1254,7 @@ class VerilatorDDR5Tests(unittest.TestCase):
             "--modules-in-rank", "2",
         ])
 
-    def test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_modules_per_rank_2(self):
+    def test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_true_modules_per_rank_2(self):
         # Test simulation with regular delays, intermediate serialization stage,
         # refresh and no L2 cache (masked write must work)
         self.run_test([
