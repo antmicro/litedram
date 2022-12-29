@@ -308,7 +308,7 @@ class SimSoC(SoCCore):
             databits           = len(getattr(pads, "dq")) if not with_sub_channels else len(getattr(pads, "A_dq")),
             with_sub_channels  = with_sub_channels,
             address_lines      = sdram_module.address_bits,
-            default_write_latency   = 20,
+            #default_write_latency   = 20,
         )
 
         for p in _io[io_type][0][2:]:

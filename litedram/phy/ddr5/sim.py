@@ -128,6 +128,8 @@ class CommandsSim(Module, AutoCSR):
         self.submodules.log = log = SimLogger(log_level=log_level, clk_freq=clk_freq, clk_freq_cd="sys4x")
         self.log.add_csrs()
 
+        serial = [0x6C, 0x6F, 0x08, 0x35, randrange(0,  255)]
+
         # Mode Registers storage
         registers = []
         for i in range(256):
@@ -145,6 +147,8 @@ class CommandsSim(Module, AutoCSR):
                 registers.append(Signal(8, reset=0x3C))
             elif i == 30:
                 registers.append(Signal(8, reset=0xFE))
+            elif i in [65,66,67,68,69]:
+                registers.append(Signal(8, reset=serial[i-65]))
             else:
                 registers.append(Signal(8))
 
@@ -155,7 +159,7 @@ class CommandsSim(Module, AutoCSR):
         self.active_rows = Array([Signal(geom_settings.rowbits) for _ in range(self.number_of_banks)])
 
         # Connection to DataSim
-        self.data_en = TappedDelayLine(ntaps=26)
+        self.data_en = TappedDelayLine(ntaps=68)
         self.data = data_cdc
         self.submodules += self.data, self.data_en
 
@@ -183,6 +187,8 @@ class CommandsSim(Module, AutoCSR):
         self.cs_training_end    = Signal()
         self.ca_training_start  = Signal()
         self.ca_training_in_prg = Signal()
+
+        self.wica_offset = randrange(-1, 5)
 
         self.PDA_delay  = randrange(5,  18)
         self.pda_select = Signal(4)
@@ -464,10 +470,6 @@ class CommandsSim(Module, AutoCSR):
             ),
         )
         cs_training.finalize()
-        self.comb += [
-            dq_value.eq((cs_direct_control & cs_direct_value) | (ca_direct_control & ca_direct_value)),
-            direct_dq_control.eq(cs_direct_control | ca_direct_control),
-        ]
 
         self.submodules.pda = pda = ResetInserter()(FSM())
         pda_counter = Signal(5)
@@ -498,6 +500,65 @@ class CommandsSim(Module, AutoCSR):
             NextState("IDLE"),
         )
         pda.finalize()
+
+        setattr(self.clock_domains, "cd_dqs_t_dimm",
+            ClockDomain("dqs_t_dimm"))
+        self.comb += [
+            ClockSignal("dqs_t_dimm").eq(getattr(pads, prefix+"dqs_t")[module_num:module_num+1]),
+            ResetSignal("dqs_t_dimm").eq(ResetSignal()),
+        ]
+
+        wl_sig = Signal()
+
+        _wl_cl_cases = {}
+        for i in range(23):
+            _wl_cl_cases[i] = [
+                If(self.mode_regs[2][7],
+                    wl_sig.eq(reduce(or_,
+                        [self.data_en.taps[j + self.wica_offset - self.mode_regs[3][0:4]] for j in range(18+2*i, 18+2*(i+1))]) & self.mode_regs[2][1])
+                ).Else(
+                    wl_sig.eq(reduce(or_, [self.data_en.taps[j] for j in range(18+2*i, 18+2*(i+1))]) & self.mode_regs[2][1])
+                )
+            ]
+        self.comb += Case(self.mode_regs[0][2:7], _wl_cl_cases)
+
+        wl_count_pre  = Signal(max=2)
+        _wl_pre_cases = {}
+        for i in range(1, 4):
+            _wl_pre_cases[i] = [
+                wl_count_pre.eq(1 if i == 3 else 0)
+            ]
+
+        self.comb += Case(self.mode_regs[8][3:5], _wl_pre_cases)
+
+        self.submodules.wl = wl = ClockDomainsRenamer("dqs_t_dimm")(ResetInserter()(FSM()))
+        wl_direct_control      = Signal()
+        wl_direct_value        = Signal()
+        wl_count               = Signal(max=2)
+
+        wl.act("IDLE",
+            NextValue(wl_count, 0),
+            If(self.mode_regs[2][1],
+                wl_direct_control.eq(1),
+                NextValue(wl_count, wl_count+1),
+                If(wl_count == wl_count_pre,
+                    NextState("SAMPLE"),
+                ),
+            ),
+        )
+        wl.act("SAMPLE",
+            wl_direct_control.eq(1),
+            NextValue(wl_count, 0),
+            NextValue(wl_direct_value, wl_sig),
+            NextState("IDLE"),
+        )
+        wl.finalize()
+
+        self.comb += [
+            dq_value.eq((cs_direct_control & cs_direct_value) | (ca_direct_control & ca_direct_value) | (wl_direct_control & wl_direct_value)),
+            direct_dq_control.eq(cs_direct_control | ca_direct_control | wl_direct_control),
+        ]
+
 
 
     def cmd_one_step(self, name, cond, comb, handle_cmd, sync=None):
@@ -801,7 +862,9 @@ class CommandsSim(Module, AutoCSR):
                 auto_precharge.eq(~self.cs_n_high[10]),
                 self.log.debug(prefix+"WRITE: bank=%d row=%d, col=%d", bank, row, col),
 
-                If(self.active_banks[bank],
+                If(self.mode_regs[2][1], # WL mode
+                    self.data_en.input.eq(1),
+                ).Elif(self.active_banks[bank],
                     [
                         # pass the data to data simulator
                         self.data_en.input.eq(1),
