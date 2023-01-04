@@ -58,18 +58,19 @@ class DDR5Output:
 
 class DDR5DQOePattern(Module):
     def __init__(self, nphases, wlevel_en):
-        self.window = window = Signal(nphases+2)
+        self.window = window = Signal(nphases + 1)
         self.oe = Signal(2*nphases)
-        self.comb += [
-            If(~wlevel_en,
-                self.oe.eq(Cat([Replicate(window[i], 2) for i in range(nphases)])),
-            ),
-        ]
+        for i in range(nphases):
+            self.comb += [
+                If(~wlevel_en,
+                    self.oe[2*i:2*i+2].eq(Cat(Replicate(reduce(or_, [window[i], window[i+1]]), 2))),
+                ),
+            ]
 
 
 class DDR5DQSPattern(Module):
     def __init__(self, nphases, wlevel_en: Signal()):
-        self.window = window = Signal(nphases + 2)
+        self.window = window = Signal(nphases + 3)
         self.o  = Signal(2*nphases)
         self.oe = Signal(2*nphases)
 
@@ -81,17 +82,17 @@ class DDR5DQSPattern(Module):
 
         cases = []
 
-        for i in range(nphases):
+        for i in range(1, nphases+1):
             cases.extend([
                 If(reduce(or_, window[i:i+2]),
-                    self.o[2*i:2*i+2].eq(0b01),
+                    self.o[2*(i-1):2*i].eq(0b01),
                 ).Else(
-                    self.o[2*i:2*i+2].eq(0),
+                    self.o[2*(i-1):2*i].eq(0),
                 ),
-                If(reduce(or_, window[i:i+3]) | wlevel_en,
-                    self.oe[2*i:2*i+2].eq(0b11),
+                If(reduce(or_, window[i-1:i+3]) | wlevel_en,
+                    self.oe[2*(i-1):2*i].eq(0b11),
                 ).Else(
-                    self.o[2*i:2*i+2].eq(0),
+                    self.o[2*(i-1):2*i].eq(0),
                 ),
             ])
 
@@ -145,7 +146,7 @@ class DDR5PHY(Module, AutoCSR):
                  sys_clk_freq, ser_latency, des_latency, phytype, with_sub_channels=False,
                  cmd_delay=None, masked_write=False, extended_overlaps_check=False,
                  with_odelay=False, with_clock_odelay=False, with_address_odelay=False,
-                 with_idelay=False, with_per_dq_idelay=False, csr_cdc=None,
+                 with_idelay=False, with_per_dq_idelay=False, csr_cdc=None, csr_cdc_90=None,
                  rd_extra_delay=Latency(sys=0), address_lines=13,
                  default_read_latency=0, default_write_latency=0):
 
@@ -216,8 +217,14 @@ class DDR5PHY(Module, AutoCSR):
                 return i
             return csr_cdc(i)
 
+        def cdc_90(i):
+            if csr_cdc_90 is None:
+                return i
+            return csr_cdc_90(i)
+
         self._rst           = CSRStorage()
         self._rst_cdc       = cdc(self._rst.storage)
+        self._rst_cdc_90    = cdc_90(self._rst.storage)
         self._rdimm_mode    = CSRStorage()
 
         self._rdphase = CSRStorage(log2_int(nphases), reset=0)
@@ -248,9 +255,12 @@ class DDR5PHY(Module, AutoCSR):
             setattr(self, prefix+'ck_rdly_rst', CSR(name=prefix+'ck_rdly_rst'))
             setattr(self, prefix+'ck_wdly_inc', CSR(name=prefix+'ck_wdly_inc'))
             setattr(self, prefix+'ck_wdly_rst', CSR(name=prefix+'ck_wdly_rst'))
+            setattr(self, prefix+'ck_wddly_inc', CSR(name=prefix+'ck_wddly_inc'))
+            setattr(self, prefix+'ck_wddly_rst', CSR(name=prefix+'ck_wddly_rst'))
+
 
             if with_per_dq_idelay :
-                setattr(self, prefix+'dq_dly_sel', CSRStorage(dq_dqs_ratio))
+                setattr(self, prefix+'dq_dly_sel', CSRStorage(dq_dqs_ratio, name=prefix+'dq_dly_sel'))
                 getattr(self, prefix+'dq_dly_sel').storage.attr.add("mr_ff")
                 getattr(self, prefix+'dq_dly_sel').storage.attr.add("keep")
 
@@ -262,11 +272,22 @@ class DDR5PHY(Module, AutoCSR):
                 setattr(self, prefix+'pardly_rst', CSR(name=prefix+'pardly_rst'))
                 setattr(self, prefix+'pardly_inc', CSR(name=prefix+'pardly_inc'))
 
+                setattr(self, prefix+'cadly', CSRStatus(16, name=prefix+'cadly'))
+                getattr(self, prefix+'cadly').status.attr.add("mr_ff")
+                getattr(self, prefix+'cadly').status.attr.add("keep")
+
             if with_idelay:
                 setattr(self, prefix+'rdly_dq_rst',  CSR(name=prefix+'rdly_dq_rst'))
                 setattr(self, prefix+'rdly_dq_inc',  CSR(name=prefix+'rdly_dq_inc'))
                 setattr(self, prefix+'rdly_dqs_rst', CSR(name=prefix+'rdly_dqs_rst'))
                 setattr(self, prefix+'rdly_dqs_inc', CSR(name=prefix+'rdly_dqs_inc'))
+
+                setattr(self, prefix+'rdly_dqs', CSRStatus(16, name=prefix+'rdly_dqs'))
+                getattr(self, prefix+'rdly_dqs').status.attr.add("mr_ff")
+                getattr(self, prefix+'rdly_dqs').status.attr.add("keep")
+                setattr(self, prefix+'rdly_dq', CSRStatus(16, name=prefix+'rdly_dq'))
+                getattr(self, prefix+'rdly_dq').status.attr.add("mr_ff")
+                getattr(self, prefix+'rdly_dq').status.attr.add("keep")
 
             if with_odelay:
                 setattr(self, prefix+'wdly_dq_rst',  CSR(name=prefix+'wdly_dq_rst'))
@@ -275,6 +296,16 @@ class DDR5PHY(Module, AutoCSR):
                 setattr(self, prefix+'wdly_dm_inc',  CSR(name=prefix+'wdly_dm_inc'))
                 setattr(self, prefix+'wdly_dqs_rst', CSR(name=prefix+'wdly_dqs_rst'))
                 setattr(self, prefix+'wdly_dqs_inc', CSR(name=prefix+'wdly_dqs_inc'))
+
+                setattr(self, prefix+'wdly_dqs', CSRStatus(16, name=prefix+'wdly_dqs'))
+                getattr(self, prefix+'wdly_dqs').status.attr.add("mr_ff")
+                getattr(self, prefix+'wdly_dqs').status.attr.add("keep")
+                setattr(self, prefix+'wdly_dq', CSRStatus(16, name=prefix+'wdly_dq'))
+                getattr(self, prefix+'wdly_dq').status.attr.add("mr_ff")
+                getattr(self, prefix+'wdly_dq').status.attr.add("keep")
+                setattr(self, prefix+'wdly_dm', CSRStatus(16, name=prefix+'wdly_dm'))
+                getattr(self, prefix+'wdly_dm').status.attr.add("mr_ff")
+                getattr(self, prefix+'wdly_dm').status.attr.add("keep")
 
             if with_idelay:
                 _l[prefix+'rdly_dq_rst']  = cdc(getattr(self, prefix+'rdly_dq_rst').re)
@@ -640,40 +671,36 @@ class DDR5PHY(Module, AutoCSR):
 
                 wr_reset_value = 0 if default_write_latency < min_write_latency else default_write_latency - min_write_latency
 
-                wr_window       = Signal(nphases + 2)
-                wr_delay        = Signal(max=64+1, reset=wr_reset_value)
+                wr_window       = Signal(nphases + 3)
+                wr_delay        = Signal(max=65, reset=wr_reset_value)
                 wr_index        = Signal(max=64//nphases+1)
                 wr_offset       = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
-                wr_data_delay   = Signal(max=64+1, reset=wr_reset_value + 2)
-                wr_data_index   = Signal(max=64//nphases+1)
-                wr_data_offset  = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
 
                 self.sync += [
                     If(getattr(self, prefix+'dly_sel').storage[strobe] & \
                        getattr(self, prefix+'ck_wdly_inc').re & \
                        (wr_delay < 64),
                         wr_delay.eq(wr_delay + 1),
-                        wr_data_delay.eq(wr_data_delay + 1),
                     ).Elif(getattr(self, prefix+'dly_sel').storage[strobe] & \
                            getattr(self, prefix+'ck_wdly_rst').re,
                         wr_delay.eq(wr_reset_value),
-                        wr_data_delay.eq(wr_reset_value+2),
                     ),
                 ]
 
                 self.comb += [
                     wr_index.eq(wr_delay[nphases_log:]),
                     wr_offset.eq(wr_delay[:nphases_log]),
-                    wr_data_index.eq(wr_data_delay[nphases_log:]),
-                    wr_data_offset.eq(wr_data_delay[:nphases_log]),
                 ]
 
                 wr_cases = {}
-                for i in range(nphases):
-                    if 2+i <= nphases: # only false for last i = nphases -1
-                        wr_cases[i] = wr_window.eq(Cat(wrdata_en.taps[wr_index+1][nphases-(2+i):], wrdata_en.taps[wr_index][:nphases-i]))
-                    else:
-                        wr_cases[i] = wr_window.eq(Cat(wrdata_en.taps[wr_index+2][-1], wrdata_en.taps[wr_index+1], wrdata_en.taps[wr_index][0]))
+                if nphases > 1:
+                    for i in range(nphases):
+                        if 3+i <= nphases:
+                            wr_cases[i] = wr_window.eq(Cat(wrdata_en.taps[wr_index+1][nphases-(3+i):], wrdata_en.taps[wr_index][:nphases-i]))
+                        else:
+                            wr_cases[i] = wr_window.eq(Cat(wrdata_en.taps[wr_index+2][2*nphases-(3+i):], wrdata_en.taps[wr_index+1], wrdata_en.taps[wr_index][:nphases-i]))
+                else:
+                    wr_cases[0] = wr_window.eq(Cat(wrdata_en.taps[wr_index+3], wrdata_en.taps[wr_index+2], wrdata_en.taps[wr_index+1], wrdata_en.taps[wr_index]))
 
                 self.comb += [
                     Case(wr_offset,
@@ -689,18 +716,58 @@ class DDR5PHY(Module, AutoCSR):
                 self.comb += dqs_pattern.window.eq(wr_window)
                 self.submodules += dqs_pattern
 
+                self.comb += [
+                    getattr(self.out, prefix+'dqs_t_o')[strobe].eq(dqs_pattern.o,),
+                    getattr(self.out, prefix+'dqs_c_o')[strobe].eq(~dqs_pattern.o,),
+                    getattr(self.out, prefix+'dqs_oe')[strobe].eq(dqs_pattern.oe),
+                ]
+
+                wr_data_window  = Signal(nphases+1)
+                wr_data_delay   = Signal(max=67, reset=wr_reset_value + 2)
+                wr_data_index   = Signal(max=67//nphases+1)
+                wr_data_offset  = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
+
+                self.sync += [
+                    If(getattr(self, prefix+'dly_sel').storage[strobe] & \
+                       getattr(self, prefix+'ck_wddly_inc').re & \
+                       (wr_data_delay < 66),
+                        wr_data_delay.eq(wr_data_delay + 1),
+                    ).Elif(getattr(self, prefix+'dly_sel').storage[strobe] & \
+                           getattr(self, prefix+'ck_wddly_rst').re,
+                        wr_data_delay.eq(wr_reset_value + 2),
+                    ),
+                ]
+
+                self.comb += [
+                    wr_data_index.eq(wr_data_delay[nphases_log:]),
+                    wr_data_offset.eq(wr_data_delay[:nphases_log]),
+                ]
+
+                wr_data_cases = {}
+                for i in range(nphases):
+                    if 1+i <= nphases: # only false for last i = nphases -1
+                        wr_data_cases[i] = wr_data_window.eq(Cat(wrdata_en.taps[wr_data_index+1][nphases-(1+i):], wrdata_en.taps[wr_data_index][:nphases-i]))
+                #for i in range(nphases):
+                #    if i == 0:
+                #        wr_data_cases[i] = wr_data_window.eq(Cat(wrdata_en.taps[wr_data_index]))
+                #    else:
+                #        wr_data_cases[i] = wr_data_window.eq(Cat(wrdata_en.taps[wr_data_index+1][nphases-i:], wrdata_en.taps[wr_data_index][:nphases-i]))
+
+                self.comb += [
+                    Case(wr_data_offset,
+                        wr_data_cases,
+                    )
+                ]
+
                 dq_oe        = Signal(2*nphases)
                 dq_pattern   = DDR5DQOePattern(
                     nphases   = nphases,
                     wlevel_en = getattr(self, prefix+'wlevel_en').storage,
                 )
-                self.comb += dq_pattern.window.eq(wr_window)
+                self.comb += dq_pattern.window.eq(wr_data_window)
                 self.submodules += dq_pattern
 
                 self.comb += [
-                    getattr(self.out, prefix+'dqs_t_o')[strobe].eq(dqs_pattern.o,),
-                    getattr(self.out, prefix+'dqs_c_o')[strobe].eq(~dqs_pattern.o,),
-                    getattr(self.out, prefix+'dqs_oe')[strobe].eq(dqs_pattern.oe),
                     getattr(self.out, prefix+'dq_oe')[strobe].eq(dq_pattern.oe),
                 ]
 
@@ -785,10 +852,7 @@ class DDR5PHY(Module, AutoCSR):
                 # With DM and DBI disabled, this signal is a Don't Care.
                 # With DM enabled, masking is performed only when the command used is WRITE-MASKED.
                 # We don't support DBI, DM support is configured statically with `masked_write`.
-                if isinstance(masked_write, Signal) or masked_write:
-                    self.comb += getattr(self.out, prefix+'dm_n_o')[strobe].eq(wr_dmi)
-                else:
-                    self.comb += getattr(self.out, prefix+'dm_n_o')[strobe].eq(0)
+                self.comb += getattr(self.out, prefix+'dm_n_o')[strobe].eq(~wr_dmi)
 
                 # DQ ---------------------------------------------------------------------------------------
                 for bit in range(dq_dqs_ratio):
@@ -803,7 +867,7 @@ class DDR5PHY(Module, AutoCSR):
     def get_rst(self, byte, rst, prefix="", clk="sys", dq=False):
         cd_clk = getattr(self.sync, clk)
         t = Signal()
-        if not dq or not self.with_per_dq_idelay:
+        if not dq:
             cd_clk += t.eq((getattr(self, prefix+'dly_sel').storage[byte] & rst) | self._rst.storage)
         elif not self.with_per_dq_idelay:
             cd_clk += t.eq((getattr(self, prefix+'dly_sel').storage[byte//self.dq_dqs_ratio] & rst) | self._rst.storage)
@@ -816,7 +880,7 @@ class DDR5PHY(Module, AutoCSR):
     def get_inc(self, byte, stb, prefix="", clk="sys", dq=False):
         cd_clk = getattr(self.sync, clk)
         t = Signal()
-        if not dq or not self.with_per_dq_idelay:
+        if not dq:
             cd_clk += t.eq(getattr(self, prefix+'dly_sel').storage[byte] & stb)
         elif not self.with_per_dq_idelay:
             cd_clk += t.eq(getattr(self, prefix+'dly_sel').storage[byte//self.dq_dqs_ratio] & stb)
