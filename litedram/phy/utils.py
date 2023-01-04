@@ -227,7 +227,6 @@ class SimpleCDC(Module):
         self.i = i
         self.o = o
         reset_n = Signal(name='{}_reset_n'.format(name) if name is not None else None)
-        reset_n.attr.add("keep")
         w_cnt = Signal(name='{}_w_cnt'.format(name) if name is not None else None)
         r_ready = Signal(name='{}_r_ready'.format(name) if name is not None else None)
         r_row_cnt = Signal(name='{}_r_row_cnt'.format(name) if name is not None else None)
