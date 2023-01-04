@@ -7,7 +7,8 @@
 from migen import *
 
 class S7Common(Module):
-    def idelaye2(self, *, din, dout, init=0, rst=None, inc=None, clk="sys2x"):
+    def idelaye2(self, *, din, dout, init=0, rst=None, inc=None, clk="sys2x",
+                 cnt_value_out=None, dec=False):
         assert not ((rst is None) ^ (inc is None))
         fixed = rst is None
 
@@ -31,12 +32,15 @@ class S7Common(Module):
                 i_LD       = rst,
                 i_CE       = inc,
                 i_LDPIPEEN = 0,
-                i_INC      = 1,
+                i_INC      = 1 if not dec else 0,
             ))
+
+        if cnt_value_out is not None:
+            params[f"o_CNTVALUEOUT"] = cnt_value_out
 
         self.specials += Instance("IDELAYE2", **params)
 
-    def odelaye2(self, *, din, dout, init=0, rst=None, inc=None, clk="sys2x"):  # Not available for Artix7
+    def odelaye2(self, *, din, dout, init=0, rst=None, inc=None, clk="sys2x", cnt_value_out=None):  # Not available for Artix7
         assert not ((rst is None) ^ (inc is None))
         fixed = rst is None
 
@@ -62,6 +66,9 @@ class S7Common(Module):
                 i_LDPIPEEN = 0,
                 i_INC      = 1,
             ))
+
+        if cnt_value_out is not None:
+            params[f"o_CNTVALUEOUT"] = cnt_value_out
 
         self.specials += Instance("ODELAYE2", **params)
 
