@@ -1076,7 +1076,7 @@ def get_sdram_phy_c_header(phy_settings, timing_settings):
         if phy_settings.with_address_odelay or phy_settings.with_odelay:
             r.define("SDRAM_PHY_ADDRESS_DELAY_CAPABLE")
         if phy_settings.with_odelay:
-            r.define("SDRAM_FULL_OUTPUT_DELAY_CAPABLE")
+            r.define("SDRAM_OUTPUT_DELAY_CAPABLE")
         if phy_settings.with_idelay:
             r.define("SDRAM_INPUT_DELAY_CAPABLE")
         if phy_settings.with_alert:
