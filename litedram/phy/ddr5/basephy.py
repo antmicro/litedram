@@ -143,9 +143,10 @@ class DDR5PHY(Module, AutoCSR):
         Use masked variant of WRITE command.
     """
     def __init__(self, pads, *,
-                 sys_clk_freq, ser_latency, des_latency, phytype, with_sub_channels=False,
-                 cmd_delay=None, masked_write=False, extended_overlaps_check=False,
-                 with_odelay=False, with_clock_odelay=False, with_address_odelay=False,
+                 sys_clk_freq, ser_latency, des_latency, phytype, direct_control,
+                 with_sub_channels=False, cmd_delay=None, masked_write=False,
+                 extended_overlaps_check=False, with_odelay=False,
+                 with_clock_odelay=False, with_address_odelay=False,
                  with_idelay=False, with_per_dq_idelay=False, csr_cdc=None, csr_cdc_90=None,
                  rd_extra_delay=Latency(sys=0), address_lines=13,
                  default_read_latency=0, default_write_latency=0):
@@ -358,6 +359,7 @@ class DDR5PHY(Module, AutoCSR):
             with_odelay         = with_odelay,
             with_idelay         = with_idelay,
             with_per_dq_idelay  = with_per_dq_idelay,
+            direct_control      = direct_control,
         )
 
         # DFI Interface ----------------------------------------------------------------------------
