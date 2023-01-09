@@ -86,6 +86,9 @@ static inline unsigned long sdram_dfii_pix_rddata_addr(int phase)
 #define DDRX_MR_WRLVL_RESET 769
 #define DDRX_MR_WRLVL_BIT 7
 
+static inline void reset_sequence(void)
+{
+}
 static inline void init_sequence(void)
 {
 	/* Release reset */

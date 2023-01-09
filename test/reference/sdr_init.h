@@ -55,6 +55,9 @@ static inline unsigned long sdram_dfii_pix_rddata_addr(int phase)
 	}
 }
 
+static inline void reset_sequence(void)
+{
+}
 static inline void init_sequence(void)
 {
 	/* Bring CKE high */

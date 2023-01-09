@@ -53,7 +53,7 @@ class DDR5Tests(unittest.TestCase):
     NPHASES = 4
 
     def setUp(self):
-        self.phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, aligned_reset_zero=True, masked_write=True)
+        self.phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, direct_control=False, aligned_reset_zero=True, masked_write=True)
 
         self.rdphase: int = self.phy.settings.rdphase.reset.value
         self.wrphase: int = self.phy.settings.wrphase.reset.value
@@ -545,7 +545,7 @@ class DDR5Tests(unittest.TestCase):
         base_phy = self.phy
 
         for i in range(self.phy.settings.min_write_latency, self.phy.settings.min_write_latency + 64):
-            self.phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, aligned_reset_zero=True, masked_write=True, default_write_latency=i)
+            self.phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, direct_control=False, aligned_reset_zero=True, masked_write=True, default_write_latency=i)
 
             min_write_latency = self.phy.settings.min_write_latency
             dqs_t_wr_latency: str = self.xs * 2 + 'xx'*(2*self.NPHASES*Serializer.LATENCY) + "xx" * self.NPHASES + "xx" + "xx" * (i - 2)
@@ -629,7 +629,7 @@ class DDR5Tests(unittest.TestCase):
         base_phy = self.phy
 
         for j in range(self.phy.min_write_latency, self.phy.max_write_latency):
-            self.phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, aligned_reset_zero=True, masked_write=True, default_write_latency=j)
+            self.phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, direct_control=False, aligned_reset_zero=True, masked_write=True, default_write_latency=j)
             self.run_test(
                 dfi_sequence = dfi_sequence,
                 pad_checkers = {
@@ -737,7 +737,7 @@ class DDR5Tests(unittest.TestCase):
         base_phy = self.phy
 
         for j in range(self.phy.min_write_latency, self.phy.max_write_latency):
-            self.phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, aligned_reset_zero=True, masked_write=True, default_write_latency=j+2)
+            self.phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, direct_control=False, aligned_reset_zero=True, masked_write=True, default_write_latency=j+2)
             self.run_test(
                 dfi_sequence = dfi_sequence,
                 pad_checkers = {
@@ -852,7 +852,7 @@ class DDR5Tests(unittest.TestCase):
         base_phy = self.phy
 
         for i in range(self.phy.settings.min_read_latency, self.phy.settings.min_read_latency + 64 + 2):
-            self.phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, aligned_reset_zero=True, masked_write=True, default_read_latency=i)
+            self.phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, direct_control=False, aligned_reset_zero=True, masked_write=True, default_read_latency=i)
             self.run_test(
                 dfi_sequence = dfi_sequence,
                 pad_checkers = {},
@@ -867,8 +867,8 @@ class DDR5Tests(unittest.TestCase):
     def test_ddr5_cmd_read_1N_mode(self):
         # Test whole READ command sequence simulating DRAM response and verifying read_latency from MC perspective
         old_phy = self.phy
-        self.phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, aligned_reset_zero=True,
-                              masked_write=True, default_read_latency=22)
+        self.phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, direct_control=False,
+                              aligned_reset_zero=True, masked_write=True, default_read_latency=22)
 
         data_to_read = {
             0: dict(rddata=0x1122, rddata_valid=1),
@@ -1026,7 +1026,7 @@ class DDR5Tests(unittest.TestCase):
 
     def test_ddr5_cmd_read_2N_mode(self):
         old_phy = self.phy
-        self.phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, aligned_reset_zero=True, masked_write=True, default_read_latency=24)
+        self.phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, direct_control=False, aligned_reset_zero=True, masked_write=True, default_read_latency=24)
         # Test whole READ command sequence simulating DRAM response and verifying read_latency from MC perspective
 
         data_to_read = {
