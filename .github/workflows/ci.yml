@@ -2,6 +2,9 @@ name: ci
 
 on: [push, pull_request]
 
+env:
+  LITEX_BRANCH: antmicro/mdudek/rowhammer-tester-ddr5-support-no-dynamic-timings
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -30,7 +33,7 @@ jobs:
           pip3 install setuptools
           pip3 install requests
           pip3 install pexpect
-          pip3 install meson
+          pip3 install meson==0.62.0
           pip3 install pytest==7.1.0
       - name: Install pytest-parallel
         if: ${{ contains(matrix.pytest_args, 'not') }}
@@ -44,7 +47,7 @@ jobs:
           # temporary hack until merged to master
           git -C ../litex remote add antmicro https://github.com/antmicro/litex.git
           git -C ../litex fetch antmicro
-          git -C ../litex checkout antmicro/mdudek/liblitedram_ddr5support_rw_training
+          git -C ../litex checkout $LITEX_BRANCH
           git -C ../litex-boards checkout 6c05ddae1ba4d2b363e80001919e4682745cc3cf
 
       # Install RISC-V GCC
@@ -61,6 +64,7 @@ jobs:
       - name: Build Verilator
         if: ${{ !contains(matrix.pytest_args, 'not') }}
         run: |
+          sudo apt install help2man
           export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
           git clone https://github.com/verilator/verilator
           cd verilator
@@ -119,7 +123,7 @@ jobs:
           pip3 install setuptools
           pip3 install requests
           pip3 install pexpect
-          pip3 install meson
+          pip3 install meson==0.62.0
           pip3 install pytest==7.1.0
 
       # Install (n)Migen / LiteX / Cores
@@ -130,7 +134,7 @@ jobs:
           # temporary hack until merged to master
           git -C ../litex remote add antmicro https://github.com/antmicro/litex.git
           git -C ../litex fetch antmicro
-          git -C ../litex checkout antmicro/mdudek/liblitedram_ddr5support_rw_training
+          git -C ../litex checkout $LITEX_BRANCH
           git -C ../litex-boards checkout 6c05ddae1ba4d2b363e80001919e4682745cc3cf
 
       # Install RISC-V GCC
@@ -145,6 +149,7 @@ jobs:
 
       - name: Build Verilator
         run: |
+          sudo apt install help2man
           export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
           git clone https://github.com/verilator/verilator
           cd verilator
