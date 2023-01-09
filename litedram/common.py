@@ -245,6 +245,7 @@ class PhySettings(Settings):
             with_clock_odelay: bool = False, # Concrete PHY has ODELAYs on clk lines
             with_odelay: bool = False, # Concrete PHY has ODELAYs on all lines: CLK, CS/CA, DQ/DQS
             with_idelay: bool = False, # Concrete PHY has IDELAYs on DQ/DQS lines
+            direct_control: bool = False,
             # DFI timings
             t_ctrl_delay: int = 0,  # Time from the DFI command to its appearance on DRAM bus
             t_parin_lat: int = 0,   # Time from the DFI command to its parity
