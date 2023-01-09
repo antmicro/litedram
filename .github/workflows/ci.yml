@@ -30,7 +30,7 @@ jobs:
           pip3 install setuptools
           pip3 install requests
           pip3 install pexpect
-          pip3 install meson
+          pip3 install meson==0.62.0
           pip3 install pytest==7.1.0
       - name: Install pytest-parallel
         if: ${{ contains(matrix.pytest_args, 'not') }}
@@ -118,7 +118,7 @@ jobs:
           pip3 install setuptools
           pip3 install requests
           pip3 install pexpect
-          pip3 install meson
+          pip3 install meson==0.62.0
           pip3 install pytest==7.1.0
 
       # Install (n)Migen / LiteX / Cores
