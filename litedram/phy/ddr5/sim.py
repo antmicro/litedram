@@ -194,6 +194,13 @@ class CommandsSim(Module, AutoCSR):
         self.pda_select = Signal(4)
         self.pda_start  = Signal()
 
+        # VrefCa VrefCS CK ODT CS ODT CA ODT
+        self.shadowVCA = Signal(7)
+        self.shadowVCS = Signal(7)
+        self.shadowTCK = Signal(3)
+        self.shadowTCS = Signal(3)
+        self.shadowTCA = Signal(3)
+
         cmds_enabled = Signal()
         cmd_handlers = OrderedDict(
             MRW  = self.mrw_handler(prefix),
@@ -201,8 +208,9 @@ class CommandsSim(Module, AutoCSR):
             REF  = self.refresh_handler(prefix),
             ACT  = self.activate_handler(prefix),
             PRE  = self.precharge_handler(prefix),
-            RD   = self.read_handler(prefix),
             MPC  = self.mpc_handler(prefix),
+            VREF = self.vref_handler(prefix),
+            RD   = self.read_handler(prefix),
             WR   = self.write_handler(prefix),
             NOP  = self.nop_handler(prefix),
         )
@@ -229,10 +237,10 @@ class CommandsSim(Module, AutoCSR):
             ),
             read_pre_training.eq(self.mode_regs[2][0]),
             If(self.handle_2_tick_cmd & ~reduce(or_, cmd_handlers.values()),
-                self.log.error(prefix+"Unexpected command: cs_n_low=0b%14b cs_n_high=0b%14b", self.cs_n_low, self.cs_n_high)
+                self.log.error(prefix+"Unexpected command: cs_n_low=0b%14b cs_n_high=0b%14b", self.cs_n_low, self.cs_n_high),
             ),
             If(self.handle_1_tick_cmd & ~reduce(or_, cmd_handlers.values()),
-                self.log.error(prefix+"Unexpected command: cs_n_low=0b%14b", self.cs_n_low)
+                self.log.error(prefix+"Unexpected command: cs_n_low=0b%14b", self.cs_n_low),
             ),
         ]
         self.sync += [If(self.handle_1_tick_cmd,
@@ -269,7 +277,7 @@ class CommandsSim(Module, AutoCSR):
             If(~delayed(self, pads.reset_n) & pads.reset_n,
                 self.log.info(prefix+"RESET released"),
                 If(~self.tinit2.ready,
-                    self.log.error(prefix+"tINIT2 violated: RESET deasserted too fast")
+                    self.log.error(prefix+"tINIT2 violated: RESET deasserted too fast"),
                 ),
             ),
             self.tcksrx.trigger.eq(tcksrx_triggered[0]),
@@ -317,7 +325,7 @@ class CommandsSim(Module, AutoCSR):
                     NextState("EXIT-PD")
                 ),
             ).Elif(~reduce(and_, getattr(pads, prefix+'ca')) & ~self.tinit4.ready,
-                self.log.error(prefix+"CMD bus must be held high")
+                self.log.error(prefix+"CMD bus must be held high"),
             ),
         )
         fsm.act("EXIT-PD",
@@ -348,7 +356,7 @@ class CommandsSim(Module, AutoCSR):
             cmds_enabled.eq(1),
             If(cmd_handlers["MPC"],
                 If((self.mpc_op != MPC.ZQC_START) & (self.mpc_op != MPC.DLL_RST),
-                    self.log.error(prefix+"DLL-RESET OR ZQC-START expected, got op=0b%07b", self.mpc_op)
+                    self.log.error(prefix+"DLL-RESET OR ZQC-START expected, got op=0b%07b", self.mpc_op),
                 ).Elif((self.mpc_op == MPC.ZQC_START),
                     NextState("ZQC")  # Tf
                 )
@@ -360,10 +368,10 @@ class CommandsSim(Module, AutoCSR):
             If(self.handle_2_tick_cmd | self.handle_1_tick_cmd,
                 If(~(cmd_handlers["MPC"] &
                    ((self.mpc_op == MPC.ZQC_LATCH) | (self.mpc_op == MPC.ZQC_START))),
-                    self.log.error(prefix+"Expected ZQC-LATCH")
+                    self.log.error(prefix+"Expected ZQC-LATCH"),
                 ).Elif((self.mpc_op == MPC.ZQC_LATCH),
                     If(~self.tzqcal.ready,
-                        self.log.warn(prefix+"tZQCAL violated")
+                        self.log.warn(prefix+"tZQCAL violated"),
                     ),
                     NextState("NORMAL")  # Tg
                 )
@@ -596,6 +604,9 @@ class CommandsSim(Module, AutoCSR):
                     If(ma == 1,
                     ).Elif(ma == 2,
                         self.mode_regs[2].eq(Cat(op[0:2], self.mode_regs[2][2], op[3:])),
+                    ).Elif((ma == 11) | (ma == 12) | (ma == 13) | (ma == 32) | (ma == 33),
+                    ).Elif(ma == 33,
+                        self.mode_regs[33].eq(Cat(self.mode_regs[33][:3], op[3:])),
                     ).Else(
                         self.mode_regs[ma].eq(op),
                     ),
@@ -659,7 +670,7 @@ class CommandsSim(Module, AutoCSR):
                     self.data.sink.mrr_inv.eq(Cat([self.mode_regs[28], self.mode_regs[29]])),
                 ),
                 If(~self.data.sink.ready,
-                   self.log.error(prefix+"Simulator data FIFO overflow")
+                    self.log.error(prefix+"Simulator data FIFO overflow"),
                 ),
             ],
             handle_cmd = self.handle_2_tick_cmd,
@@ -684,7 +695,7 @@ class CommandsSim(Module, AutoCSR):
                 If(~self.cs_n_low[10],
                     self.log.info(prefix+"REF: all banks"),
                     If(reduce(or_, self.active_banks),
-                        self.log.error(prefix+"Not all banks precharged during REFRESH")
+                        self.log.error(prefix+"Not all banks precharged during REFRESH"),
                     )
                 ).Else(
                     self.log.info(prefix+"REF: bank = %d", bank),
@@ -704,7 +715,7 @@ class CommandsSim(Module, AutoCSR):
                 row.eq(Cat(self.cs_n_low[2:6], self.cs_n_high)),
                 self.log.info(prefix+"ACT: bank=%d row=%d", bank, row),
                 If(self.active_banks[bank],
-                   self.log.error(prefix+"ACT on already active bank: bank=%d row=%d", bank, row)
+                    self.log.error(prefix+"ACT on already active bank: bank=%d row=%d", bank, row),
                 ),
             ],
             sync = [
@@ -739,6 +750,28 @@ class CommandsSim(Module, AutoCSR):
             handle_cmd = self.handle_2_tick_cmd,
         )
 
+    def vref_handler(self, prefix):
+        vref_val = Signal(7)
+        return self.cmd_one_step("VREF",
+            cond = self.cs_n_low[:5] == 0b00011,
+            comb = [
+                vref_val.eq(self.cs_n_low[5:12]),
+                If(self.cs_n_low[12],
+                    self.log.info(prefix+"VREF CS:%X", vref_val),
+                ).Else(
+                    self.log.info(prefix+"VREF CA:%X", vref_val),
+                )
+            ],
+            handle_cmd = self.handle_2_tick_cmd | self.handle_1_tick_cmd,
+            sync = [
+                If(self.cs_n_low[12],
+                    self.shadowVCS.eq(vref_val),
+                ).Else(
+                    self.shadowVCA.eq(vref_val),
+                )
+            ],
+        )
+
     def mpc_handler(self, prefix):
         cases = {value: self.log.info(prefix+f"MPC: {name}") for name, value in MPC.__members__.items()}
         cases[0b00000000] = [self.log.info(prefix+"MPC: Exit CS"),  self.cs_training_end.eq(1)]
@@ -757,10 +790,36 @@ class CommandsSim(Module, AutoCSR):
                 self.log.info(prefix+f"MPC: PDA Enumerate ID {i}"),
                 self.pda_start.eq(1)
             ]
+        # We assume A group
         base = 0b01110000
-        for i  in range(16):
+        for i in range(16):
             cases[base+i] = [self.log.info(prefix+f"MPC: PDA Select ID {i}")]
-        cases["default"] = self.log.error(prefix+"Invalid MPC op=0b%08b", self.mpc_op)
+        cases[0b00011111] = [self.log.info(prefix+"MPC: Apply Vrefs and ODTs")]
+        base = 0b00100000
+        for i in range(8):
+            cases[base+i] = [self.log.info(prefix+f"MPC: Group A RTT_CK {i}")]
+        base = 0b00101000
+        for i in range(8):
+            cases[base+i] = [self.log.info(prefix+f"MPC: Group B RTT_CK {i}")]
+
+        base = 0b00110000
+        for i in range(8):
+            cases[base+i] = [self.log.info(prefix+f"MPC: Group A RTT_CS {i}")]
+        base = 0b00111000
+        for i in range(8):
+            cases[base+i] = [self.log.info(prefix+f"MPC: Group B RTT_CS {i}")]
+
+        base = 0b01000000
+        for i in range(8):
+            cases[base+i] = [self.log.info(prefix+f"MPC: Group A RTT_CA {i}")]
+        base = 0b01001000
+        for i in range(8):
+            cases[base+i] = [self.log.info(prefix+f"MPC: Group B RTT_CA {i}")]
+        base = 0b01010000
+        for i in range(8):
+            cases[base+i] = [self.log.info(prefix+f"MPC: DQS_RTT_PARK {i}")]
+
+        cases["default"] = [self.log.error(prefix+"Invalid MPC op=0b%08b", self.mpc_op)]
         return self.cmd_one_step("MPC",
             cond = self.cs_n_low[:5] == 0b01111,
             comb = [
@@ -776,6 +835,20 @@ class CommandsSim(Module, AutoCSR):
                     self.mode_regs[13][0:4].eq(self.mpc_op[0:4]),
                 ).Elif(self.mpc_op[4:] == 0b0111,
                     self.mode_regs[1][4:].eq(self.mpc_op[0:4]),
+                ).Elif(self.mpc_op[3:] == 0b00100,
+                    self.shadowTCK.eq(self.mpc_op[:3]),
+                ).Elif(self.mpc_op[3:] == 0b00110,
+                    self.shadowTCS.eq(self.mpc_op[:3]),
+                ).Elif(self.mpc_op[3:] == 0b01000,
+                    self.shadowTCA.eq(self.mpc_op[:3]),
+                ).Elif(self.mpc_op == 0b00011111,
+                    self.mode_regs[11][:7].eq(self.shadowVCA),
+                    self.mode_regs[12][:7].eq(self.shadowVCS),
+                    self.mode_regs[32][:3].eq(self.shadowTCK),
+                    self.mode_regs[32][3:6].eq(self.shadowTCS),
+                    self.mode_regs[33][:3].eq(self.shadowTCA),
+                ).Elif(self.mpc_op[3:] == 0b01010,
+                    self.mode_regs[33][3:6].eq(self.mpc_op[:3]),
                 ).Elif(self.pda_start,
                     self.pda_select.eq(self.mpc_op[0:4]),
                 )
@@ -821,7 +894,7 @@ class CommandsSim(Module, AutoCSR):
                         self.data.sink.col.eq(col),
                         self.data.sink.bl_width.eq(bl_width),
                         If(~self.data.sink.ready,
-                           self.log.error(prefix+"Simulator data FIFO overflow")
+                            self.log.error(prefix+"Simulator data FIFO overflow"),
                         ),
                     ],
                 ).Else(
@@ -879,11 +952,11 @@ class CommandsSim(Module, AutoCSR):
                         self.data.sink.col.eq(col),
                         self.data.sink.bl_width.eq(bl_width),
                         If(~self.data.sink.ready,
-                           self.log.error(prefix+"Simulator data FIFO overflow")
+                            self.log.error(prefix+"Simulator data FIFO overflow"),
                         ),
                     ],
                 ).Else(
-                    self.log.error(prefix+"WRITE command on inactive bank: bank=%d row=%d col=%d", bank, row, col)
+                    self.log.error(prefix+"WRITE command on inactive bank: bank=%d row=%d col=%d", bank, row, col),
                 ),
             ],
             sync = [
