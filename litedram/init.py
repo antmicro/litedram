@@ -829,27 +829,38 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
             4:  0b0,
             8:  0b1,
             16: 0b1,
-        }[dq_dqs_ratio])])
-    mr[6] = reg([(0, 8, 0b00000000)])
+        }[dq_dqs_ratio])]) # DM enable
+    mr[6] = reg([(0, 8, 0b00000000)]) # Write Recover 48nCK and tRTP 12nCK
     mr[8] = reg([
-        (0, 3, 0b000),
-        (3, 2, 0b01),
-        (6, 1, 0b0),
-        (7, 1, 0b0),
+        (0, 3, 0b001),  # Read preamble   0010
+        (3, 2, 0b01),   # Write preamble  0010
+        (6, 1, 0b0),    # Read postamble  0
+        (7, 1, 0b0),    # Write postamble 0
     ])
-    mr[10] = reg([(0, 8, 0b00101101)])
-    mr[11] = reg([(0, 8, 0b00101101)])
-    mr[12] = reg([(0, 8, 0b00101101)])
-    mr[15] = reg([(0, 3, 0b011)])
-    mr[23] = reg([(0, 2, 0b00)])
-    mr[34] = reg([
-        (3, 3, 0b001)
+    mr[10] = reg([(0, 8, 0b00101101)]) # VrefDQ calibration value
+    mr[11] = reg([(0, 8, 0b00101101)]) # VrefCA calibration value
+    mr[12] = reg([(0, 8, 0b00101101)]) # VrefCS calibration value
+    mr[15] = reg([(0, 3, 0b011)]) # ECS Error Threshold Count
+    mr[23] = reg([(0, 2, 0b00)]) # Disable SPPR and HPPR
+    # Setup when DRAM directly connected
+    mr[32] = reg([
+        (0,3, 0b101), # CK ODT to 60 Ohm
+        (3,3, 0b101), # CS ODT to 60 Ohm
     ])
-    mr[35] = reg([
+    mr[33] = reg([
+        (0,3, 0b101), # CA ODT to 60 Ohm
+        (3,3, 0b100), # DQS_PARK to 60 Ohm
+    ])
+    # End DRAM direct connection
+    mr[34] = reg([ # RTT_PARK, RTT_WR
+        (0, 3, 0b010), # RTT PARK ODT 120 Ohm
+        (3, 3, 0b100), # RTT WR ODT 60 Ohm
+    ])
+    mr[35] = reg([ # RTT_NOM_[WR|RD]
         (0, 3, 0b011),
         (3, 3, 0b011)
     ])
-    mr[36] = reg([
+    mr[36] = reg([ # RTT LOOPBACK
         (0, 3, 0b000)
     ])
 
@@ -860,13 +871,90 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
     else:
         prefixes = ["a_", "b_"]
 
-    dfii_control = [f"DFII_CONTROL_{prefix.upper()}CMDINJECTOR" for prefix in prefixes] + ["DFII_CONTROL_2N_MODE"]
-    dfii_control = '|'.join(dfii_control)
+    dfii_control_2n = [f"DFII_CONTROL_{prefix.upper()}CMDINJECTOR" for prefix in prefixes] + ["DFII_CONTROL_2N_MODE"]
+    dfii_control_2n = '|'.join(dfii_control_2n)
+
+    dfii_control_1n = [f"DFII_CONTROL_{prefix.upper()}CMDINJECTOR" for prefix in prefixes]
+    dfii_control_1n = '|'.join(dfii_control_1n)
 
     all_cs        = 2**phy_settings.nranks-1
     all_phases    = 2**phy_settings.nphases-1
 
-    def cmd_mr(ma):
+    def cmd_vca():
+        op = mr[11]&0x3f
+        cmds = []
+        cmds.append(("Set CA Vref", prefixes, 0, 0x3|(op<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1)),
+        cmds.append(("Set CA Vref", prefixes, all_cs, 0x3|(op<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2)),
+        cmds.append(("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1)),
+        cmds.append(("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
+        return cmds
+
+    def cmd_vcs():
+        op = (mr[12]&0x3f)|0x80
+        cmds = []
+        cmds.append(("Set CS Vref", prefixes, 0, 0x3|(op<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1)),
+        cmds.append(("Set CS Vref", prefixes, all_cs, 0x3|(op<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2)),
+        cmds.append(("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1)),
+        cmds.append(("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
+        return cmds
+
+    if phy_settings.direct_control:
+        def cmd_ck_odt():
+            op = (mr[32]&0x7) | 0x4<<3
+            cmds = []
+            cmds.append(("Set RTT_CK", prefixes, 0, 0xf|(op<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1)),
+            cmds.append(("Set RTT_CK", prefixes, all_cs, 0xf|(op<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2)),
+            cmds.append(("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1)),
+            cmds.append(("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
+            return cmds
+
+        def cmd_cs_odt():
+            op = ((mr[32]&0x38)>>3) | 0x6<<3
+            cmds = []
+            cmds.append(("Set RTT_CS", prefixes, 0, 0xf|(op<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1)),
+            cmds.append(("Set RTT_CS", prefixes, all_cs, 0xf|(op<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2)),
+            cmds.append(("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1)),
+            cmds.append(("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
+            return cmds
+
+        def cmd_ca_odt():
+            op = (mr[33]&0x7) | 0x8<<3
+            cmds = []
+            cmds.append(("Set RTT_CA", prefixes, 0, 0xf|(op<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1)),
+            cmds.append(("Set RTT_CA", prefixes, all_cs, 0xf|(op<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2)),
+            cmds.append(("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1)),
+            cmds.append(("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
+            return cmds
+
+        def cmd_dqs_odt():
+            op = ((mr[33]&0x38)>>3) | (0b01010<<3)
+            cmds = []
+            cmds.append(("Set DQS_RTT_PARK", prefixes, 0, 0xf|(op<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1)),
+            cmds.append(("Set DQS_RTT_PARK", prefixes, all_cs, 0xf|(op<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2)),
+            cmds.append(("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1)),
+            cmds.append(("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
+            return cmds
+
+    else:
+        def cmd_ck_odt():
+            return []
+        def cmd_cs_odt():
+            return []
+        def cmd_ca_odt():
+            return []
+        def cmd_dqs_odt():
+            return []
+
+    def cmd_load_vref_odt():
+        op = 0x1f
+        cmds = []
+        cmds.append(("Load CA, CS Vrefs", prefixes, 0, 0xf|(op<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1)),
+        cmds.append(("Load CA, CS Vrefs", prefixes, all_cs, 0xf|(op<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2)),
+        cmds.append(("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1)),
+        cmds.append(("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
+        return cmds
+
+    def cmd_mr_2n(ma):
         # Convert Mode Register Write command to DFI as expected by PHY
         op = mr[ma]
         assert ma < 2**8, "MR address too big: {}".format(ma)
@@ -874,13 +962,29 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
         # we are running in 2N mode
         CA = [5 | (ma << 5), op]
         cmds = []
-        assert phy_settings.nphases >= 4, "CMDInjector doesn't support commands over multiple DFI cycles"
-        cmds.append((f"Load Mode Register {ma}", prefixes, all_cs, CA[0], 1, dfii_control+"|DFII_CONTROL_RESET_N", -1))
-        cmds.append((f"Load Mode Register {ma}", prefixes, 0, CA[0], 2, dfii_control+"|DFII_CONTROL_RESET_N", -1))
-        cmds.append((f"Load Mode Register {ma}", prefixes, 0, CA[1], 4|8, dfii_control+"|DFII_CONTROL_RESET_N", -1))
-        cmds.append((f"Issue load mode register command", prefixes, 0, 0, 0, dfii_control+"|DFII_CONTROL_RESET_N", -2))
-        cmds.append(("Reset Single Shot", prefixes, 0, 0, all_phases, dfii_control+"|DFII_CONTROL_RESET_N", -1))
-        cmds.append((f"Wait after load mode register command", prefixes, 0, 0, 0, dfii_control+"|DFII_CONTROL_RESET_N", 200))
+        cmds.append((f"Load Mode Register {ma}", prefixes, all_cs, CA[0], 1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Load Mode Register {ma}", prefixes, 0, CA[0], 2, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Load Mode Register {ma}", prefixes, 0, CA[1], 4|8, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Issue load mode register command", prefixes, 0, 0, 0, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2))
+        cmds.append(("Reset Single Shot", prefixes, 0, 0, all_phases, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Wait after load mode register command", prefixes, 0, 0, 0, dfii_control_2n+"|DFII_CONTROL_RESET_N", 200))
+
+        return cmds
+
+    def cmd_mr_1n(ma):
+        # Convert Mode Register Write command to DFI as expected by PHY
+        op = mr[ma]
+        assert ma < 2**8, "MR address too big: {}".format(ma)
+        assert op < 2**8, "MR opcode too big: {}".format(op)
+        # we are running in 2N mode
+        CA = [5 | (ma << 5), op]
+        cmds = []
+        cmds.append((f"Load Mode Register {ma}", prefixes, all_cs, CA[0], 1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Load Mode Register {ma}", prefixes, 0, CA[1], 2, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Load Mode Register {ma}", prefixes, 0, CA[1], 4|8, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Issue load mode register command", prefixes, 0, 0, 0, dfii_control_1n+"|DFII_CONTROL_RESET_N", -2))
+        cmds.append(("Reset Single Shot", prefixes, 0, 0, all_phases, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Wait after load mode register command", prefixes, 0, 0, 0, dfii_control_1n+"|DFII_CONTROL_RESET_N", 200))
 
         return cmds
 
@@ -889,43 +993,53 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
         fmax = 250e6 # as we perform active waiting we can assume multiple singlecycle operations
         return int(math.ceil(sec * fmax))
 
-    # comment, prefixes, cs, ca, phases, cmd, delay/single
-    init_sequence = [
-        # Perform "Reset Initialization with Stable Power"
-        # We assume that loading the bistream will take at least tINIT1 (200us)
-        # Because LiteDRAM will start with reset_n=1 during hw control, first reset the chip (for tPW_RESET)
+    reset_sequence = [
         ("Assert reset", prefixes, 0, 0, 0, "0", ck(3e-6)),
-        ("Assert CS in reset", prefixes, all_cs, 0, 2**4-1, dfii_control, ck(10e-9)),
-        ("Release reset", prefixes, all_cs, 0, 2**4-1, dfii_control+"|DFII_CONTROL_RESET_N",ck(4e-3)),
-        ("Release CS", prefixes, 0, 0x3FFF, 2**4-1, dfii_control+"|DFII_CONTROL_RESET_N", ck(2e-6)),
-        ("NOPs", prefixes, all_cs, 0x1F, 2**4-1, dfii_control+"|DFII_CONTROL_RESET_N", 3),
-        ("NOPs end", prefixes, 0, 0x1F, 2**4-1, dfii_control+"|DFII_CONTROL_RESET_N", 3),
-        ("Zeros", prefixes, 0, 0, 2**4-1, dfii_control+"|DFII_CONTROL_RESET_N", ck(1e-6)),
+        ("Assert CS in reset", prefixes, all_cs, 0, 2**4-1, dfii_control_2n, ck(10e-9)),
+        ("Release reset", prefixes, all_cs, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N",ck(4e-3)),
+        ("Release CS", prefixes, 0, 0x3FFF, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(2e-6)),
+        ("NOPs", prefixes, all_cs, 0x1F, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 3),
+        ("NOPs end", prefixes, 0, 0x1F, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 3),
+        ("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(1e-6)),
 
-        ("Setup MR13", prefixes, 0, 0xf|(((0b1000<<4)|0)<<5), 2**4-1, dfii_control+"|DFII_CONTROL_RESET_N", 1),
-        ("Setup MR13", prefixes, all_cs, 0xf|(((0b1000<<4)|0)<<5), 2**8-1, dfii_control+"|DFII_CONTROL_RESET_N", -2),
-        ("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control+"|DFII_CONTROL_RESET_N", -1),
-        ("Zeros", prefixes, 0, 0, 2**4-1, dfii_control+"|DFII_CONTROL_RESET_N", ck(1e-6)),
+        ("Setup MR13", prefixes, 0, 0xf|(((0b1000<<4)|0)<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1),
+        ("Setup MR13", prefixes, all_cs, 0xf|(((0b1000<<4)|0)<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2),
+        ("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1),
+        ("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(1e-6)),
 
-        ("Reset DLL", prefixes, 0, 0xf|(MPC.DLL_RST<<5), 2**4-1, dfii_control+"|DFII_CONTROL_RESET_N", 1),
-        ("Reset DLL", prefixes, all_cs, 0xf|(MPC.DLL_RST<<5), 2**8-1, dfii_control+"|DFII_CONTROL_RESET_N", -2),
-        ("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control+"|DFII_CONTROL_RESET_N", -1),
-        ("Zeros", prefixes, 0, 0, 2**4-1, dfii_control+"|DFII_CONTROL_RESET_N", 1024),
+        ("Reset DLL", prefixes, 0, 0xf|(MPC.DLL_RST<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1),
+        ("Reset DLL", prefixes, all_cs, 0xf|(MPC.DLL_RST<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2),
+        ("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1),
+        ("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1024),
 
-        ("ZQ Calibration start", prefixes, 0, 0xf|(MPC.ZQC_START<<5), 2**4-1, dfii_control+"|DFII_CONTROL_RESET_N", 1),
-        ("ZQ Calibration start", prefixes, all_cs, 0xf|(MPC.ZQC_START<<5), 2**8-1, dfii_control+"|DFII_CONTROL_RESET_N", -2),
-        ("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control+"|DFII_CONTROL_RESET_N", -1),
-        ("Zeros", prefixes, 0, 0, 2**4-1, dfii_control+"|DFII_CONTROL_RESET_N", ck(10e-6)),
+        ("ZQ Calibration start", prefixes, 0, 0xf|(MPC.ZQC_START<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1),
+        ("ZQ Calibration start", prefixes, all_cs, 0xf|(MPC.ZQC_START<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2),
+        ("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1),
+        ("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6)),
 
-        ("ZQ Calibration latch", prefixes, 0, 0xf|(MPC.ZQC_LATCH<<5), 2**4-1, dfii_control+"|DFII_CONTROL_RESET_N", 1),
-        ("ZQ Calibration latch", prefixes, all_cs, 0xf|(MPC.ZQC_LATCH<<5), 2**8-1, dfii_control+"|DFII_CONTROL_RESET_N", -2),
-        ("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control+"|DFII_CONTROL_RESET_N", -1),
-        ("Zeros", prefixes, 0, 0, 2**4-1, dfii_control+"|DFII_CONTROL_RESET_N", max(8, ck(30e-9))),
+        ("ZQ Calibration latch", prefixes, 0, 0xf|(MPC.ZQC_LATCH<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1),
+        ("ZQ Calibration latch", prefixes, all_cs, 0xf|(MPC.ZQC_LATCH<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2),
+        ("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1),
+        ("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", max(8, ck(30e-9))),
     ]
-    for cmds in (cmd_mr(ma) for ma in sorted(mr.keys()) if ma != 13):
-        init_sequence.extend(cmds)
+    reset_sequence.extend(cmd_vca())
+    reset_sequence.extend(cmd_vcs())
+    reset_sequence.extend(cmd_ck_odt())
+    reset_sequence.extend(cmd_cs_odt())
+    reset_sequence.extend(cmd_ca_odt())
+    reset_sequence.extend(cmd_load_vref_odt())
+    reset_sequence.extend(cmd_dqs_odt())
 
-    return init_sequence, mr
+    # comment, prefixes, cs, ca, phases, cmd, delay/single
+    init_sequence_2n = []
+    for cmds in (cmd_mr_2n(ma) for ma in sorted(mr.keys()) if ma not in [11, 12, 13, 32, 33]):
+        init_sequence_2n.extend(cmds)
+
+    init_sequence_1n = []
+    for cmds in (cmd_mr_1n(ma) for ma in sorted(mr.keys()) if ma not in [11, 12, 13, 32, 33]):
+        init_sequence_1n.extend(cmds)
+
+    return reset_sequence, (init_sequence_1n, init_sequence_2n), mr
 
 # Init Sequence ------------------------------------------------------------------------------------
 
@@ -1137,7 +1251,11 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
                     s += "default: return 0;"
         r.newline()
 
-    init_sequence, mr = get_sdram_phy_init_sequence(phy_settings, timing_settings)
+    reset_sequence = []
+    if phy_settings.memtype != "DDR5":
+        init_sequence, mr = get_sdram_phy_init_sequence(phy_settings, timing_settings)
+    else:
+        reset_sequence, init_sequence, mr = get_sdram_phy_init_sequence(phy_settings, timing_settings)
 
     if phy_settings.memtype in ["DDR3", "DDR4"]:
         # The value of MR1[7] needs to be modified during write leveling
@@ -1158,9 +1276,9 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
         r.define("DDRX_MR_WRLVL_BIT", 6)
         r.newline()
 
-    with r.block("static inline void init_sequence(void)") as b:
+    with r.block("static inline void reset_sequence(void)") as b:
         if phy_settings.memtype != "DDR5":
-            for comment, a, ba, cmd, delay in init_sequence:
+            for comment, a, ba, cmd, delay in reset_sequence:
                 invert_masks = [(0, 0), ]
                 if phy_settings.is_rdimm:
                     assert phy_settings.memtype == "DDR4"
@@ -1188,7 +1306,7 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
                         b += f"cdelay({delay});\n"
                     b.newline()
         else:
-            for comment, prefixes, cs, ca, phases, cmd, delay in init_sequence:
+            for comment, prefixes, cs, ca, phases, cmd, delay in reset_sequence:
                 b += f"/* {comment} */"
                 if delay > -1:
                     for prefix in prefixes:
@@ -1212,6 +1330,66 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
                 if delay > 0:
                     b += f"cdelay({delay});\n"
                 b.newline()
+
+    if isinstance(init_sequence, tuple):
+        for i in range(2):
+            with r.block(f"static inline void init_sequence_{i+1}n(void)") as b:
+                for comment, prefixes, cs, ca, phases, cmd, delay in init_sequence[i]:
+                    b += f"/* {comment} */"
+                    if delay > -1:
+                        for prefix in prefixes:
+                            b += f"sdram_dfii_{prefix}cmdinjector_command_storage_write(" \
+                                 f"{cs} << CSR_SDRAM_DFII_{prefix.upper()}CMDINJECTOR_COMMAND_STORAGE_CS_OFFSET " \
+                                 f"| {ca} << CSR_SDRAM_DFII_{prefix.upper()}CMDINJECTOR_COMMAND_STORAGE_CA_OFFSET);"
+                            b += f"sdram_dfii_{prefix}cmdinjector_phase_addr_write({phases});"
+                            b += f"sdram_dfii_{prefix}cmdinjector_store_continuous_cmd_write(1);"
+                    else:
+                        for prefix in prefixes:
+                            b += f"sdram_dfii_{prefix}cmdinjector_command_storage_write(" \
+                                 f"{cs} << CSR_SDRAM_DFII_{prefix.upper()}CMDINJECTOR_COMMAND_STORAGE_CS_OFFSET " \
+                                 f"| {ca} << CSR_SDRAM_DFII_{prefix.upper()}CMDINJECTOR_COMMAND_STORAGE_CA_OFFSET);"
+                            b += f"sdram_dfii_{prefix}cmdinjector_phase_addr_write({phases});"
+                            b += f"sdram_dfii_{prefix}cmdinjector_store_singleshot_cmd_write(1);"
+                            if delay == -2:
+                                b += f"sdram_dfii_{prefix}cmdinjector_single_shot_write(1);"
+                                b += f"sdram_dfii_{prefix}cmdinjector_issue_command_write(1);"
+                                b += f"sdram_dfii_{prefix}cmdinjector_single_shot_write(0);"
+                    b += f"sdram_dfii_control_write({cmd});"
+                    if delay > 0:
+                        b += f"cdelay({delay});\n"
+                    b.newline()
+    else:
+        with r.block("static inline void init_sequence(void)") as b:
+            if phy_settings.memtype != "DDR5":
+                for comment, a, ba, cmd, delay in init_sequence:
+                    invert_masks = [(0, 0), ]
+                    if phy_settings.is_rdimm:
+                        assert phy_settings.memtype == "DDR4"
+                        # JESD82-31A page 38
+                        #
+                        # B-side chips have certain usually-inconsequential address and BA
+                        # bits inverted by the RCD to reduce SSO current. For mode register
+                        # writes, however, we must compensate for this. BG[1] also directs
+                        # writes either to the A side (BG[1]=0) or B side (BG[1]=1)
+                        #
+                        # The 'ba != 7' is because we don't do this to writes to the RCD
+                        # itself.
+                        if ba != 7:
+                            invert_masks.append((0b10101111111000, 0b1111))
+
+                    for a_inv, ba_inv in invert_masks:
+                        b += f"/* {comment} */"
+                        b += f"sdram_dfii_pi0_address_write({a ^ a_inv:#x});"
+                        b += f"sdram_dfii_pi0_baddress_write({ba ^ ba_inv:d});"
+                        if cmd.startswith("DFII_CONTROL"):
+                            b += f"sdram_dfii_control_write({cmd});"
+                        else:
+                            b += f"command_p0({cmd});"
+                        if delay:
+                            b += f"cdelay({delay});\n"
+                        b.newline()
+            else:
+                assert False
 
     return r.generate()
 
@@ -1258,7 +1436,11 @@ def get_sdram_phy_py_header(phy_settings, timing_settings):
         r += "dfii_command_rddata = 0x20\n"
         r += "\n"
 
-    init_sequence, mr = get_sdram_phy_init_sequence(phy_settings, timing_settings)
+    reset_sequence = []
+    if phy_settings.memtype != "DDR5":
+        init_sequence, mr = get_sdram_phy_init_sequence(phy_settings, timing_settings)
+    else:
+        reset_sequence, init_sequence, mr = get_sdram_phy_init_sequence(phy_settings, timing_settings)
 
     if mr is not None and 1 in mr:
         r += "ddrx_mr1 = 0x{:x}\n".format(mr[1])
