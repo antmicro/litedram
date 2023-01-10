@@ -844,15 +844,17 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
     mr[23] = reg([(0, 2, 0b00)]) # Disable SPPR and HPPR
     # Setup when DRAM directly connected
     mr[32] = reg([
-        (0,3, 0b111), # CK ODT to 40 Ohm
-        (3,3, 0b111), # CS ODT to 40 Ohm
+        (0,3, 0b011), # CK ODT to 120 Ohm
+        (3,3, 0b011), # CS ODT to 120 Ohm
     ])
     mr[33] = reg([
-        (0,3, 0b111), # CA ODT to 40 Ohm
+        (0,3, 0b011), # CA ODT to 120 Ohm
+        (3,3, 0b011), # DQS_PARK to 120 Ohm
     ])
     # End DRAM direct connection
     mr[34] = reg([ # RTT_PARK, RTT_WR
-        (3, 3, 0b110)
+        (0, 3, 0b010), # RTT PARK ODT 120 Ohm
+        (3, 3, 0b010), # RTT WR ODT 120 Ohm
     ])
     mr[35] = reg([ # RTT_NOM_[WR|RD]
         (0, 3, 0b011),
@@ -925,7 +927,7 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
             return cmds
 
         def cmd_dqs_odt():
-            op = (mr[34]&0x7) | (0b01010<<3)
+            op = ((mr[33]&0x38)>>3) | (0b01010<<3)
             cmds = []
             cmds.append(("Set DQS_RTT_PARK", prefixes, 0, 0xf|(op<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1)),
             cmds.append(("Set DQS_RTT_PARK", prefixes, all_cs, 0xf|(op<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2)),
