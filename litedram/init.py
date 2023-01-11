@@ -844,17 +844,17 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
     mr[23] = reg([(0, 2, 0b00)]) # Disable SPPR and HPPR
     # Setup when DRAM directly connected
     mr[32] = reg([
-        (0,3, 0b011), # CK ODT to 120 Ohm
-        (3,3, 0b011), # CS ODT to 120 Ohm
+        (0,3, 0b111), # CK ODT to 40 Ohm
+        (3,3, 0b111), # CS ODT to 40 Ohm
     ])
     mr[33] = reg([
-        (0,3, 0b011), # CA ODT to 120 Ohm
-        (3,3, 0b011), # DQS_PARK to 120 Ohm
+        (0,3, 0b111), # CA ODT to 40 Ohm
+        (3,3, 0b100), # DQS_PARK to 60 Ohm
     ])
     # End DRAM direct connection
     mr[34] = reg([ # RTT_PARK, RTT_WR
         (0, 3, 0b010), # RTT PARK ODT 120 Ohm
-        (3, 3, 0b010), # RTT WR ODT 120 Ohm
+        (3, 3, 0b100), # RTT WR ODT 60 Ohm
     ])
     mr[35] = reg([ # RTT_NOM_[WR|RD]
         (0, 3, 0b011),
