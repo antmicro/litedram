@@ -669,7 +669,7 @@ class DDR5PHY(Module, AutoCSR):
                 )
                 self.submodules += wrdata_en
 
-                assert default_write_latency >= min_write_latency or default_write_latency == 0, f"{default_write_latency=} is to small, {min_write_latency=}"
+                assert default_write_latency >= min_write_latency or default_write_latency == 0, f"default_write_latency={default_write_latency} is to small, min_write_latency={min_write_latency}"
 
                 wr_reset_value = 0 if default_write_latency < min_write_latency else default_write_latency - min_write_latency
 
