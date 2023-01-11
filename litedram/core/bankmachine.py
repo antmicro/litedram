@@ -112,7 +112,7 @@ class BankMachine(Module):
         cmd_buffer_lookahead = stream.SyncFIFO(
             cmd_buffer_layout, settings.cmd_buffer_depth,
             buffered=settings.cmd_buffer_buffered)
-        cmd_buffer = stream.Buffer(cmd_buffer_layout) # 1 depth buffer to detect row change
+        cmd_buffer = stream.Buffer(cmd_buffer_layout)       # 1 depth buffer to sync row_hit
         self.submodules += cmd_buffer_lookahead, cmd_buffer
         self.comb += [
             req.connect(cmd_buffer_lookahead.sink, keep={"valid", "ready", "we", "addr"}),
@@ -129,7 +129,17 @@ class BankMachine(Module):
         row_hit    = Signal()
         row_open   = Signal()
         row_close  = Signal()
-        self.comb += row_hit.eq(row == slicer.row(cmd_buffer.source.addr))
+
+        row_hit_reeval = Signal()
+
+        self.sync += [
+            If(cmd_buffer.sink.ready & cmd_buffer.sink.valid,
+                row_hit.eq(row == slicer.row(cmd_buffer_lookahead.source.addr))
+            ),
+            If(row_hit_reeval,
+                row_hit.eq(1),
+            ),
+        ]
         self.sync += \
             If(row_close,
                 row_opened.eq(0)
@@ -229,6 +239,7 @@ class BankMachine(Module):
             )
         )
         fsm.act("ACTIVATE",
+            row_hit_reeval.eq(1),
             If(trccon.ready,
                 row_col_n_addr_sel.eq(1),
                 row_open.eq(1),
