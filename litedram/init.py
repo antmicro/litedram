@@ -844,11 +844,11 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
     mr[23] = reg([(0, 2, 0b00)]) # Disable SPPR and HPPR
     # Setup when DRAM directly connected
     mr[32] = reg([
-        (0,3, 0b111), # CK ODT to 40 Ohm
-        (3,3, 0b111), # CS ODT to 40 Ohm
+        (0,3, 0b101), # CK ODT to 60 Ohm
+        (3,3, 0b101), # CS ODT to 60 Ohm
     ])
     mr[33] = reg([
-        (0,3, 0b111), # CA ODT to 40 Ohm
+        (0,3, 0b101), # CA ODT to 60 Ohm
         (3,3, 0b100), # DQS_PARK to 60 Ohm
     ])
     # End DRAM direct connection
@@ -1306,6 +1306,7 @@ def get_sdram_phy_c_header(phy_settings, timing_settings):
                              f"| {ca} << CSR_SDRAM_DFII_{prefix.upper()}CMDINJECTOR_COMMAND_STORAGE_CA_OFFSET);"
                         b += f"sdram_dfii_{prefix}cmdinjector_phase_addr_write({phases});"
                         b += f"sdram_dfii_{prefix}cmdinjector_store_continuous_cmd_write(1);"
+                        b += f"sdram_dfii_{prefix}cmdinjector_issue_command_write(1);"
                 else:
                     for prefix in prefixes:
                         b += f"sdram_dfii_{prefix}cmdinjector_command_storage_write(" \
@@ -1334,6 +1335,7 @@ def get_sdram_phy_c_header(phy_settings, timing_settings):
                                  f"| {ca} << CSR_SDRAM_DFII_{prefix.upper()}CMDINJECTOR_COMMAND_STORAGE_CA_OFFSET);"
                             b += f"sdram_dfii_{prefix}cmdinjector_phase_addr_write({phases});"
                             b += f"sdram_dfii_{prefix}cmdinjector_store_continuous_cmd_write(1);"
+                            b += f"sdram_dfii_{prefix}cmdinjector_issue_command_write(1);"
                     else:
                         for prefix in prefixes:
                             b += f"sdram_dfii_{prefix}cmdinjector_command_storage_write(" \
