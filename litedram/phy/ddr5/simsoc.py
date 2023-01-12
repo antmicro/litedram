@@ -343,6 +343,7 @@ class SimSoC(SoCCore):
         # Reduce memtest size for simulation speedup
         self.add_constant("MEMTEST_DATA_SIZE", 8*1024)
         self.add_constant("MEMTEST_ADDR_SIZE", 8*1024)
+        self.add_constant("DDR5_TRAINING_SIM", 1)
 
         # DDR5 Sim -------------------------------------------------------------------------------
         prefixes = [""] if not with_sub_channels else ["A_", "B_"]
