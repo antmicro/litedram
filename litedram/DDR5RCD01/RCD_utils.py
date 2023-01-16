@@ -8,6 +8,25 @@ import logging
 import os
 import inspect
 
+class NotSupportedException(Exception):
+    def __init__(self,*args):
+            if args:
+                self.message = str(args[0])
+            else:
+                self.message = "Engineering test of this block will not be provided."
+    def __str__(self):
+            return self.message
+
+
+class UnderConstruction(Exception):
+    def __init__(self,*args):
+            if args:
+                self.message = str(args[0])
+            else:
+                self.message = "Engineering test of this block is being developed."
+    def __str__(self):
+            return self.message
+
 
 class EngTest():
     def __init__(self, level=logging.DEBUG):
