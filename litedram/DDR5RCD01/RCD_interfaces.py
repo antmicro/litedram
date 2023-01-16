@@ -5,39 +5,12 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 from migen import *
-
-# if_<name> := Interface name
-# if_<name>_<block><function>
+from litedram.DDR5RCD01.RCD_utils import *
 
 
-class If_channel_ibuf(Record):
+class If_ck(Record):
     """
-    This interface is used for the following connections:
-    Core input of input buffer
-    Output of the input buffer
-    Input of the line buffer
-    Input of the Control Center
-    """
-
-    def __init__(self, dcs_n_w=2, dca_w=7):
-        layout = self.description(dcs_n_w, dca_w)
-        Record.__init__(self, layout)
-
-    def description(self, dcs_n_w, dca_w):
-        return [
-            ('dcs_n', dcs_n_w),
-            ('dca', dca_w),
-            ('dpar', 1),
-        ]
-
-
-class If_channel_obuf_clks(Record):
-    """
-    Q[D:A]CK_[T,C] Clock Bus
-    This interface is used for the following connections:
-    Input of the output buffer
-    Output of the line buffer
-    Core output of output buffer
+    Clock interface
     """
 
     def __init__(self):
@@ -46,43 +19,42 @@ class If_channel_obuf_clks(Record):
 
     def description(self):
         return [
-            # Clock outputs
-            # Rank 0, Row Top
-            ('qack_t', 1, False),
-            ('qack_c', 1, False),
-            # Rank 1, Row Top
-            ('qbck_t', 1, False),
-            ('qbck_c', 1, False),
-            # Rank 0, Row Bottom
-            ('qcck_t', 1, False),
-            ('qcck_c', 1, False),
-            # Rank 1, Row Top
-            ('qdck_t', 1, False),
-            ('qdck_c', 1, False),
+            ('ck_t', 1),
+            ('ck_c', 1),
         ]
 
 
-class If_channel_obuf_csca(Record):
+class If_bus_csca(Record):
     """
-    This interface is used for the following connections:
-    Input of the output buffer
-    Output of the line buffer
-    Core output of output buffer
+    This interface encapsulates the output CS/CA bus.
     """
 
-    def __init__(self, qacs_w=2, qaca_w=14):
-        layout = self.description(qacs_w, qaca_w)
+    def __init__(self, qcs_n_w=2, qca_w=7):
+        layout = self.description(qcs_n_w, qca_w)
         Record.__init__(self, layout)
 
-    def description(self, qacs_w, qaca_w):
+    def description(self, qcs_n_w, qca_w):
         return [
-            # Adress, Chip Select
-            # Top Row
-            ('qacs_a_n', qacs_w, False),
-            ('qaca_a', qaca_w, False),
-            # Bottom Row
-            ('qacs_b_n', qacs_w, False),
-            ('qaca_b', qaca_w, False),
+            # Single row: Command, Chip Select
+            ('cs_n', qcs_n_w, False),
+            ('ca', qca_w, False),
+        ]
+
+
+class If_bus_csca_o(Record):
+    """
+    This interface encapsulates the output CS/CA bus. (CA is double the size of input)
+    """
+
+    def __init__(self, qcs_n_w=2, qca_w=14):
+        layout = self.description(qcs_n_w, qca_w)
+        Record.__init__(self, layout)
+
+    def description(self, qcs_n_w, qca_w):
+        return [
+            # Single row: Command, Chip Select
+            ('qcs_n', qcs_n_w, False),
+            ('qca', qca_w, False),
         ]
 
 
@@ -98,8 +70,7 @@ class If_channel_sdram(Record):
 
     def description(self):
         return [
-            # SDRAM raises an error
-            ('derror_in_n', 1, False),
+            ('err_n', 1, False),
         ]
 
 
@@ -137,11 +108,30 @@ class If_ctrl_lbuf(Record):
             ('deser_ca_q_en', 1),
             ('deser_cs_n_d_en', 1),
             ('deser_cs_n_q_en', 1),
-
         ]
 
 
-class If_ctrl_obuf(Record):
+class If_ctrl_obuf_CSCA(Record):
+    """
+    This interface is used for the:
+    Configuration of the output buffer
+    """
+
+    def __init__(self):
+        layout = self.description()
+        Record.__init__(self, layout)
+
+    def description(self):
+
+        return [
+            ('oe_qcs_n', 1),
+            ('o_inv_en_qcs_n', 1),
+            ('oe_qca', 1),
+            ('o_inv_en_qca', 1),
+        ]
+
+
+class If_ctrl_obuf_CLKS(Record):
     """
     This interface is used for the:
     Configuration of the output buffer
@@ -153,34 +143,14 @@ class If_ctrl_obuf(Record):
 
     def description(self):
         return [
-            ('oe_qacs_a_n', 1),
-            ('o_inv_en_qacs_a_n', 1),
-            ('oe_qaca_a', 1),
-            ('o_inv_en_qaca_a', 1),
-            ('oe_qacs_b_n', 1),
-            ('o_inv_en_qacs_b_n', 1),
-            ('oe_qaca_b', 1),
-            ('o_inv_en_qaca_b', 1),
-            ('oe_qack_t', 1),
-            ('o_inv_en_qack_t', 1),
-            ('oe_qack_c', 1),
-            ('o_inv_en_qack_c', 1),
-            ('oe_qbck_t', 1),
-            ('o_inv_en_qbck_t', 1),
-            ('oe_qbck_c', 1),
-            ('o_inv_en_qbck_c', 1),
-            ('oe_qcck_t', 1),
-            ('o_inv_en_qcck_t', 1),
-            ('oe_qcck_c', 1),
-            ('o_inv_en_qcck_c', 1),
-            ('oe_qdck_t', 1),
-            ('o_inv_en_qdck_t', 1),
-            ('oe_qdck_c', 1),
-            ('o_inv_en_qdck_c', 1)
+            ('oe_ck_t', 1),
+            ('o_inv_en_ck_t', 1),
+            ('oe_ck_c', 1),
+            ('o_inv_en_ck_c', 1),
         ]
 
 
-class If_channel_config_global(Record):
+class If_config_global(Record):
     """
     This interface is used for the:
     Configuration of the B channel global settings
@@ -197,7 +167,7 @@ class If_channel_config_global(Record):
         ]
 
 
-class If_channel_config_common(Record):
+class If_config_common(Record):
     """
     This interface is used for the:
     Configuration of the common block settings
@@ -315,23 +285,7 @@ class If_error(Record):
         ]
 
 
-class If_ck(Record):
-    """
-    Clock interface
-    """
-
-    def __init__(self):
-        layout = self.description()
-        Record.__init__(self, layout)
-
-    def description(self):
-        return [
-            ('ck_t', 1),
-            ('ck_c', 1),
-        ]
-
-
-class If_ctrl_pll(Record):
+class If_ctrl_common(Record):
     """
     PLL configuration interface
     """
@@ -342,42 +296,15 @@ class If_ctrl_pll(Record):
 
     def description(self):
         return [
-            ('en', 1),
-            ('bypass', 1),
+            ('pll_en', 1),
+            ('pll_bypass', 1),
+            ('err_en', 1),
+            ('lb_en', 1),
+            ('lb_sel_mode', 1),
+            ('lb_sel_phase_ab', 1),
+            ('lb_sel_int_bit', 3),
         ]
 
-
-class If_ctrl_lb(Record):
-    """
-    Loopback configuration interface
-    """
-
-    def __init__(self):
-        layout = self.description()
-        Record.__init__(self, layout)
-
-    def description(self):
-        return [
-            ('en', 1),
-            ('sel_mode', 1),
-            ('sel_phase_ab', 1),
-            ('sel_int_bit', 3),
-        ]
-
-
-class If_ctrl_err(Record):
-    """
-    Error configuration interface
-    """
-
-    def __init__(self):
-        layout = self.description()
-        Record.__init__(self, layout)
-
-    def description(self):
-        return [
-            ('en', 1),
-        ]
 
 if __name__ == "__main__":
-    raise NotImplementedError("Test of this block is not provided.")
+    raise NotSupportedException()

@@ -51,22 +51,22 @@ class DDR5RCD01LineBuffer(Module):
 
     def __init__(self, if_i, if_o, if_ctrl, rcd_t_prop_delay_nck=1, rcd_t_eq_latency_nck_max=4):
 
-        len_dcs_n = len(if_i.dcs_n)
-        len_dca = len(if_i.dca)
+        len_dcs_n = len(if_i.cs_n)
+        len_dca = len(if_i.ca)
         len_qca = 2*len_dca
 
         # Deserializer
         # TODO Should The Deserializer also perform the dcs sync for different modes SDR,DDR??
         deser_qca = Signal(len_qca)
         deser_qcs_n = Signal(len_dcs_n)
-        xdeser_dca = Deserializer_2_to_1(d=if_i.dca,
+        xdeser_dca = Deserializer_2_to_1(d=if_i.ca,
                                          d_en=if_ctrl.deser_ca_d_en,
                                          q=deser_qca,
                                          q_en=if_ctrl.deser_ca_q_en,
                                          sel=if_ctrl.deser_sel_lower_upper)
         self.submodules += xdeser_dca
 
-        xdeser_dcs_n = Deserializer_2_to_1(d=if_i.dcs_n,
+        xdeser_dcs_n = Deserializer_2_to_1(d=if_i.cs_n,
                                            d_en=if_ctrl.deser_cs_n_d_en,
                                            q=deser_qcs_n,
                                            q_en=if_ctrl.deser_cs_n_q_en,
@@ -101,11 +101,11 @@ class DDR5RCD01LineBuffer(Module):
         self.submodules.prog_delay_qca = prog_delay_qca
         # breakpoint()
 
-        self.comb += if_o.qacs_a_n.eq(prog_qcs_n)
-        self.comb += if_o.qaca_a.eq(prog_qca)
+        self.comb += if_o.qcs_n.eq(prog_qcs_n)
+        self.comb += if_o.qca.eq(prog_qca)
 
-        self.comb += if_o.qacs_b_n.eq(prog_qcs_n)
-        self.comb += if_o.qaca_b.eq(prog_qca)
+        # self.comb += if_o.qacs_b_n.eq(prog_qcs_n)
+        # self.comb += if_o.qaca_b.eq(prog_qca)
 
 
 class Deserializer_2_to_1(Module):

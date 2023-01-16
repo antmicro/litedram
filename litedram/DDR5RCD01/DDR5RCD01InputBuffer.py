@@ -12,6 +12,7 @@ from migen.fhdl import verilog
 # Litex
 from litedram.DDR5RCD01.RCD_definitions import *
 from litedram.DDR5RCD01.RCD_interfaces import *
+from litedram.DDR5RCD01.RCD_interfaces_external import *
 from litedram.DDR5RCD01.RCD_utils import *
 
 
@@ -42,18 +43,18 @@ class DDR5RCD01InputBuffer(Module):
                         if_ib_o.dca.eq(if_ib_i.dca),
                         if_ib_o.dpar.eq(if_ib_i.dpar)
                         ).Else(
-            if_ib_o.dcs_n.eq(0x00),
-            if_ib_o.dca.eq(0x00),
-            if_ib_o.dpar.eq(0x00))
+            if_ib_o.dcs_n.eq(0xFF),
+            if_ib_o.dca.eq(0xFF),
+            if_ib_o.dpar.eq(0xFF))
 
 
 class TestBed(Module):
     def __init__(self):
-        #
-        self.if_ib_i = If_channel_ibuf()
-        self.if_ib_o = If_channel_ibuf()
+
+        self.if_ib_i = If_ibuf()
+        self.if_ib_o = If_ibuf()
         self.if_ctrl = If_ctrl_ibuf()
-        ###
+        
         self.submodules.dut = DDR5RCD01InputBuffer(
             if_ib_i=self.if_ib_i, if_ib_o=self.if_ib_o, if_ctrl=self.if_ctrl)
         # print(verilog.convert(self.dut))
