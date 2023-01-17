@@ -11,7 +11,9 @@ from migen import *
 # Litex
 from litedram.DDR5RCD01.RCD_definitions import *
 from litedram.DDR5RCD01.RCD_interfaces import *
+from litedram.DDR5RCD01.RCD_interfaces_external import *
 from litedram.DDR5RCD01.RCD_utils import *
+
 
 class DDR5RCD01PLL(Module):
     """DDR5 RCD01 PLL
@@ -30,28 +32,40 @@ class DDR5RCD01PLL(Module):
 
     """
 
-    def __init__(self, iif, oif_A, oif_B, ctrl_if):
-        # Just a clock pass-through
-        self.comb += oif_A.ck_t.eq(iif.ck_t)
-        self.comb += oif_A.ck_c.eq(iif.ck_c)
-        
-        self.comb += oif_B.ck_t.eq(iif.ck_t)
-        self.comb += oif_B.ck_c.eq(iif.ck_c)
-        
+    def __init__(self,
+                 if_ck_rst,
+                 if_pll,
+                 if_common,
+                 if_ctrl_common,
+                 if_config_common,
+                 ):
+        # Clock pass-through
+        for i in range(4):
+            self.comb += if_pll.ck_t[i].eq(if_ck_rst.dck_t)
+            self.comb += if_pll.ck_c[i].eq(if_ck_rst.dck_c)
+
         # TODO Replace with a real PLL model
         # TODO Implement control interface handler
 
 
 class TestBed(Module):
     def __init__(self):
-        
-        self.iif = If_ck()
-        self.oif_A = If_ck()
-        self.oif_B = If_ck()
-        self.ctrl_if = If_ctrl_pll()
-        self.comb += self.iif.ck_c.eq(~self.iif.ck_t)
-        
-        self.submodules.dut = DDR5RCD01PLL(self.iif, self.oif_A, self.oif_B, self.ctrl_if)
+
+        self.if_ck_rst = If_ck_rst()
+        self.if_pll = If_ck(n_clks=4)
+        self.if_common = If_common()
+        self.if_ctrl_common = If_ctrl_common()
+        self.if_config_common = If_config_common()
+
+        self.comb += self.if_ck_rst.dck_c.eq(~self.if_ck_rst.dck_t)
+
+        self.submodules.dut = DDR5RCD01PLL(
+            if_ck_rst=self.if_ck_rst,
+            if_pll=self.if_pll,
+            if_common=self.if_common,
+            if_ctrl_common=self.if_ctrl_common,
+            if_config_common=self.if_config_common,
+        )
 
 
 def run_test(tb):
@@ -62,7 +76,7 @@ def run_test(tb):
 
 
 def behav_write(b):
-    yield tb.iif.ck_t.eq(b)
+    yield tb.if_ck_rst.dck_t.eq(b)
     yield
 
 

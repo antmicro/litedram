@@ -63,14 +63,16 @@ class DDR5RCD01LineBuffer(Module):
                                          d_en=if_ctrl.deser_ca_d_en,
                                          q=deser_qca,
                                          q_en=if_ctrl.deser_ca_q_en,
-                                         sel=if_ctrl.deser_sel_lower_upper)
+                                         sel=if_ctrl.deser_sel_lower_upper,
+                                         d_disable_state=if_ctrl.deser_ca_d_disable_state)
         self.submodules += xdeser_dca
 
         xdeser_dcs_n = Deserializer_2_to_1(d=if_i.cs_n,
                                            d_en=if_ctrl.deser_cs_n_d_en,
                                            q=deser_qcs_n,
                                            q_en=if_ctrl.deser_cs_n_q_en,
-                                           sel=0)
+                                           sel=0,
+                                           d_disable_state=if_ctrl.deser_cs_n_d_disable_state)
 
         self.submodules += xdeser_dcs_n
 
@@ -135,7 +137,7 @@ class Deserializer_2_to_1(Module):
     q_w - Assumed double the width of d_w
     """
 
-    def __init__(self, d, d_en, q, q_en, sel, d_w=7):
+    def __init__(self, d, d_en, q, q_en, sel, d_disable_state, d_w=7):
 
         d_lower = Signal(d_w)
         d_upper = Signal(d_w)
@@ -154,7 +156,7 @@ class Deserializer_2_to_1(Module):
             q.eq(Cat(d_lower, d_upper))
         ).Else(
             If(~d_en,
-               q.eq(~0)
+               q.eq(d_disable_state)
                )
         )
 
@@ -236,7 +238,7 @@ class ProgDelay(Module):
 
 class TestBed(Module):
     def __init__(self):
-        
+
         self.ctrl_if = If_ctrl_lbuf()
         self.iif = If_channel_ibuf()
         self.oif = If_channel_obuf_csca()

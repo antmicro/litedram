@@ -16,6 +16,7 @@ from litedram.DDR5RCD01.RCD_utils import *
 # Submodules
 from litedram.DDR5RCD01.DDR5RCD01RegFile import DDR5RCD01RegFile
 from litedram.DDR5RCD01.DDR5RCD01Pages import DDR5RCD01Pages
+from litedram.DDR5RCD01.DDR5RCD01CSLogic import DDR5RCD01CSLogic
 
 
 class DDR5RCD01ControlCenter(Module):
@@ -69,11 +70,37 @@ class DDR5RCD01ControlCenter(Module):
     """
 
     def __init__(self,
-                 if_ibuf_2_lbuf,  # Fetch opcodes from here
-                 if_ctrl_ibuf, if_ctrl_lbuf, if_ctrl_obuf,  # Control buffers
-                 if_ctrl_global,  # Send settings to channel B
-                 is_channel_A,
-                 *args):
+                 if_ibuf_o,
+                 if_ctrl_ibuf,
+                 if_ctrl_lbuf_row_A_rankA,
+                 if_ctrl_lbuf_row_B_rankA,
+                 if_ctrl_obuf_csca_row_A_rankA,
+                 if_ctrl_obuf_csca_row_B_rankA,
+                 if_ctrl_obuf_clks_row_A_rankA,
+                 if_ctrl_obuf_clks_row_B_rankA,
+                 if_ctrl_lbuf_row_A_rankB,
+                 if_ctrl_lbuf_row_B_rankB,
+                 if_ctrl_obuf_csca_row_A_rankB,
+                 if_ctrl_obuf_csca_row_B_rankB,
+                 if_ctrl_obuf_clks_row_A_rankB,
+                 if_ctrl_obuf_clks_row_B_rankB,
+                 if_ctrl_global,
+                 if_config_global,
+                 if_common,
+                 if_ctrl_common,
+                 if_config_common,
+                 is_channel_A=True,
+                 ):
+        # if is_channel_A:
+        #     logging.debug('I am channel A')
+        #     # Set direction of glob_settings
+        #     # Drive the registers
+        #     if not args:
+        #         logging.error(
+        #             'The global config was not passed to the channel A')
+        #     if_config_pll = args[0]
+        #     if_config_lb = args[1]
+        #     if_config_err = args[2]
 
         bank_d = Signal(8)
         bank_page_pointer = Signal(8)
@@ -100,17 +127,6 @@ class DDR5RCD01ControlCenter(Module):
         page_addr = regs[ADDR_CW_PAGE]
         page_copy = banks[bank_page_pointer]
         bank_page_pointer = regs[ADDR_CW_PAGE]
-
-        if is_channel_A:
-            logging.debug('I am channel A')
-            # Set direction of glob_settings
-            # Drive the registers
-            if not args:
-                logging.error(
-                    'The global config was not passed to the channel A')
-            if_config_pll = args[0]
-            if_config_lb = args[1]
-            if_config_err = args[2]
 
         """
         CSR, RW, PAGE
@@ -185,17 +201,17 @@ class DDR5RCD01ControlCenter(Module):
         # ----------------------------------------------0b76543210
         boot_image_rw00_rw5f[RW_CLOCK_OUTPUT_CONTROL] = 0b11000101
 
-        self.comb += if_ctrl_obuf.oe_qack_t.eq(QACK_CLK_ENABLE)
-        self.comb += if_ctrl_obuf.oe_qack_c.eq(QACK_CLK_ENABLE)
+        self.comb += if_ctrl_obuf_clks_row_A_rankA.oe_ck_t.eq(QACK_CLK_ENABLE)
+        self.comb += if_ctrl_obuf_clks_row_A_rankA.oe_ck_c.eq(QACK_CLK_ENABLE)
 
-        self.comb += if_ctrl_obuf.oe_qbck_t.eq(QBCK_CLK_ENABLE)
-        self.comb += if_ctrl_obuf.oe_qbck_c.eq(QBCK_CLK_ENABLE)
+        self.comb += if_ctrl_obuf_clks_row_B_rankA.oe_ck_t.eq(QBCK_CLK_ENABLE)
+        self.comb += if_ctrl_obuf_clks_row_B_rankA.oe_ck_c.eq(QBCK_CLK_ENABLE)
 
-        self.comb += if_ctrl_obuf.oe_qcck_t.eq(QCCK_CLK_ENABLE)
-        self.comb += if_ctrl_obuf.oe_qcck_c.eq(QCCK_CLK_ENABLE)
+        self.comb += if_ctrl_obuf_clks_row_A_rankB.oe_ck_t.eq(QCCK_CLK_ENABLE)
+        self.comb += if_ctrl_obuf_clks_row_A_rankB.oe_ck_c.eq(QCCK_CLK_ENABLE)
 
-        self.comb += if_ctrl_obuf.oe_qdck_t.eq(QDCK_CLK_ENABLE)
-        self.comb += if_ctrl_obuf.oe_qdck_c.eq(QDCK_CLK_ENABLE)
+        self.comb += if_ctrl_obuf_clks_row_B_rankB.oe_ck_t.eq(QDCK_CLK_ENABLE)
+        self.comb += if_ctrl_obuf_clks_row_B_rankB.oe_ck_c.eq(QDCK_CLK_ENABLE)
 
         """ Table 108 
             RW09
@@ -215,31 +231,47 @@ class DDR5RCD01ControlCenter(Module):
         boot_image_rw00_rw5f[RW_OUTPUT_CONTROL] = 0b01100111
 
         # Output enable
-        self.comb += if_ctrl_obuf.oe_qaca_a.eq(QACA_OUTPUT_ENABLE)
-        self.comb += if_ctrl_obuf.oe_qaca_b.eq(QBCA_OUTPUT_ENABLE)
+        self.comb += if_ctrl_obuf_csca_row_A_rankA.oe_qca.eq(
+            QACA_OUTPUT_ENABLE)
+        self.comb += if_ctrl_obuf_csca_row_B_rankA.oe_qca.eq(
+            QACA_OUTPUT_ENABLE)
+        self.comb += if_ctrl_obuf_csca_row_A_rankB.oe_qca.eq(
+            QBCA_OUTPUT_ENABLE)
+        self.comb += if_ctrl_obuf_csca_row_B_rankB.oe_qca.eq(
+            QBCA_OUTPUT_ENABLE)
 
-        self.comb += if_ctrl_obuf.oe_qacs_a_n.eq(QACS_N_ENABLE)
-        self.comb += if_ctrl_obuf.oe_qacs_b_n.eq(QBCS_N_ENABLE)
+        self.comb += if_ctrl_obuf_csca_row_A_rankA.oe_qcs_n.eq(QACS_N_ENABLE)
+        self.comb += if_ctrl_obuf_csca_row_B_rankA.oe_qcs_n.eq(QACS_N_ENABLE)
+        self.comb += if_ctrl_obuf_csca_row_A_rankB.oe_qcs_n.eq(QBCS_N_ENABLE)
+        self.comb += if_ctrl_obuf_csca_row_B_rankB.oe_qcs_n.eq(QBCS_N_ENABLE)
 
         # DCS, DCA Output inversion
-        self.comb += if_ctrl_obuf.o_inv_en_qacs_a_n.eq(0)
-        self.comb += if_ctrl_obuf.o_inv_en_qacs_b_n.eq(0)
+        self.comb += if_ctrl_obuf_csca_row_A_rankA.o_inv_en_qcs_n.eq(0)
+        self.comb += if_ctrl_obuf_csca_row_B_rankA.o_inv_en_qcs_n.eq(0)
+        self.comb += if_ctrl_obuf_csca_row_A_rankB.o_inv_en_qcs_n.eq(0)
+        self.comb += if_ctrl_obuf_csca_row_B_rankB.o_inv_en_qcs_n.eq(0)
 
-        self.comb += if_ctrl_obuf.o_inv_en_qaca_a.eq(0)
-        self.comb += if_ctrl_obuf.o_inv_en_qaca_b.eq(OUTPUT_INVERSION_ENABLE)
+        self.comb += if_ctrl_obuf_csca_row_A_rankA.o_inv_en_qca.eq(0)
+        self.comb += if_ctrl_obuf_csca_row_B_rankA.o_inv_en_qca.eq(0)
+        self.comb += if_ctrl_obuf_csca_row_A_rankB.o_inv_en_qca.eq(
+            OUTPUT_INVERSION_ENABLE)
+        self.comb += if_ctrl_obuf_csca_row_B_rankB.o_inv_en_qca.eq(
+            OUTPUT_INVERSION_ENABLE)
 
         # Clock output inversion
-        self.comb += if_ctrl_obuf.o_inv_en_qack_t.eq(OUTPUT_INVERSION_ENABLE)
-        self.comb += if_ctrl_obuf.o_inv_en_qack_c.eq(OUTPUT_INVERSION_ENABLE)
 
-        self.comb += if_ctrl_obuf.o_inv_en_qbck_t.eq(OUTPUT_INVERSION_ENABLE)
-        self.comb += if_ctrl_obuf.o_inv_en_qbck_c.eq(OUTPUT_INVERSION_ENABLE)
-
-        self.comb += if_ctrl_obuf.o_inv_en_qcck_t.eq(OUTPUT_INVERSION_ENABLE)
-        self.comb += if_ctrl_obuf.o_inv_en_qcck_c.eq(OUTPUT_INVERSION_ENABLE)
-
-        self.comb += if_ctrl_obuf.o_inv_en_qdck_t.eq(OUTPUT_INVERSION_ENABLE)
-        self.comb += if_ctrl_obuf.o_inv_en_qdck_c.eq(OUTPUT_INVERSION_ENABLE)
+        self.comb += if_ctrl_obuf_clks_row_A_rankA.o_inv_en_ck_t.eq(0)
+        self.comb += if_ctrl_obuf_clks_row_A_rankA.o_inv_en_ck_c.eq(0)
+        self.comb += if_ctrl_obuf_clks_row_B_rankA.o_inv_en_ck_t.eq(0)
+        self.comb += if_ctrl_obuf_clks_row_B_rankA.o_inv_en_ck_c.eq(0)
+        self.comb += if_ctrl_obuf_clks_row_A_rankB.o_inv_en_ck_t.eq(
+            OUTPUT_INVERSION_ENABLE)
+        self.comb += if_ctrl_obuf_clks_row_A_rankB.o_inv_en_ck_c.eq(
+            OUTPUT_INVERSION_ENABLE)
+        self.comb += if_ctrl_obuf_clks_row_B_rankB.o_inv_en_ck_t.eq(
+            OUTPUT_INVERSION_ENABLE)
+        self.comb += if_ctrl_obuf_clks_row_B_rankB.o_inv_en_ck_c.eq(
+            OUTPUT_INVERSION_ENABLE)
 
         """ Table 115 
             RW11
@@ -261,43 +293,17 @@ class DDR5RCD01ControlCenter(Module):
         # ----------------------------------------0b76543210
         boot_image_rw00_rw5f[RW_LATENCY_ADDER] = 0b000000001
 
-        self.comb += if_ctrl_lbuf.sel_latency_add.eq(latency_cat)
+        self.comb += if_ctrl_lbuf_row_A_rankA.sel_latency_add.eq(latency_cat)
+        self.comb += if_ctrl_lbuf_row_B_rankA.sel_latency_add.eq(latency_cat)
+        self.comb += if_ctrl_lbuf_row_A_rankB.sel_latency_add.eq(latency_cat)
+        self.comb += if_ctrl_lbuf_row_B_rankB.sel_latency_add.eq(latency_cat)
 
         """
           Parity checker
         """
+        # TODO implement parity
+
         # self.comb += parity_error.eq(0)
-
-        """
-          CS Logic
-          The control center forwards the cmd to the deserializer by the 
-          If_ctrl_lbuf interface. The deserializer is placed inside of the lbuf.
-          (Not optimal for synthesis).
-
-          Commands (CA and CS_n) are forwarded in normal mode:
-          1. Detect active CS_n
-          2. Send the command to the DRAM interface
-          Use Cases: 
-          
-          1 UI command:
-            - CS is low
-            - CA on this edge and next is captured (c.f. RCD model clocking)
-          
-          2 UI commands: 
-            - CS is low only during 1st UI. Can be low if the non-target termination
-            is being signalled. c.f. Table 4
-            - CA must be captured on 2 more edges
-
-          Parity error detected during a 1 UI command
-
-          Parity error detected during a 2 UI command
-
-          DRAM Interface Blocking Mode is enabled
-
-          CA Pass-through Mode is enabled
-
-          The decode portion should always listen
-        """
 
         debug_parity_error_occured = Signal()
         self.comb += debug_parity_error_occured.eq(0)
@@ -306,88 +312,36 @@ class DDR5RCD01ControlCenter(Module):
         self.comb += debug_non_target_termination_signalled.eq(0)
 
         """
-          Drive deser if a command is sent
+            CS Logic
         """
-        # Normal forward
-        xfsm_cslogic = FSM(reset_state="RESET")
-        self.submodules += xfsm_cslogic
+        xcs_logic_row_A_rank_A = DDR5RCD01CSLogic(if_ibuf_o=if_ibuf_o,
+                                                  if_ctrl_lbuf=if_ctrl_lbuf_row_A_rankA,
+                                                  cs_bit=0,
+                                                  )
+        self.submodules += xcs_logic_row_A_rank_A
 
-        fetch_decode_en = Signal()
-        self.comb += fetch_decode_en.eq(1)
+        xcs_logic_row_B_rank_A = DDR5RCD01CSLogic(if_ibuf_o=if_ibuf_o,
+                                                  if_ctrl_lbuf=if_ctrl_lbuf_row_B_rankA,
+                                                  cs_bit=0,
+                                                  )
+        self.submodules += xcs_logic_row_B_rank_A
 
-        xfsm_cslogic.act(
-            "RESET",
-            If(
-                fetch_decode_en,
-                NextState("IDLE")
-            )
-        )
-        xfsm_cslogic.act(
-            "IDLE",
-            If(
-                if_ibuf_2_lbuf.dcs_n == 0x00,
-                if_ctrl_lbuf.deser_sel_lower_upper.eq(0),
-                if_ctrl_lbuf.deser_ca_d_en.eq(1),
-                if_ctrl_lbuf.deser_ca_q_en.eq(0),
-                if_ctrl_lbuf.deser_cs_n_d_en.eq(1),
-                if_ctrl_lbuf.deser_cs_n_q_en.eq(0),
-                NextState("S_0a")
-            ).Else(
-                if_ctrl_lbuf.deser_sel_lower_upper.eq(0),
-                if_ctrl_lbuf.deser_ca_d_en.eq(0),
-                if_ctrl_lbuf.deser_ca_q_en.eq(0),
-                if_ctrl_lbuf.deser_cs_n_d_en.eq(0),
-                if_ctrl_lbuf.deser_cs_n_q_en.eq(0),
-            )
-        )
-        xfsm_cslogic.act(
-            "S_0a",
-            if_ctrl_lbuf.deser_sel_lower_upper.eq(1),
-            if_ctrl_lbuf.deser_ca_d_en.eq(1),
-            if_ctrl_lbuf.deser_ca_q_en.eq(0),
-            if_ctrl_lbuf.deser_cs_n_d_en.eq(1),
-            if_ctrl_lbuf.deser_cs_n_q_en.eq(0),
-            NextState("S_0b")
-        )
-        xfsm_cslogic.act(
-            "S_0b",
-            if_ctrl_lbuf.deser_sel_lower_upper.eq(0),
-            if_ctrl_lbuf.deser_ca_d_en.eq(1),
-            if_ctrl_lbuf.deser_ca_q_en.eq(1),
-            if_ctrl_lbuf.deser_cs_n_d_en.eq(1),
-            if_ctrl_lbuf.deser_cs_n_q_en.eq(1),
-            NextState("S_1a")
-        )
-        xfsm_cslogic.act(
-            "S_1a",
-            if_ctrl_lbuf.deser_sel_lower_upper.eq(1),
-            if_ctrl_lbuf.deser_ca_d_en.eq(1),
-            if_ctrl_lbuf.deser_ca_q_en.eq(0),
-            if_ctrl_lbuf.deser_cs_n_d_en.eq(1),
-            if_ctrl_lbuf.deser_cs_n_q_en.eq(0),
-            NextState("S_1b")
-        )
-        xfsm_cslogic.act(
-            "S_1b",
-            if_ctrl_lbuf.deser_sel_lower_upper.eq(0),
-            if_ctrl_lbuf.deser_ca_d_en.eq(0),
-            if_ctrl_lbuf.deser_ca_q_en.eq(1),
-            if_ctrl_lbuf.deser_cs_n_d_en.eq(0),
-            if_ctrl_lbuf.deser_cs_n_q_en.eq(1),
-            NextState("POST")
-        )
-        xfsm_cslogic.act(
-            "POST",
-            if_ctrl_lbuf.deser_sel_lower_upper.eq(0),
-            if_ctrl_lbuf.deser_ca_d_en.eq(0),
-            if_ctrl_lbuf.deser_ca_q_en.eq(1),
-            if_ctrl_lbuf.deser_cs_n_d_en.eq(0),
-            if_ctrl_lbuf.deser_cs_n_q_en.eq(1),
-            NextState("IDLE")
-        )
+        xcs_logic_row_A_rank_B = DDR5RCD01CSLogic(if_ibuf_o=if_ibuf_o,
+                                                  if_ctrl_lbuf=if_ctrl_lbuf_row_A_rankB,
+                                                  inv_en=True,
+                                                  cs_bit=1,
+                                                  )
+        self.submodules += xcs_logic_row_A_rank_B
 
-        # TODO expand features of the main FSM here
-        """ Modal FSM
+        xcs_logic_row_B_rank_B = DDR5RCD01CSLogic(if_ibuf_o=if_ibuf_o,
+                                                  if_ctrl_lbuf=if_ctrl_lbuf_row_B_rankB,
+                                                  inv_en=True,
+                                                  cs_bit=1,
+                                                  )
+        self.submodules += xcs_logic_row_B_rank_B
+
+        """ TODO Modal FSM
+
         RESET_HARD - reset after power-up
 
         RESET_SOFT - reset after drst_n assertion
@@ -453,7 +407,9 @@ class DDR5RCD01ControlCenter(Module):
         self.comb += If(xfsm.ongoing("CA_PASS_THROUGH_MODE"),
                         xfsm_debug_state.eq(3))
 
-        # Boot image reader
+        """
+            Boot image reader
+        """
         rw_counter = Signal(int(CW_DA_REGS_NUM).bit_length())
         boot_word = Signal(int(CW_DA_REGS_NUM).bit_length())
 
