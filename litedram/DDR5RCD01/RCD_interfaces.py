@@ -238,22 +238,6 @@ class If_channel_common(Record):
         ]
 
 
-class If_lb(Record):
-    """
-    Host/RCD loopback interface
-    """
-
-    def __init__(self):
-        layout = self.description()
-        Record.__init__(self, layout)
-
-    def description(self):
-        return [
-            ('lbd',    1),
-            ('lbs',    1),
-        ]
-
-
 class If_int_lb(Record):
     """
     DFE Tap internal loopback interface
