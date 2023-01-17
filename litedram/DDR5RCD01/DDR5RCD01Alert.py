@@ -29,8 +29,12 @@ class DDR5RCD01Alert(Module):
     ------
     """
 
-    def __init__(self, if_host_err, if_channel_A_err,
-                 if_channel_B_err, if_ctrl_err):
+    def __init__(self,
+                 if_alert_n,
+                 if_common,
+                 if_ctrl_common,
+                 if_config_common,
+                 ):
         # TODO take errors from channel and create a pulse
         # TODO implement control
 

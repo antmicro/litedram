@@ -13,14 +13,15 @@ class If_ck(Record):
     Clock interface
     """
 
-    def __init__(self):
-        layout = self.description()
+    def __init__(self, n_clks=1):
+
+        layout = self.description(n_clks)
         Record.__init__(self, layout)
 
-    def description(self):
+    def description(self, n_clks):
         return [
-            ('ck_t', 1),
-            ('ck_c', 1),
+            ('ck_t', n_clks),
+            ('ck_c', n_clks),
         ]
 
 
@@ -96,11 +97,11 @@ class If_ctrl_lbuf(Record):
     Configuration of the line buffer
     """
 
-    def __init__(self):
-        layout = self.description()
+    def __init__(self, qcs_n_w=2, qca_w=14):
+        layout = self.description(qcs_n_w, qca_w)
         Record.__init__(self, layout)
 
-    def description(self):
+    def description(self, qcs_n_w, qca_w):
         return [
             ('sel_latency_add', 3),
             ('deser_sel_lower_upper', 1),
@@ -108,6 +109,8 @@ class If_ctrl_lbuf(Record):
             ('deser_ca_q_en', 1),
             ('deser_cs_n_d_en', 1),
             ('deser_cs_n_q_en', 1),
+            ('deser_ca_d_disable_state', qca_w),
+            ('deser_cs_n_d_disable_state', qcs_n_w),
         ]
 
 
@@ -181,6 +184,24 @@ class If_config_common(Record):
         return [
             # TODO add RWs, e.g. PLL control, loopback mode, error mode
             ('Common_RWs', 1),
+        ]
+
+
+class If_common(Record):
+    """
+    This interface is used for the:
+    Configuration of the common block settings
+    """
+
+    def __init__(self):
+        layout = self.description()
+        Record.__init__(self, layout)
+
+    def description(self):
+        return [
+            # TODO parity, lb, etc.
+            ('parity', 1),
+            ('loopback', 1),
         ]
 
 

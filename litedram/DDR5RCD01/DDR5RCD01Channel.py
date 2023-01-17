@@ -37,7 +37,10 @@ class DDR5RCD01Channel(Module):
                  if_sdram,
                  if_bcom,
                  if_ctrl_global,
+                 if_config_global,
+                 if_common,
                  if_ctrl_common,
+                 if_config_common,
                  is_master=True,
                  ):
         """
@@ -50,6 +53,24 @@ class DDR5RCD01Channel(Module):
         else:
             pass
 
+        """
+            Split clock inputs
+        """
+        if_clk_rowA_rankA = If_ck()
+        self.comb += if_clk_rowA_rankA.ck_t.eq(if_clks_i.ck_t[3])
+        self.comb += if_clk_rowA_rankA.ck_c.eq(if_clks_i.ck_c[3])
+
+        if_clk_rowB_rankA = If_ck()
+        self.comb += if_clk_rowB_rankA.ck_t.eq(if_clks_i.ck_t[2])
+        self.comb += if_clk_rowB_rankA.ck_c.eq(if_clks_i.ck_c[2])
+
+        if_clk_rowA_rankB = If_ck()
+        self.comb += if_clk_rowA_rankB.ck_t.eq(if_clks_i.ck_t[1])
+        self.comb += if_clk_rowA_rankB.ck_c.eq(if_clks_i.ck_c[1])
+
+        if_clk_rowB_rankB = If_ck()
+        self.comb += if_clk_rowB_rankB.ck_t.eq(if_clks_i.ck_t[0])
+        self.comb += if_clk_rowB_rankB.ck_c.eq(if_clks_i.ck_c[0])
         """
             Input Buffer
         """
@@ -79,14 +100,14 @@ class DDR5RCD01Channel(Module):
         if_ctrl_obuf_csca_row_B_rankA = If_ctrl_obuf_CSCA()
         if_ctrl_obuf_clks_row_A_rankA = If_ctrl_obuf_CLKS()
         if_ctrl_obuf_clks_row_B_rankA = If_ctrl_obuf_CLKS()
-        
+
         if_obuf_clks_row_A_rankA = If_ck()
         if_obuf_clks_row_B_rankA = If_ck()
 
         xrankA = DDR5RCD01RankBuffer(
             if_ibuf=if_ibuf_2_ranks,
-            if_clk_row_A=if_clks_i,
-            if_clk_row_B=if_clks_i,
+            if_clk_row_A=if_clk_rowA_rankA,
+            if_clk_row_B=if_clk_rowB_rankA,
             if_obuf_csca_row_A=if_obuf_csca_row_A_rankA,
             if_obuf_csca_row_B=if_obuf_csca_row_B_rankA,
             if_obuf_clks_row_A=if_obuf_clks_row_A_rankA,
@@ -125,14 +146,13 @@ class DDR5RCD01Channel(Module):
         if_obuf_csca_row_A_rankB = If_bus_csca_o()
         if_obuf_csca_row_B_rankB = If_bus_csca_o()
 
-
         if_obuf_clks_row_A_rankB = If_ck()
         if_obuf_clks_row_B_rankB = If_ck()
 
         xrankB = DDR5RCD01RankBuffer(
             if_ibuf=if_ibuf_2_ranks,
-            if_clk_row_A=if_clks_i,
-            if_clk_row_B=if_clks_i,
+            if_clk_row_A=if_clk_rowA_rankB,
+            if_clk_row_B=if_clk_rowB_rankB,
             if_obuf_csca_row_A=if_obuf_csca_row_A_rankB,
             if_obuf_csca_row_B=if_obuf_csca_row_B_rankB,
             if_obuf_clks_row_A=if_obuf_clks_row_A_rankB,
@@ -159,29 +179,31 @@ class DDR5RCD01Channel(Module):
         """
             Control Center
         """
-        # xcontrol_center = DDR5RCD01ControlCenter(
-        #     if_ibuf_2_lbuf=if_ibuf_o,
-        #     if_ctrl_ibuf=if_ctrl_ibuf,
-        #     # Rank A
-        #     if_ctrl_lbuf_row_X_rankA=if_ctrl_lbuf_row_X_rankA,
-        #     if_ctrl_obuf_csca_row_A_rankA=if_ctrl_obuf_csca_row_A_rankA,
-        #     if_ctrl_obuf_clks_row_B_rankA=if_ctrl_obuf_clks_row_B_rankA,
-        #     if_ctrl_obuf_csca_row_A_rankA=if_ctrl_obuf_csca_row_A_rankA,
-        #     if_ctrl_obuf_clks_row_B_rankA=if_ctrl_obuf_clks_row_B_rankA,
-        #     # Rank B
-        #     if_ctrl_lbuf_row_A_rankB=if_ctrl_lbuf_row_A_rankB,
-        #     if_ctrl_lbuf_row_B_rankB=if_ctrl_lbuf_row_B_rankB,
-        #     if_ctrl_obuf_csca_row_A_rankB=if_ctrl_obuf_csca_row_A_rankB,
-        #     if_ctrl_obuf_csca_row_B_rankB=if_ctrl_obuf_csca_row_B_rankB,
-        #     if_ctrl_obuf_clks_row_A_rankB=if_ctrl_obuf_clks_row_A_rankB,
-        #     if_ctrl_obuf_clks_row_B_rankB=if_ctrl_obuf_clks_row_B_rankB,
-        #     # Common
-        #     if_ctrl_global=if_ctrl_global,
-        #     if_ctrl_common=if_ctrl_common,
-        #     is_channel_A=is_master,
-        # )
 
-        # self.submodules += xcontrol_center
+        xcontrol_center = DDR5RCD01ControlCenter(
+            if_ibuf_o=if_ibuf_o,
+            if_ctrl_ibuf=if_ctrl_ibuf,
+            if_ctrl_lbuf_row_A_rankA=if_ctrl_lbuf_row_A_rankA,
+            if_ctrl_lbuf_row_B_rankA=if_ctrl_lbuf_row_B_rankA,
+            if_ctrl_obuf_csca_row_A_rankA=if_ctrl_obuf_csca_row_A_rankA,
+            if_ctrl_obuf_csca_row_B_rankA=if_ctrl_obuf_csca_row_B_rankA,
+            if_ctrl_obuf_clks_row_A_rankA=if_ctrl_obuf_clks_row_A_rankA,
+            if_ctrl_obuf_clks_row_B_rankA=if_ctrl_obuf_clks_row_B_rankA,
+            if_ctrl_lbuf_row_A_rankB=if_ctrl_lbuf_row_A_rankB,
+            if_ctrl_lbuf_row_B_rankB=if_ctrl_lbuf_row_B_rankB,
+            if_ctrl_obuf_csca_row_A_rankB=if_ctrl_obuf_csca_row_A_rankB,
+            if_ctrl_obuf_csca_row_B_rankB=if_ctrl_obuf_csca_row_B_rankB,
+            if_ctrl_obuf_clks_row_A_rankB=if_ctrl_obuf_clks_row_A_rankB,
+            if_ctrl_obuf_clks_row_B_rankB=if_ctrl_obuf_clks_row_B_rankB,
+            if_ctrl_global=if_ctrl_global,
+            if_config_global=if_config_global,
+            if_common=if_common,
+            if_ctrl_common=if_ctrl_common,
+            if_config_common=if_config_common,
+            is_channel_A=is_master,
+        )
+
+        self.submodules += xcontrol_center
 
         # TODO implement error handler
         # xerror = DDR5RCD01Error(iif_err=if_sdram, oif_err=if_err)

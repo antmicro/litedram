@@ -81,14 +81,12 @@ class DDR5RCD01Loopback(Module):
   """
 
     def __init__(self,
-                 if_ck,
-                 if_host_lb,
-                 if_rcd_lb,
-                 if_sdram_A_lb,
-                 if_sdram_B_lb,
-                 if_channel_A_dfe_lb,
-                 if_channel_B_dfe_lb,
-                 if_ctrl_lb):
+                if_ck_rst,
+                if_lb,
+                if_common,
+                if_ctrl_common,
+                if_config_common,
+                ):
 
         #
         # Internal path
