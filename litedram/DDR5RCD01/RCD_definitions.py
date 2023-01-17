@@ -337,5 +337,17 @@ rcd_pages = {
 }
 
 
+class sideband_type(Enum):
+    I2C = 1
+    I3C = 2
+    MOCK = 3
+
+class dimm_type(Enum):
+    UDIMM = 1
+    RDIMM = 2
+    LRDIMM = 3
+    LPDIMM = 4
+    SODIMM = 5
+
 if __name__ == "__main__":
     raise NotImplementedError("Test of this block is not provided.")

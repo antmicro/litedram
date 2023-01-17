@@ -15,15 +15,15 @@ class DDR5RCD01DataBufferSimulationPads(SimulationPads):
     for the DDR5 Data Signals: dq,cb,dqs.
     Note, the pads are the same for ingress and egress traffic.
     """
-    def layout(self, databits=8, nranks=1, dq_dqs_ratio=8, with_sub_channels=False):
-        per_channel = [
-            ('dq',32,True),
-            ('cb',8,False),
-            ('dqs_t',8,True),
-            ('dqs_c',8,True),
+    def layout(self, dq_w=32, cb_w=8, dqs_w=8):
+        channel = [
+            SimPad('dq',dq_w,True),
+            SimPad('cb',cb_w,False),
+            SimPad('dqs_t',dqs_w,True),
+            SimPad('dqs_c',dqs_w,True),
         ]
-        channels_prefix = [""] if not with_sub_channels else ["A_", "B_"]
-        return [SimPad(prefix+name, size, io) for prefix in channels_prefix for name, size, io in per_channel]
+        return channel
 
 if __name__ == "__main__":
-    raise NotImplementedError("Test of this block is not provided.")
+    p = DDR5RCD01DataBufferSimulationPads()
+    

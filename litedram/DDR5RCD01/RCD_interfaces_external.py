@@ -50,9 +50,13 @@ class If_sdram(Record):
             # SDRAM Channel A
             ('derror_a_in_n', 1, False),
             ('qrst_a_n', 1),
+            ('dlbd_a',    1),
+            ('dlbs_a',    1),
             # SDRAM Channel B
             ('derror_b_in_n', 1, False),
             ('qrst_b_n', 1),
+            ('dlbd_b',    1),
+            ('dlbs_b',    1),
         ]
 
 
@@ -150,8 +154,6 @@ class If_lb(Record):
 
     def description(self):
         return [
-            ('dlbd',  1),
-            ('dlbs',  1),
             ('qlbd',    1),
             ('qlbs',    1),
         ]

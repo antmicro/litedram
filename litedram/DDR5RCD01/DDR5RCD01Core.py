@@ -39,7 +39,8 @@ class DDR5RCD01Core(Module):
                  if_sdram_A,
                  if_sdram_B,
                  if_alert_n,
-                 if_ibuf,
+                 if_ibuf_A,
+                 if_ibuf_B,
                  if_obuf_A,
                  if_obuf_B,
                  if_lb,
@@ -65,7 +66,7 @@ class DDR5RCD01Core(Module):
         if_config_global = If_config_global()
 
         xchannel_A = DDR5RCD01Channel(
-            if_ibuf=if_ibuf,
+            if_ibuf=if_ibuf_A,
             if_clks_i=if_pll,
             if_obuf=if_obuf_A,
             if_sdram=if_sdram_A,
@@ -85,7 +86,7 @@ class DDR5RCD01Core(Module):
         if is_dual_channel:
             is_channel_B_master = False
             xchannel_B = DDR5RCD01Channel(
-                if_ibuf=if_ibuf,
+                if_ibuf=if_ibuf_B,
                 if_clks_i=if_pll,
                 if_obuf=if_obuf_B,
                 if_sdram=if_sdram_B,
@@ -122,7 +123,8 @@ class TestBed(Module):
         self.if_sdram_A = If_sdram()
         self.if_sdram_B = If_sdram()
         self.if_alert_n = If_alert_n()
-        self.if_ibuf = If_ibuf()
+        self.if_ibuf_A = If_ibuf()
+        self.if_ibuf_B = If_ibuf()
         self.if_obuf_A = If_obuf()
         self.if_obuf_B = If_obuf()
         self.if_lb = If_lb()
@@ -136,7 +138,8 @@ class TestBed(Module):
             if_sdram_A=self.if_sdram_A,
             if_sdram_B=self.if_sdram_B,
             if_alert_n=self.if_alert_n,
-            if_ibuf=self.if_ibuf,
+            if_ibuf_A=self.if_ibuf_A,
+            if_ibuf_B=self.if_ibuf_B,
             if_obuf_A=self.if_obuf_A,
             if_obuf_B=self.if_obuf_B,
             if_lb=self.if_lb,
@@ -211,8 +214,8 @@ def drive_init(tb):
 
 
 def drive_cs_ca(cs, ca):
-    yield tb.if_ibuf.dcs_n.eq(cs)
-    yield tb.if_ibuf.dca.eq(ca)
+    yield tb.if_ibuf_A.dcs_n.eq(cs)
+    yield tb.if_ibuf_A.dca.eq(ca)
     yield
 
 

@@ -8,132 +8,100 @@
 from migen import *
 # RCD
 from litedram.DDR5RCD01.DDR5RCD01BCOMSimulationPads import DDR5RCD01BCOMSimulationPads
-from litedram.DDR5RCD01.DDR5RCD01CoreEgressSimulationPads import  DDR5RCD01CoreEgressSimulationPads
-from litedram.DDR5RCD01.DDR5RCD01CoreIngressSimulationPads import  DDR5RCD01CoreIngressSimulationPads
-from litedram.DDR5RCD01.DDR5RCD01SidebandSimulationPads import  DDR5RCD01SidebandSimulationPads
+from litedram.DDR5RCD01.DDR5RCD01CoreEgressSimulationPads import DDR5RCD01CoreEgressSimulationPads
+from litedram.DDR5RCD01.DDR5RCD01CommonIngressSimulationPads import DDR5RCD01CommonIngressSimulationPads
+from litedram.DDR5RCD01.DDR5RCD01ChannelIngressSimulationPads import DDR5RCD01ChannelIngressSimulationPads
+from litedram.DDR5RCD01.DDR5RCD01SidebandSimulationPads import DDR5RCD01SidebandSimulationPads
+
+from litedram.DDR5RCD01.RCD_definitions import *
+from litedram.DDR5RCD01.RCD_utils import *
+from litedram.DDR5RCD01.RCD_interfaces import *
+from litedram.DDR5RCD01.RCD_interfaces_external import *
 
 class DDR5RCD01Shell(Module):
-    """The DDR5RCD01Shell
-        is a module, which:
-          - implements the pin-out exactly as the DDR5RCD01_model
-          - connect relevant outputs to inputs. This provides a complete
-            pass-through (or bypass) performance.
+    """The DDR5RCD01Shell is a module, which:
+          - implements the pin-out (similarly) as the DDR5RCD01_model
+          - connect relevant outputs to inputs.
           - the purpose of this block is to quickly develop testbenches
     """
-    def __init__(self, pads_ingress, pads_sideband, \
-                is_dual_channel=False, **kwargs):
 
-      self.submodules.pads_sideband = pads_sideband
-      self.submodules.pads_ingress = pads_ingress
+    def __init__(self,
+                 pads_ingress_A,
+                 pads_ingress_B,
+                 pads_ingress_common,
+                 pads_sideband,
+                 **kwargs):
 
-      pads_egress = DDR5RCD01CoreEgressSimulationPads(dcs_n_w=2, dca_w=14, is_dual_channel=is_dual_channel)
-      self.submodules.pads_egress = pads_egress
+        self.submodules += pads_sideband
+        self.submodules += pads_ingress_A
+        self.submodules += pads_ingress_B
 
-      pads_bcom = DDR5RCD01BCOMSimulationPads(is_dual_channel=is_dual_channel)
-      self.submodules.pads_bcom = pads_bcom
+        pads_egress_A = DDR5RCD01CoreEgressSimulationPads()
+        self.submodules += pads_egress_A
+        if pads_ingress_B is not None:
+            pads_egress_B = DDR5RCD01CoreEgressSimulationPads()
+            self.submodules += pads_egress_B
 
-      # Note, dpar is not on the list, must be handled in RCD
-      # TODO handler dpar[b:a]
-      # Reset output
+        pads_bcom_A = DDR5RCD01BCOMSimulationPads()
+        self.submodules += pads_bcom_A
+        pads_bcom_B = DDR5RCD01BCOMSimulationPads()
+        self.submodules += pads_bcom_B
 
-      # Single channel connection matrix
-      # Signals in keys are dual channel
-      # Signals in values are single channel
+        # Pass-through
+        self.comb += pads_ingress_common.qlbd.eq(0)
+        self.comb += pads_ingress_common.qlbs.eq(0)
+        self.comb += pads_ingress_common.alert_n.eq(1)
 
-      # Order 'Forward' will result in a connection
-      # self.comb += egress.eq(ingress)
-      # Order 'Reverse' will result in a connection
-      # self.comb += ingress.eq(egress)
+        self.comb += pads_egress_A.qrst_n.eq(pads_ingress_common.drst_n)
 
-      connection_matrix_sc ={
-      'dlbd' : ['qlbd','Reverse'],
-      'dlbs' : ['qlbs','Reverse'],
-      'qrst_n' : ['drst_n','Forward'],
-      # Clock outputs
-      # Rank 0, Row Top
-      'qack_t' :  ['dck_t','Forward'],
-      'qack_c' :  ['dck_c','Forward'],
-      # Rank 1, Row Top
-      'qbck_t' :  ['dck_t','Forward'],
-      'qbck_c' :  ['dck_c','Forward'],
-      # Rank 0, Row Bottom
-      'qcck_t' :  ['dck_t','Forward'],
-      'qcck_c' :  ['dck_c','Forward'],
-      # Rank 1, Row Top
-      'qdck_t' :  ['dck_t','Forward'],
-      'qdck_c' : ['dck_c','Forward'],
-      # Error
-      'derror_in_n' : ['alert_n', 'Reverse'],
-      }
-      
-      # Dual-channel connection matrix
-      # Signals in keys AND values are dual-channel
-      connection_matrix_dc ={
-      # Adress, Chip Select
-      # Top Row
-      'qacs_a_n' : ['dcs_n','Forward'],
-      'qaca_a' :  ['dca_n','Forward'],
-      # Bottom Row
-      'qacs_b_n' :  ['dcs_n','Forward'],
-      'qaca_b' :  ['dca_n','Forward'],
-      }  
-      
-      # Connect matrix_sc
-      print('Connection Table SC: Signal is connected to Signal ')
+        self.comb += pads_egress_A.qacs_a_n.eq(pads_ingress_A.dcs_n)
+        self.comb += pads_egress_A.qaca_a.eq(pads_ingress_A.dca)
+        self.comb += pads_egress_A.qacs_b_n.eq(pads_ingress_A.dcs_n)
+        self.comb += pads_egress_A.qaca_b.eq(pads_ingress_A.dca)
 
-      prefixes = [""] if not is_dual_channel else ["A_", "B_"]
-      for prefix in prefixes:
-          for key in connection_matrix_sc:
-            sig_eg = prefix+key
-            sig_in = connection_matrix_sc[key][0]
-            # Get attr in egress
-            atr_eg = getattr(self.pads_egress, sig_eg)
-            # Get attr in ingress
-            atr_in = getattr(self.pads_ingress, sig_in)
-            # Determine correct direction
-            direction = connection_matrix_sc[key][1]
-            if direction == 'Forward':
-              print('Connect : ' + sig_in + ' to ' + sig_eg)
-              self.comb += atr_eg.eq(atr_in)
-              pass
-            elif direction == 'Reverse':
-              print('Connect : ' + sig_eg + ' to ' + sig_in)
-              self.comb += atr_in.eq(atr_eg)
-              pass
-            else:
-                raise('Unsupported option defined in connection matrix. Supported: Forward, Reverse')
-            # breakpoint()
-      
-      # TODO the only difference between the two loops is the added prefix, this could be joined
+        self.comb += pads_egress_A.qack_t.eq(pads_ingress_common.dck_t)
+        self.comb += pads_egress_A.qack_c.eq(pads_ingress_common.dck_c)
+        self.comb += pads_egress_A.qbck_t.eq(pads_ingress_common.dck_t)
+        self.comb += pads_egress_A.qbck_c.eq(pads_ingress_common.dck_c)
+        self.comb += pads_egress_A.qcck_t.eq(pads_ingress_common.dck_t)
+        self.comb += pads_egress_A.qcck_c.eq(pads_ingress_common.dck_c)
+        self.comb += pads_egress_A.qdck_t.eq(pads_ingress_common.dck_t)
+        self.comb += pads_egress_A.qdck_c.eq(pads_ingress_common.dck_c)
 
-      # Connect matrix dc
-      print('Connection Table DC: Signal is connected to Signal ')
-      for prefix in prefixes:
-          for key in connection_matrix_dc:
-            sig_eg = prefix+key
-            sig_in = prefix+connection_matrix_dc[key][0]
-            # Get attr in egress
-            atr_eg = getattr(self.pads_egress, sig_eg)
-            # Get attr in ingress
-            atr_in = getattr(self.pads_ingress, sig_in)
-            # Determine correct direction
-            direction = connection_matrix_dc[key][1]
-            if direction == 'Forward':
-              print('Connect : ' + sig_in + ' to ' + sig_eg)
-              self.comb += atr_eg.eq(atr_in)
-              pass
-            elif direction == 'Reverse':
-              print('Connect : ' + sig_eg + ' to ' + sig_in)
-              print(direction)
-              self.comb += atr_in.eq(atr_eg)
-              pass
-            else:
-                raise('Unsupported option defined in connection matrix. Supported: Forward, Reverse')
-            # breakpoint()
+        if pads_ingress_B is not None:
+            self.comb += pads_egress_B.qrst_n.eq(pads_ingress_common.drst_n)
+
+            self.comb += pads_egress_B.qacs_a_n.eq(pads_ingress_B.dcs_n)
+            self.comb += pads_egress_B.qaca_a.eq(pads_ingress_B.dca)
+            self.comb += pads_egress_B.qacs_b_n.eq(pads_ingress_B.dcs_n)
+            self.comb += pads_egress_B.qaca_b.eq(pads_ingress_B.dca)
+
+            self.comb += pads_egress_B.qack_t.eq(pads_ingress_common.dck_t)
+            self.comb += pads_egress_B.qack_c.eq(pads_ingress_common.dck_c)
+            self.comb += pads_egress_B.qbck_t.eq(pads_ingress_common.dck_t)
+            self.comb += pads_egress_B.qbck_c.eq(pads_ingress_common.dck_c)
+            self.comb += pads_egress_B.qcck_t.eq(pads_ingress_common.dck_t)
+            self.comb += pads_egress_B.qcck_c.eq(pads_ingress_common.dck_c)
+            self.comb += pads_egress_B.qdck_t.eq(pads_ingress_common.dck_t)
+            self.comb += pads_egress_B.qdck_c.eq(pads_ingress_common.dck_c)
+
 
 if __name__ == "__main__":
-  raise NotImplementedError("Test of this block is to be done.")
-  pi = DDR5RCD01CoreIngressSimulationPads()
-  ps = DDR5RCD01SidebandSimulationPads()
-  objTB = DDR5RCD01Shell(pi,ps)
-  
+    pads_ingress_A = DDR5RCD01ChannelIngressSimulationPads()
+    pads_ingress_B = DDR5RCD01ChannelIngressSimulationPads()
+    pads_ingress_common = DDR5RCD01CommonIngressSimulationPads()
+    pads_sideband = DDR5RCD01SidebandSimulationPads()
+
+    shell_dc = DDR5RCD01Shell(
+        pads_ingress_A=pads_ingress_A,
+        pads_ingress_B=pads_ingress_B,
+        pads_ingress_common=pads_ingress_common,
+        pads_sideband=pads_sideband,
+    )
+
+    shell_sc = DDR5RCD01Shell(
+        pads_ingress_A=pads_ingress_A,
+        pads_ingress_B=None,
+        pads_ingress_common=pads_ingress_common,
+        pads_sideband=pads_sideband,
+    )

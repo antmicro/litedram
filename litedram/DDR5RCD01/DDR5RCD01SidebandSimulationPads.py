@@ -25,4 +25,4 @@ class DDR5RCD01SidebandSimulationPads(SimulationPads):
 
 
 if __name__ == "__main__":
-    raise NotImplementedError("Test of this block is not provided.")
+    p = DDR5RCD01SidebandSimulationPads()
