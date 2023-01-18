@@ -30,20 +30,19 @@ class DDR5RCD01DataBuffer(Module):
                  pads_ingress,
                  dimm_type=dimm_type.RDIMM,
                  **kwargs):
-        self.submodules += pads_ingress
 
         if dimm_type == dimm_type.RDIMM:
-            data_buffer = DDR5RCD01DataBufferShell(pads_ingress)
+            xDB = DDR5RCD01DataBufferShell(pads_ingress)
 
         if dimm_type == dimm_type.LRDIMM:
-            data_buffer = DDR5RCD01DataBufferChip(pads_ingress)
+            xDB = DDR5RCD01DataBufferChip(pads_ingress)
 
-        self.submodules.data_buffer = data_buffer
-        self.submodules.pads_egress = self.data_buffer.pads_egress
+        self.submodules+= xDB
+        self.pads_egress = xDB.pads_egress
 
 
 if __name__ == "__main__":
     pads_ingress = DDR5RCD01DataBufferSimulationPads()
-    db = DDR5RCD01DataBuffer(
+    xDB = DDR5RCD01DataBuffer(
         pads_ingress=pads_ingress
     )

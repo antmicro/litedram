@@ -16,15 +16,15 @@ class DDR5RCD01DataBufferShell(Module):
     """
 
     def __init__(self, pads_ingress, **kwargs):
-        self.submodules.pads_ingress = pads_ingress
+        # self.submodules.pads_ingress = pads_ingress
 
-        pads_egress = DDR5RCD01DataBufferSimulationPads()
-        self.submodules.pads_egress = pads_egress
+        self.pads_egress = DDR5RCD01DataBufferSimulationPads()
+        # self.submodules.pads_egress = pads_egress
 
-        self.comb += self.pads_egress.dq.eq(self.pads_ingress.dq)
-        self.comb += self.pads_egress.cb.eq(self.pads_ingress.cb)
-        self.comb += self.pads_egress.dqs_t.eq(self.pads_ingress.dqs_t)
-        self.comb += self.pads_egress.dqs_c.eq(self.pads_ingress.dqs_c)
+        self.comb += self.pads_egress.dq.eq(pads_ingress.dq)
+        self.comb += self.pads_egress.cb.eq(pads_ingress.cb)
+        self.comb += self.pads_egress.dqs_t.eq(pads_ingress.dqs_t)
+        self.comb += self.pads_egress.dqs_c.eq(pads_ingress.dqs_c)
 
 
 if __name__ == "__main__":

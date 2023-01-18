@@ -23,22 +23,67 @@ from litedram.DDR5RCD01.RCD_interfaces_external import *
 
 
 class DDR5RCD01System(Module):
-    """The DDR5 RCD01 System encapsulates:
+    """
+    DDR5 RCD01 System
+    -----------------
+        The system encapsulates:
         - the RCD chip
         - the Data Buffer chips
     The System may be configured for RDIMM or LRDIMM type.
     In the RDIMM mode BCOM is unused and Data Buffer signals
     are passed through. The LRDIMM is not yet implemented.
+
+    The hierarchical structure is:
+        System:
+        - RCD Shell or RCD Chip
+        - Data Buffer Shell or Data Buffer Chip
+
+    The "shell" is a view, which only implementes pass-through function. The "chip" 
+    is a view, which implements the physical function.
+
     TODO enable BCOM support
+
     TODO attach a data buffer model
 
-    The system is structured as follows:
-    System:
-      -> RCD Shell or RCD Chip
-      -> Data Buffer Shell or Data Buffer Chip
+    Dual-channel support
+    --------------------
+    According to the specification the RCD system is always dual-channel, however,
+    to enable quicker simulations, a single-channel mode is implemented. 
+    The convention is to pass 'None' object to the ingress of the B channel. 
+    This causes the RCD Core not to build the B channel.
 
-    The "shell" is a view, which only implementes pass-through function.
-    The "chip" is a view, which implements the physical function.
+    Module
+    ------
+    Ingress pads:
+        - dq
+        - A
+        - B
+        - common
+        - sideband
+
+    Egress pads:
+        - dq
+        - A
+        - B
+        - common
+
+    Parameters
+    ----------
+    rcd_passthrough
+        This parameter controls selection between the RCD Shell (false) 
+        and RCD Chip (true).
+
+        Expected values:
+            {True, False};
+
+    sideband_type
+        This parameter control selection of the sideband slave
+        implemented in the RCD Chip. The JEDEC specification allows
+        either I2C or I3C to be used. Mock type is defined to allow
+        for simple communication in the simulations.
+
+        Expected values:
+            object of type <class sideband_type(Enum)>
     """
 
     def __init__(self,
@@ -50,21 +95,6 @@ class DDR5RCD01System(Module):
                  rcd_passthrough=True,
                  sideband_type=sideband_type.I2C,
                  ):
-
-        self.submodules += pads_ingress_dq
-        self.submodules += pads_ingress_A
-        self.submodules += pads_ingress_common
-        self.submodules += pads_sideband
-
-        pads_egress_dq = DDR5RCD01DataBufferSimulationPads()
-        pads_egress_A = DDR5RCD01CoreEgressSimulationPads()
-        self.submodules += pads_egress_dq
-        self.submodules += pads_egress_A
-
-        if pads_ingress_B is not None:
-            pads_egress_B = DDR5RCD01CoreEgressSimulationPads()
-            self.submodules += pads_ingress_B
-            self.submodules += pads_egress_B
 
         if rcd_passthrough == True:
             if pads_ingress_B is not None:
@@ -97,7 +127,11 @@ class DDR5RCD01System(Module):
                     pads_sideband=pads_sideband,
                 )
         self.submodules += xRCD
-        # self.submodules += xRCD.pads_egress
+        self.pads_egress_A = xRCD.pads_egress_A
+        if pads_ingress_B is not None:
+            self.pads_egress_B = xRCD.pads_egress_B
+        self.pads_bcom_A = xRCD.pads_bcom_A
+        self.pads_bcom_B = xRCD.pads_bcom_B
 
         # Data Buffer
         xDB = DDR5RCD01DataBuffer(
@@ -105,7 +139,7 @@ class DDR5RCD01System(Module):
             dimm_type=dimm_type.RDIMM
         )
         self.submodules += xDB
-        # self.submodules += xDB.pads_egress
+        self.pads_egress_dq = xDB.pads_egress
 
 
 # if __name__ == "__main__":
@@ -174,12 +208,98 @@ class TestBed(Module):
         )
         self.submodules.dut = xSystem_dc
 
-def run_test(tb):
-    logging.debug('Write test')
-    for i in range(5):
+
+def seq_cmds(tb):
+    # TODO all commands are passed as if they were 2UIs long. To be fixed.
+    # Single UI command
+    yield from n_ui_dram_command(tb, nums=[0x01, 0x02], sel_cs="rank_AB")
+    # 2 UI commands
+    yield from n_ui_dram_command(tb, nums=[0x01, 0x02, 0x03, 0x04], sel_cs="rank_A")
+    yield from n_ui_dram_command(tb, nums=[0xC0, 0xDE, 0xF0, 0x0D], sel_cs="rank_B")
+    yield from n_ui_dram_command(tb, nums=[0xC0, 0xDE, 0xF0, 0x0D], sel_cs="rank_AB")
+    yield from n_ui_dram_command(tb, nums=[0x0A, 0x0B, 0x0C, 0x0D], non_target_termination=True)
+    yield from n_ui_dram_command(tb, nums=[0xDE, 0xAD, 0xBA, 0xBE], non_target_termination=True)
+    yield from n_ui_dram_command(tb, nums=[0xC0, 0xDE, 0xF0, 0x0D], sel_cs="rank_AB")
+
+
+def n_ui_dram_command(tb, nums, sel_cs="rank_AB", non_target_termination=False):
+    """
+    This function drives the interface with as in:
+        "JEDEC 82-511 Figure 7
+        One UI DRAM Command Timing Diagram"
+
+    Nums can be any length to incroporate two, or more, UI commands
+
+    The non target termination parameter extends the DCS assertion to the 2nd UI
+    """
+    if sel_cs == "rank_A":
+        cs = 0b10
+    elif sel_cs == "rank_B":
+        cs = 0b01
+    elif sel_cs == "rank_AB":
+        cs = 0b00
+    else:
+        cs = 0b11
+
+    SEQ_INACTIVE = [~0, 0]
+    yield from drive_init(tb)
+    # yield from set_parity(tb)
+
+    sequence = [SEQ_INACTIVE]
+    for id, num in enumerate(nums):
+        if non_target_termination:
+            if id in [0, 1, 2, 3]:
+                sequence.append([cs, num])
+            else:
+                sequence.append([0b11, num])
+        else:
+            if id in [0, 1]:
+                sequence.append([cs, num])
+            else:
+                sequence.append([0b11, num])
+
+    sequence.append(SEQ_INACTIVE)
+
+    for seq_cs, seq_ca in sequence:
+        logging.debug(str(seq_cs) + " " + str(seq_ca))
+        yield from drive_cs_ca(seq_cs, seq_ca)
+    for i in range(3):
         yield
 
-if __name__ == "__main__":  
+
+def drive_init(tb):
+    yield tb.pads_ingress_common.drst_n.eq(1)
+    yield from drive_cs_ca(~0, 0)
+
+
+def drive_cs_ca(cs, ca):
+    yield tb.pads_ingress_A.dcs_n.eq(cs)
+    yield tb.pads_ingress_A.dca.eq(ca)
+    yield tb.pads_ingress_A.dpar.eq(1)
+    yield tb.pads_ingress_B.dcs_n.eq(cs)
+    yield tb.pads_ingress_B.dca.eq(ca)
+    yield tb.pads_ingress_B.dpar.eq(1)
+    yield
+
+
+def run_test(tb):
+    logging.debug('Write test')
+    # yield from one_ui_dram_command(tb)
+    INIT_CYCLES = CW_DA_REGS_NUM + 5
+    yield from drive_init(tb)
+    for b in [0, 1]*5:
+        yield tb.pads_ingress_common.dck_t.eq(b)
+        yield tb.pads_ingress_common.dck_c.eq(~b)
+        yield
+    for i in range(INIT_CYCLES):
+        yield
+    yield from seq_cmds(tb)
+    for i in range(5):
+        yield
+    logging.debug('Yield from write test.')
+
+
+if __name__ == "__main__":
     eT = EngTest(level=logging.INFO)
     logging.info("<- Module called")
     tb = TestBed()
