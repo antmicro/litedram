@@ -22,8 +22,25 @@ from litedram.DDR5RCD01.DDR5RCD01Core import DDR5RCD01Core
 
 
 class DDR5RCD01CoreWrapper(Module):
-    """DDR5 RCD01 Core Wrapper
-    TODO Connects the simulations pads to the core
+    """
+    DDR5 RCD01 Core Wrapper
+    -----------------------
+    The Core Wrapper connects the Simulations Pads to the Core's interfaces.
+    
+    TODO BCOM is unconnected
+    
+    TODO Sideband is unconnected
+    
+    Module
+    ------
+        - A
+        - B
+        - Common
+
+    Parameters
+    ----------
+    None
+
     """
 
     def __init__(self,
@@ -33,16 +50,9 @@ class DDR5RCD01CoreWrapper(Module):
                  pads_sideband,
                  **kwargs):
 
-        self.submodules.pads_ingress_A = pads_ingress_A
-        self.submodules.pads_ingress_B = pads_ingress_B
-        self.submodules.pads_ingress_common = pads_ingress_common
-        self.submodules.pads_sideband = pads_sideband
-
-        pads_egress_A = DDR5RCD01CoreEgressSimulationPads()
-        self.submodules.pads_egress_A = pads_egress_A
+        self.pads_egress_A = DDR5RCD01CoreEgressSimulationPads()
         if pads_ingress_B is not None:
-            pads_egress_B = DDR5RCD01CoreEgressSimulationPads()
-            self.submodules.pads_egress_B = pads_egress_B
+            self.pads_egress_B = DDR5RCD01CoreEgressSimulationPads()
 
         if_ck_rst = If_ck_rst()
         if_sdram_A = If_sdram()
@@ -56,7 +66,10 @@ class DDR5RCD01CoreWrapper(Module):
         if_bcom_A = If_bcom()
         if_bcom_B = If_bcom()
         if_sideband = If_sideband()
-        is_dual_channel = False
+        if pads_ingress_B is not None:
+            is_dual_channel = True
+        else:
+            is_dual_channel = False
 
         self.submodules.xCore = DDR5RCD01Core(
             if_ck_rst=if_ck_rst,
@@ -86,48 +99,48 @@ class DDR5RCD01CoreWrapper(Module):
         self.comb += if_ibuf_A.dca.eq(pads_ingress_A.dca)
         self.comb += if_ibuf_A.dpar.eq(pads_ingress_A.dpar)
 
-        self.comb += pads_egress_A.dlbd.eq(if_sdram_A.dlbd_a)
-        self.comb += pads_egress_A.dlbs.eq(if_sdram_A.dlbs_a)
+        self.comb += self.pads_egress_A.dlbd.eq(if_sdram_A.dlbd_a)
+        self.comb += self.pads_egress_A.dlbs.eq(if_sdram_A.dlbs_a)
         
-        self.comb += pads_egress_A.qrst_n.eq(if_sdram_A.qrst_a_n)
-        self.comb += pads_egress_A.derror_in_n.eq(if_sdram_A.derror_a_in_n)
-        self.comb += pads_egress_A.qacs_a_n.eq(if_obuf_A.qacs_a_n)
-        self.comb += pads_egress_A.qaca_a.eq(if_obuf_A.qaca_a)
+        self.comb += self.pads_egress_A.qrst_n.eq(if_sdram_A.qrst_a_n)
+        self.comb += self.pads_egress_A.derror_in_n.eq(if_sdram_A.derror_a_in_n)
+        self.comb += self.pads_egress_A.qacs_a_n.eq(if_obuf_A.qacs_a_n)
+        self.comb += self.pads_egress_A.qaca_a.eq(if_obuf_A.qaca_a)
         
-        self.comb += pads_egress_A.qacs_b_n.eq(if_obuf_A.qacs_b_n)
-        self.comb += pads_egress_A.qaca_b.eq(if_obuf_A.qaca_b)
+        self.comb += self.pads_egress_A.qacs_b_n.eq(if_obuf_A.qacs_b_n)
+        self.comb += self.pads_egress_A.qaca_b.eq(if_obuf_A.qaca_b)
         
-        self.comb += pads_egress_A.qack_t.eq(if_obuf_A.qack_t)
-        self.comb += pads_egress_A.qack_c.eq(if_obuf_A.qack_c)
-        self.comb += pads_egress_A.qbck_t.eq(if_obuf_A.qbck_t)
-        self.comb += pads_egress_A.qbck_c.eq(if_obuf_A.qbck_c)
-        self.comb += pads_egress_A.qcck_t.eq(if_obuf_A.qcck_t)
-        self.comb += pads_egress_A.qcck_c.eq(if_obuf_A.qcck_c)
-        self.comb += pads_egress_A.qdck_t.eq(if_obuf_A.qdck_t)
-        self.comb += pads_egress_A.qdck_c.eq(if_obuf_A.qdck_c)
+        self.comb += self.pads_egress_A.qack_t.eq(if_obuf_A.qack_t)
+        self.comb += self.pads_egress_A.qack_c.eq(if_obuf_A.qack_c)
+        self.comb += self.pads_egress_A.qbck_t.eq(if_obuf_A.qbck_t)
+        self.comb += self.pads_egress_A.qbck_c.eq(if_obuf_A.qbck_c)
+        self.comb += self.pads_egress_A.qcck_t.eq(if_obuf_A.qcck_t)
+        self.comb += self.pads_egress_A.qcck_c.eq(if_obuf_A.qcck_c)
+        self.comb += self.pads_egress_A.qdck_t.eq(if_obuf_A.qdck_t)
+        self.comb += self.pads_egress_A.qdck_c.eq(if_obuf_A.qdck_c)
 
         if pads_ingress_B is not None:
             self.comb += if_ibuf_B.dcs_n.eq(pads_ingress_B.dcs_n)
             self.comb += if_ibuf_B.dca.eq(pads_ingress_B.dca)
             self.comb += if_ibuf_B.dpar.eq(pads_ingress_B.dpar)
-            self.comb += pads_egress_B.dlbd.eq(if_sdram_B.dlbd_a)
-            self.comb += pads_egress_B.dlbs.eq(if_sdram_B.dlbs_a)
-            self.comb += pads_egress_B.qrst_n.eq(if_sdram_B.qrst_a_n)
-            self.comb += pads_egress_B.derror_in_n.eq(if_sdram_B.derror_a_in_n)
-            self.comb += pads_egress_B.qacs_a_n.eq(if_obuf_B.qacs_a_n)
-            self.comb += pads_egress_B.qaca_a.eq(if_obuf_B.qaca_a)
-            self.comb += pads_egress_B.qacs_b_n.eq(if_obuf_B.qacs_b_n)
-            self.comb += pads_egress_B.qaca_b.eq(if_obuf_B.qaca_b)
-            self.comb += pads_egress_B.qack_t.eq(if_obuf_B.qack_t)
-            self.comb += pads_egress_B.qack_c.eq(if_obuf_B.qack_c)
-            self.comb += pads_egress_B.qbck_t.eq(if_obuf_B.qbck_t)
-            self.comb += pads_egress_B.qbck_c.eq(if_obuf_B.qbck_c)
-            self.comb += pads_egress_B.qcck_t.eq(if_obuf_B.qcck_t)
-            self.comb += pads_egress_B.qcck_c.eq(if_obuf_B.qcck_c)
-            self.comb += pads_egress_B.qdck_t.eq(if_obuf_B.qdck_t)
-            self.comb += pads_egress_B.qdck_c.eq(if_obuf_B.qdck_c)
-        # TODO bcom
-        # TODO sideband
+            self.comb += self.pads_egress_B.dlbd.eq(if_sdram_B.dlbd_a)
+            self.comb += self.pads_egress_B.dlbs.eq(if_sdram_B.dlbs_a)
+            self.comb += self.pads_egress_B.qrst_n.eq(if_sdram_B.qrst_a_n)
+            self.comb += self.pads_egress_B.derror_in_n.eq(if_sdram_B.derror_a_in_n)
+            self.comb += self.pads_egress_B.qacs_a_n.eq(if_obuf_B.qacs_a_n)
+            self.comb += self.pads_egress_B.qaca_a.eq(if_obuf_B.qaca_a)
+            self.comb += self.pads_egress_B.qacs_b_n.eq(if_obuf_B.qacs_b_n)
+            self.comb += self.pads_egress_B.qaca_b.eq(if_obuf_B.qaca_b)
+            self.comb += self.pads_egress_B.qack_t.eq(if_obuf_B.qack_t)
+            self.comb += self.pads_egress_B.qack_c.eq(if_obuf_B.qack_c)
+            self.comb += self.pads_egress_B.qbck_t.eq(if_obuf_B.qbck_t)
+            self.comb += self.pads_egress_B.qbck_c.eq(if_obuf_B.qbck_c)
+            self.comb += self.pads_egress_B.qcck_t.eq(if_obuf_B.qcck_t)
+            self.comb += self.pads_egress_B.qcck_c.eq(if_obuf_B.qcck_c)
+            self.comb += self.pads_egress_B.qdck_t.eq(if_obuf_B.qdck_t)
+            self.comb += self.pads_egress_B.qdck_c.eq(if_obuf_B.qdck_c)
+        
+
 
 
 if __name__ == "__main__":

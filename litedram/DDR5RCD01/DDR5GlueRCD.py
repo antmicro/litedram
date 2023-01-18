@@ -11,16 +11,28 @@ from litedram.DDR5RCD01.DDR5RCD01CommonIngressSimulationPads import DDR5RCD01Cor
 from litedram.DDR5RCD01.DDR5RCD01DataBufferSimulationPads import DDR5RCD01DataBufferSimulationPads
 
 
-
 class DDR5GlueRCD(Module):
-    """ Glue logic between DDR5 Sim Pads and RCD Sim Pads
-    TODO Documentation
+    """ 
+    DDR5 Glue RCD
+    -------------
+    This module provides glue logic between DDR5 Simulation Pads 
+    and RCD Simulation Pads. This is required only to translate names
+    between blocks, which used different naming conventions.
+
+    Module
+    ------
+        - pads
+
+    Parameters
+    ----------
+    with_sub_channels controls (...)
+
+        Expected values:
+            True or False
+
     """
 
     def __init__(self, pads_ddr5, with_sub_channels=False, **kwargs):
-        # TODO implementation
-        # For signals in pads_ddr5
-        # Split signals into Core and Data Pads
 
         # Connect simPHY to RCD
         self.pi = DDR5RCD01CoreIngressSimulationPads()
@@ -52,7 +64,6 @@ class DDR5GlueRCD(Module):
                 raise (
                     'Unsupported option defined in connection matrix. Supported: Forward, Reverse')
 
-        # TODO check polarity of CA
         prefixes = [""] if not with_sub_channels else ["A_", "B_"]
         connection_matrix_dc = {
             'dcs_n': ['cs_n', 'Forward'],
