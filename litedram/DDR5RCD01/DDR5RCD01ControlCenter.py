@@ -17,7 +17,7 @@ from litedram.DDR5RCD01.RCD_utils import *
 from litedram.DDR5RCD01.DDR5RCD01RegFile import DDR5RCD01RegFile
 from litedram.DDR5RCD01.DDR5RCD01Pages import DDR5RCD01Pages
 from litedram.DDR5RCD01.DDR5RCD01CSLogic import DDR5RCD01CSLogic
-
+from litedram.DDR5RCD01.DDR5RCD01Error import DDR5RCD01Error
 
 class DDR5RCD01ControlCenter(Module):
     """DDR5 RCD01 Control Center
@@ -290,8 +290,8 @@ class DDR5RCD01ControlCenter(Module):
         latency_cat = Cat(LATENCY_ADDER_OP_0,
                           LATENCY_ADDER_OP_1,
                           LATENCY_ADDER_OP_2)
-        # ----------------------------------------0b76543210
-        boot_image_rw00_rw5f[RW_LATENCY_ADDER] = 0b000000001
+        # ---------------------------------------0b76543210
+        boot_image_rw00_rw5f[RW_LATENCY_ADDER] = 0b00000001
 
         self.comb += if_ctrl_lbuf_row_A_rankA.sel_latency_add.eq(latency_cat)
         self.comb += if_ctrl_lbuf_row_B_rankA.sel_latency_add.eq(latency_cat)
@@ -299,17 +299,41 @@ class DDR5RCD01ControlCenter(Module):
         self.comb += if_ctrl_lbuf_row_B_rankB.sel_latency_add.eq(latency_cat)
 
         """
-          Parity checker
+            Table 128
+            RW[24:20]
+            Error Log Register Encoding for DDR Mode
+            These definitions could be reused for the SDR Mode or explicitly redefined.
+            The only difference is that in DDR, there are UIs, in SDR cycles
         """
-        # TODO implement parity
+        RW_ERROR_LOG_CA_2UI = 0x20
+        RW_ERROR_LOG_CA_1UI = 0x21
+        RW_ERROR_LOG_CA_4UI = 0x22
+        RW_ERROR_LOG_CA_3UI = 0x23
+        # ------------------------------------------0b76543210
+        boot_image_rw00_rw5f[RW_ERROR_LOG_CA_1UI] = 0b00000000
+        boot_image_rw00_rw5f[RW_ERROR_LOG_CA_2UI] = 0b00000000
+        boot_image_rw00_rw5f[RW_ERROR_LOG_CA_3UI] = 0b00000000
+        boot_image_rw00_rw5f[RW_ERROR_LOG_CA_4UI] = 0b00000000
+        
+        RW_ERROR_STATUS = 0x24
+        # RESERVED = regs[RW_ERROR_STATUS][0]
+        RW_ERROR_LOG_CS_2UI = regs[RW_ERROR_STATUS][2:1]
+        RW_ERROR_LOG_CS_1UI = regs[RW_ERROR_STATUS][4:3]
+        # RESERVED = regs[RW_ERROR_STATUS][5]
+        CA_PARITY_ERROR_STATUS = regs[RW_ERROR_STATUS][6]
+        MORE_THAN_1_ERROR = regs[RW_ERROR_STATUS][7]
+        # --------------------------------------0b76543210
+        boot_image_rw00_rw5f[RW_ERROR_STATUS] = 0b00000000
 
-        # self.comb += parity_error.eq(0)
-
-        debug_parity_error_occured = Signal()
-        self.comb += debug_parity_error_occured.eq(0)
-
-        debug_non_target_termination_signalled = Signal()
-        self.comb += debug_non_target_termination_signalled.eq(0)
+        """
+            Error
+        """
+        # xerror = DDR5RCD01Error(
+            # derrors from sdram
+            # parity error
+            #
+        # )
+        # self.submodules += xerror
 
         """
             CS Logic

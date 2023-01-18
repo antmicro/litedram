@@ -233,7 +233,6 @@ def run_test(tb):
     yield from seq_cmds(tb)
     for i in range(5):
         yield
-
     logging.debug('Yield from write test.')
 
 
