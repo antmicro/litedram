@@ -6,6 +6,7 @@
 
 # Python
 import logging
+from operator import xor
 # migen
 from migen import *
 from migen.fhdl import verilog
@@ -16,53 +17,62 @@ from litedram.DDR5RCD01.RCD_utils import *
 
 
 class DDR5RCD01Error(Module):
-    """DDR5 RCD01 Error Alert
-    TODO Documentation
-    Handle the alert signal
-    if parity is enabled, the alert signal is used to raise the parity error
-    if parity is disabled, the alert signal is used to raise the DERROR_IN_n error
+    """
+    DDR5 RCD01 Error
+    ----------------
 
-    parity check is based on dca and dpar, also it must know whether a true UI is on the line.
-    This is why it may be beneficial to include the parity checker as a separate module.
-    Then the ErrorAlert module will be a simple mux of errors?
-
-    Use case 1. Parity error detected with parity checking enabled
-     - Set CA Parity Error Status (RW24)
-     - Clear bit in RW01 to disable parity checking
-     - Assert ALERT_n for the length 3 input clocks
-
-    RW01.1 
-    This error blocks the pass-through (disable output buffer) until a clear error command!
-    RW01.6
-    Assertion mode
-    RW01.7
-    Parity checking remains ... after pulse
-
-    TODO MVP
-    1. Assert alert if a parity error occured, only block outputs
-    2. Assert alert if a derror_in error occured
-    TODO Full implementation
-    1. Proper register sequence on error
-    2. Add pulse settings and assertion mode supports
+    1. If parity checking is enabled:
+        - the module calculates the parity
+        - raises alerts to Alert in Common (single-pulse)
+    2. Alawys(?) passes derror_n_in signal
+    3. Controls reads and writes to Error Log Registers (24:20)
+        - Set CA Parity Error Status (RW24)
+        - Clear bit in RW01 to disable parity checking (re-enable mode is possible)
+    4. Send message to control center that the output should be blocked?
+        or command center takes this information from rw20
 
     Module
     ------
-    d - Input : data
-    q - Output: data
-    ------
+    <interface>
+
+    Parameters
+    ----------
+    <params>
+
     """
 
-    def __init__(self, iif_err, oif_err):
-        # TODO Implement the physical function
-        self.comb += oif_err.err_n.eq(iif_err.err_n)
+    def __init__(self,
+                 if_ck_rst,
+                 if_ibuf,
+                 if_channel_sdram,
+                 if_2_rws,
+                 ):
+        # if_ck_rst to handle drst_n
+
+        # if_ibuf to calculate parity
+
+        # if_channel_sdram to take derror_in_n
+
+        # if_2_rws, whatever is required to write to error registers
+        """
+            Check parity
+        """
+        err_parity = Signal()
+        dca_w = 7
+
+        # If in first, second,.... UI
+        self.comb += If(
+            err_parity.eq(reduce(xor, [if_ibuf.dca[bit]
+                          for bit in range(dca_w)]) ^ if_ibuf.dpar)
+        )
+
+        
 
 
 class TestBed(Module):
     def __init__(self):
-        iif_err = If_error()
-        oif_err = If_error()
-        self.submodules.dut = DDR5RCD01Error(iif_err,oif_err)
-        # print(verilog.convert(self.dut))
+
+        self.submodules.dut = DDR5RCD01Error()
 
 
 def run_test(dut):

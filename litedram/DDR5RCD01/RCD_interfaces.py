@@ -232,7 +232,8 @@ class If_channel_common(Record):
 
     def description(self):
         return [
-            ('error', 1),
+            ('err_parity', 1),
+            ('err_n_sdram', 1),
             ('dlbd',  1),
             ('dlbs',  1),
         ]
@@ -275,19 +276,19 @@ class If_rst_n(Record):
         ]
 
 
-class If_error(Record):
-    """
-    Host/RCD error interface
-    """
+# class If_error(Record):
+#     """
+#     Host/RCD error interface
+#     """
 
-    def __init__(self):
-        layout = self.description()
-        Record.__init__(self, layout)
+#     def __init__(self):
+#         layout = self.description()
+#         Record.__init__(self, layout)
 
-    def description(self):
-        return [
-            ('err_n', 1),
-        ]
+#     def description(self):
+#         return [
+#             ('err_n', 1),
+#         ]
 
 
 class If_ctrl_common(Record):
