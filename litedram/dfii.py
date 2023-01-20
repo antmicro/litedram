@@ -83,7 +83,7 @@ class NOPInjector(Module, AutoCSR):
 # DFIInjector --------------------------------------------------------------------------------------
 
 class DFIInjector(Module, AutoCSR):
-    def __init__(self, addressbits, bankbits, nranks, databits, nphases=1, memtype=None):
+    def __init__(self, addressbits, bankbits, nranks, databits, nphases=1, memtype=None, strobes=None):
         self.slave   = dfi.Interface(addressbits, bankbits, nranks, databits, nphases)
         self.master  = dfi.Interface(addressbits, bankbits, nranks, databits, nphases)
         csr1_dfi     = dfi.Interface(addressbits, bankbits, nranks, databits, nphases)
@@ -97,7 +97,10 @@ class DFIInjector(Module, AutoCSR):
             csr3_dfi     = dfi.Interface(14, 1, nranks, databits, nphases)
             ddr5_dfi     = dfi.Interface(14, 1, nranks, databits, nphases)
 
-            adapters = [DFIPhaseAdapter(phase, False) for phase in self.intermediate.phases]
+            masked_writes  = False
+            if databits//2//strobes in [8, 16]:
+                masked_writes = True
+            adapters = [DFIPhaseAdapter(phase, masked_writes) for phase in self.intermediate.phases]
             self.submodules += adapters
 
         if memtype == "DDR5":
@@ -163,6 +166,17 @@ class DFIInjector(Module, AutoCSR):
 
             self.comb += [phase.reset_n.eq(self._control.fields.reset_n) for phase in csr2_dfi.phases if hasattr(phase, "reset_n")]
             self.comb += [phase.reset_n.eq(self._control.fields.reset_n) for phase in csr3_dfi.phases if hasattr(phase, "reset_n")]
+
+            for ddr5_phase, inter_phase in zip(ddr5_dfi.phases, self.intermediate.phases):
+                self.comb += [
+                    ddr5_phase.wrdata.eq(inter_phase.wrdata),
+                    ddr5_phase.wrdata_en.eq(inter_phase.wrdata_en),
+                    ddr5_phase.wrdata_mask.eq(inter_phase.wrdata_mask),
+                    ddr5_phase.rddata_en.eq(inter_phase.rddata_en),
+                    inter_phase.rddata.eq(ddr5_phase.rddata),
+                    inter_phase.rddata_valid.eq(ddr5_phase.rddata_valid),
+                ]
+
             for phase in ddr5_dfi.phases:
                 self.comb += [
                     phase.reset_n.eq(1),
@@ -171,7 +185,7 @@ class DFIInjector(Module, AutoCSR):
                     phase.address.eq(0),
                     phase.cke.eq(0),
                     phase.odt.eq(0),
-                    phase.mode_2n.eq(0)
+                    phase.mode_2n.eq(0),
                 ]
             for i, adapter in enumerate(adapters):
                 for j in range(2):
