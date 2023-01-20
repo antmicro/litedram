@@ -21,20 +21,19 @@ from litedram.phy.ddr5.commands import DFIPhaseAdapter
 
 class DDR5Output:
     """Unserialized output of DDR5PHY. Has to be serialized by concrete implementation."""
-    def __init__(self, nphases, databits):
-        # Pads: RESET_N, CS_N, CK, DMI, CA[13:0], DQ[7:0], DQS
+    def __init__(self, nphases, databits, dq_dqs_ratio):
         self.clk     = Signal(2*nphases)
         self.reset_n = Signal(nphases)
         self.cs_n     = Signal(nphases)
         self.ca      = [Signal(nphases)   for _ in range(14)]
-        self.dmi_o   = [Signal(2*nphases) for _ in range(databits//8)]
-        self.dmi_i   = [Signal(2*nphases) for _ in range(databits//8)]
+        self.dmi_o   = [Signal(2*nphases) for _ in range(databits // dq_dqs_ratio)]
+        self.dmi_i   = [Signal(2*nphases) for _ in range(databits // dq_dqs_ratio)]
         self.dmi_oe  = Signal()  # no serialization
         self.dq_o    = [Signal(2*nphases) for _ in range(databits)]
         self.dq_i    = [Signal(2*nphases) for _ in range(databits)]
         self.dq_oe   = Signal()  # no serialization
-        self.dqs_o   = [Signal(2*nphases) for _ in range(databits//8)]
-        self.dqs_i   = [Signal(2*nphases) for _ in range(databits//8)]
+        self.dqs_o   = [Signal(2*nphases) for _ in range(databits // dq_dqs_ratio)]
+        self.dqs_i   = [Signal(2*nphases) for _ in range(databits // dq_dqs_ratio)]
         self.dqs_oe  = Signal()  # no serialization
         self.ca_odt  = Signal()
         self.mir     = Signal()
@@ -122,6 +121,7 @@ class DDR5PHY(Module, AutoCSR):
         self.memtype     = memtype     = "DDR5"
         self.nranks      = nranks      = 1 if not hasattr(pads, "cs_n") else len(pads.cs_n)
         self.databits    = databits    = len(pads.dq)
+        self.strobes     = strobes     = len(pads.dqs_p) if not hasattr(pads, "dqs") else len(pads.dqs)
         self.addressbits = addressbits = 18 # for activate row address
         self.bankbits    = bankbits    = 8  # 5 bankbits, but we use 8 for Mode Register address in MRS
         self.nphases     = nphases     = 8
@@ -216,7 +216,7 @@ class DDR5PHY(Module, AutoCSR):
             write_latency = write_latency,
             cmd_latency   = cmd_latency,
             cmd_delay     = cmd_delay,
-            bitslips      = 16,
+            bitslips      = 2,
         )
 
         # DFI Interface ----------------------------------------------------------------------------
@@ -232,7 +232,7 @@ class DDR5PHY(Module, AutoCSR):
         # Now prepare the data by converting the sequences on adapters into sequences on the pads.
         # We have to ignore overlapping commands, and module timings have to ensure that there are
         # no overlapping commands anyway.
-        self.out = DDR5Output(nphases, databits)
+        self.out = DDR5Output(nphases, databits, databits // strobes)
 
         # Clocks -----------------------------------------------------------------------------------
         self.comb += self.out.clk.eq(bitpattern("-_-_-_-_" * 2))
@@ -402,7 +402,7 @@ class DoubleRateDDR5PHY(DDR5PHY):
             **kwargs)
 
         self._out = self.out
-        self.out = DDR5Output(nphases=self.nphases//2, databits=self.databits)
+        self.out = DDR5Output(nphases=self.nphases//2, databits=self.databits, dq_dqs_ratio=(self.databits // self.strobes))
 
         def ser(i, o):
             assert len(o) == len(i)//2, (len(o), len(i)//2)
