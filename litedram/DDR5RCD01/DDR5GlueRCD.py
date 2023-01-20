@@ -7,7 +7,8 @@
 # migen
 from migen import *
 # RCD
-from litedram.DDR5RCD01.DDR5RCD01CommonIngressSimulationPads import DDR5RCD01CoreIngressSimulationPads
+from litedram.DDR5RCD01.DDR5RCD01ChannelIngressSimulationPads import DDR5RCD01ChannelIngressSimulationPads
+from litedram.DDR5RCD01.DDR5RCD01CommonIngressSimulationPads import DDR5RCD01CommonIngressSimulationPads
 from litedram.DDR5RCD01.DDR5RCD01DataBufferSimulationPads import DDR5RCD01DataBufferSimulationPads
 
 

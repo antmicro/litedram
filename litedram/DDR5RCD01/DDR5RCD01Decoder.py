@@ -131,10 +131,10 @@ class DDR5RCD01Decoder(Module):
         """
             Capture output
         """
-        qvalid = Signal()
-        qcommands_cs_n = Array(Signal(cs_n_w) for y in range(MAX_UI_NUM))
-        qcommands_ca = Array(Signal(ca_w) for y in range(MAX_UI_NUM))
-        qcommands_par = Array(Signal() for y in range(MAX_UI_NUM))
+        # self.qvalid = Signal()
+        # self.qcommands_cs_n = Array(Signal(cs_n_w) for y in range(MAX_UI_NUM))
+        # self.qcommands_ca = Array(Signal(ca_w) for y in range(MAX_UI_NUM))
+        # self.qcommands_par = Array(Signal() for y in range(MAX_UI_NUM))
 
         for i in range(MAX_UI_NUM):
             self.sync += If(
@@ -149,6 +149,7 @@ class DDR5RCD01Decoder(Module):
                 qcommands_par[i].eq(0),
                 qvalid.eq(0),
             )
+
 
 
 class mem(Module):
