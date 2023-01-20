@@ -146,7 +146,7 @@ class BitSlip(Module):
         # # #
 
         value = Signal(max=cycles*dw, reset=cycles*dw-1)
-        self.sync += If(self.slp, value.eq(value + 1))
+        self.sync += If(self.slp, value.eq(value - 1))
         self.sync += If(self.rst, value.eq(value.reset))
 
         r = Signal((cycles+1)*dw, reset_less=True)
@@ -226,6 +226,7 @@ class PhySettings(Settings):
             bitslips: int = 0,  # number of write/read bitslip taps
             delays: int = 0,  # number of write/read delay taps
             with_alert: bool = False, # phy has CSRs for reading and reseting alert condition
+            with_per_dq_idelay: bool = False,
             # PHY training capabilities
             write_leveling: bool = False,
             write_dq_dqs_training: bool = False,
