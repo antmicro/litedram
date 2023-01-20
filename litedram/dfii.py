@@ -330,6 +330,77 @@ class CmdInjector(Module, AutoCSR):
         )
         read_fsm.finalize()
 
+# DFISamplerDDR5 ----------------------------------------------------------------------------------
+
+class DFISamplerDDR5(Module, AutoCSR):
+    def __init__(self, phases, prefix):
+        nphases = len(phases)
+        phases_ = [getattr(phase, prefix) for phase in phases]
+        self.trigger_cond  = CSRStorage(14)    # Capture start
+        self.trigger_valid = CSRStorage(14)    # Checked bits
+
+        self.select        = CSRStorage(nphases.bit_length()-1) # Access result
+        self.capture       = CSRStatus(14)     # Captured bits
+        self.captured      = CSRStatus()       # CApture was triggered
+
+        self.reset         = CSR()             # Reset capture
+        self.start         = CSR()             # Start capture
+
+        counter = Signal(nphases.bit_length()) # Captured so far
+        counter_temps = [Signal(nphases.bit_length()) for _ in range(nphases)]
+        self.capture_mem   = Array([Signal(14) for _ in range(nphases)])
+        triggered = Signal(nphases)
+
+        self.comb += [
+            counter_temps[i].eq(counter+i) for i in range(nphases)
+        ]
+
+        fsm = FSM()
+        self.submodules += fsm
+        fsm.act("READY",
+            If(self.start.re,
+                NextValue(counter, 0),
+                NextState("AWAIT"),
+            )
+        )
+        fsm.act("AWAIT",
+            triggered.eq(
+                Cat([
+                    reduce(and_, [
+                        ~((phase.address[j] ^ self.trigger_cond.storage[j]) & self.trigger_valid.storage[j]) for j in range(14)]
+                    ) for i, phase in enumerate(phases_)]
+                )
+            ),
+            [If(~phase.cs_n & ~reduce(or_, triggered[:i], 0) & triggered[i],
+                *[NextValue(self.capture_mem[j], phases_[i+j].address) for j in range(nphases-i)],
+                NextValue(counter, nphases-i),
+                NextState("FIN-CAPTURE"),
+            ) for i, phase in enumerate(phases_)],
+        )
+        capture_cases = {}
+        for i in range(1, nphases):
+            capture_cases[i] = [
+                *[NextValue(self.capture_mem[counter_temps[j]], phases_[j].address) for j in range(i)],
+                NextValue(counter, nphases),
+            ]
+        fsm.act("FIN-CAPTURE",
+            Case(counter,
+                capture_cases
+            ),
+            If(counter == nphases,
+                NextState("DONE"),
+            ),
+        )
+        fsm.act("DONE",
+            self.captured.status.eq(1),
+            If(self.reset.re,
+                NextState("READY",)
+            )
+        )
+        self.sync += [
+            self.capture.status.eq(self.capture_mem[self.select.storage]),
+        ]
+
 # DFIInjector --------------------------------------------------------------------------------------
 
 class DFIInjector(Module, AutoCSR):
@@ -571,6 +642,9 @@ class DFIInjector(Module, AutoCSR):
             if with_sub_channels:
                 ddr5_dfi.create_sub_channels()
                 ddr5_dfi.remove_common_signals()
+
+            for prefix in prefixes:
+                setattr(self.submodules, prefix.lower()+"dfisampler",  DFISamplerDDR5(self.master.phases, prefix))
 
             self.comb += [
                 Case(self._control.fields.sel, {
