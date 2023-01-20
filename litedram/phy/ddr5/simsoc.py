@@ -68,6 +68,42 @@ _io = {
          Subsignal("dqs_c",   Pins(1)),
         ),
     ],
+    "4x2": [
+        ("ddr5", 0,
+         Subsignal("ck_t",    Pins(1)),
+         Subsignal("ck_c",    Pins(1)),
+         Subsignal("reset_n", Pins(1)),
+         Subsignal("alert_n", Pins(1)),
+
+         Subsignal("cs_n",    Pins(1)),
+         Subsignal("ca",      Pins(14)),
+         Subsignal("par",     Pins(1)),
+
+         # DQ and DQS are taken from DDR5 Tester board
+         Subsignal("dq",      Pins(8)),
+         # dmi is not supported on x4 device, I decided to keep it to make model simpler
+         Subsignal("dm_n",    Pins(2)),
+         Subsignal("dqs_t",   Pins(2)),
+         Subsignal("dqs_c",   Pins(2)),
+        ),
+    ],
+    "8x2": [
+        ("ddr5", 0,
+         Subsignal("ck_t",    Pins(1)),
+         Subsignal("ck_c",    Pins(1)),
+         Subsignal("reset_n", Pins(1)),
+         Subsignal("alert_n", Pins(1)),
+
+         Subsignal("cs_n",    Pins(1)),
+         Subsignal("ca",      Pins(14)),
+         Subsignal("par",     Pins(1)),
+
+         Subsignal("dq",      Pins(16)),
+         Subsignal("dm_n",    Pins(2)),
+         Subsignal("dqs_t",   Pins(2)),
+         Subsignal("dqs_c",   Pins(2)),
+        ),
+    ],
     "sub4": [
         ("ddr5", 0,
          Subsignal("ck_t",    Pins(1)),
@@ -135,7 +171,75 @@ _io = {
          Subsignal("scl", Pins(1)),
          Subsignal("sda", Pins(1)),
         ),
-    ]
+    ],
+    "sub4x2": [
+        ("ddr5", 0,
+         Subsignal("ck_t",    Pins(1)),
+         Subsignal("ck_c",    Pins(1)),
+         Subsignal("reset_n", Pins(1)),
+         Subsignal("alert_n", Pins(1)),
+
+         Subsignal("A_cs_n",  Pins(1)),
+         Subsignal("A_ca",    Pins(14)),
+         Subsignal("A_par",   Pins(1)),
+
+         # DQ and DQS are taken from DDR5 Tester board
+         Subsignal("A_dq",    Pins(8)),
+         # dmi is not supported on x4 device, I decided to keep it to make model simpler
+         Subsignal("A_dm_n",  Pins(2)),
+         Subsignal("A_dqs_t", Pins(2)),
+         Subsignal("A_dqs_c", Pins(2)),
+
+         Subsignal("B_cs_n",  Pins(1)),
+         Subsignal("B_ca",    Pins(14)),
+         Subsignal("B_par",   Pins(1)),
+
+         # DQ and DQS are taken from DDR5 Tester board
+         Subsignal("B_dq",    Pins(8)),
+         # dmi is not supported on x4 device, I decided to keep it to make model simpler
+         Subsignal("B_dm_n",  Pins(2)),
+         Subsignal("B_dqs_t", Pins(2)),
+         Subsignal("B_dqs_c", Pins(2)),
+        ),
+        ("i2c", 0,
+         Subsignal("scl", Pins(1)),
+         Subsignal("sda", Pins(1)),
+        ),
+    ],
+    "sub8x2": [
+        ("ddr5", 0,
+         Subsignal("ck_t",    Pins(1)),
+         Subsignal("ck_c",    Pins(1)),
+         Subsignal("reset_n", Pins(1)),
+         Subsignal("alert_n", Pins(1)),
+
+         Subsignal("A_cs_n",  Pins(1)),
+         # dmi is not supported on x4 device, I decided to keep it to make model simpler
+         Subsignal("A_dm_n",  Pins(1)),
+
+         Subsignal("A_ca",    Pins(14)),
+         Subsignal("A_par",   Pins(1)),
+         # DQ and DQS are taken from DDR5 Tester board
+         Subsignal("A_dq",    Pins(16)),
+         Subsignal("A_dqs_t", Pins(2)),
+         Subsignal("A_dqs_c", Pins(2)),
+
+         Subsignal("B_cs_n",  Pins(1)),
+         # dmi is not supported on x4 device, I decided to keep it to make model simpler
+         Subsignal("B_dm_n",  Pins(1)),
+
+         Subsignal("B_ca",    Pins(14)),
+         Subsignal("B_par",   Pins(1)),
+         # DQ and DQS are taken from DDR5 Tester board
+         Subsignal("B_dq",    Pins(16)),
+         Subsignal("B_dqs_t", Pins(2)),
+         Subsignal("B_dqs_c", Pins(2)),
+        ),
+        ("i2c", 0,
+         Subsignal("scl", Pins(1)),
+         Subsignal("sda", Pins(1)),
+        ),
+    ],
 }
 
 # Clocks -------------------------------------------------------------------------------------------
@@ -163,9 +267,10 @@ class SimSoC(SoCCore):
     def __init__(self, clocks, log_level,
             auto_precharge=False, with_refresh=True, trace_reset=0,
             masked_write=False, with_rcd=False, finish_after_memtest=False,
-            dq_dqs_ratio=8, with_sub_channels=False, **kwargs):
+            dq_dqs_ratio=8, with_sub_channels=False, modules_in_rank=1, **kwargs):
 
         io_type = str(dq_dqs_ratio) if not with_sub_channels else f"sub{dq_dqs_ratio}"
+        io_type = io_type if modules_in_rank == 1 else io_type+f"x{modules_in_rank}"
         platform     = Platform(_io[io_type], clocks)
         sys_clk_freq = clocks["sys"]["freq_hz"]
 
@@ -200,6 +305,7 @@ class SimSoC(SoCCore):
             aligned_reset_zero = True,
             masked_write       = masked_write,
             dq_dqs_ratio       = dq_dqs_ratio,
+            databits           = len(getattr(pads, "dq")) if not with_sub_channels else len(getattr(pads, "A_dq")),
             with_sub_channels  = with_sub_channels,
             address_lines      = sdram_module.address_bits,
             default_write_latency   = 20,
@@ -242,18 +348,21 @@ class SimSoC(SoCCore):
         prefixes = [""] if not with_sub_channels else ["A_", "B_"]
         alerts = {}
         for prefix in prefixes:
-            alerts[prefix+"alert"] = Signal()
-            setattr(self.submodules, prefix+'ddr5sim', DDR5Sim(
-                    pads          = self.ddrphy.pads,
-                    cl            = self.sdram.controller.settings.phy.cl,
-                    cwl           = self.sdram.controller.settings.phy.cwl,
-                    sys_clk_freq  = sys_clk_freq,
-                    log_level     = log_level,
-                    geom_settings = sdram_module.geom_settings,
-                    prefix        = prefix
-            ))
-            self.add_csr(prefix+"ddr5sim")
-            self.comb += self.ddrphy.pads.alert_n.eq(reduce(and_, alerts.values()))
+            for i in range(modules_in_rank):
+                alerts[prefix+f"alert_{i}"] = Signal()
+                setattr(self.submodules, prefix+'ddr5sim', DDR5Sim(
+                        pads          = self.ddrphy.pads,
+                        cl            = self.sdram.controller.settings.phy.cl,
+                        cwl           = self.sdram.controller.settings.phy.cwl,
+                        sys_clk_freq  = sys_clk_freq,
+                        log_level     = log_level,
+                        geom_settings = sdram_module.geom_settings,
+                        prefix        = prefix,
+                        module_num    = i,
+                        dq_dqs_ratio  = dq_dqs_ratio,
+                ))
+                self.add_csr(prefix+f"ddr5sim_{i}")
+        self.comb += self.ddrphy.pads.alert_n.eq(reduce(and_, alerts.values()))
 
         self.add_constant("CONFIG_SIM_DISABLE_BIOS_PROMPT")
         if finish_after_memtest:
@@ -396,6 +505,7 @@ def main():
     group.add_argument("--with-sub-channels",    action="store_true",     help="Use sim PHY with sub chanels")
     group.add_argument("--finish-after-memtest", action="store_true",     help="Stop simulation after DRAM memory test")
     group.add_argument("--dq-dqs-ratio",         default=8,               help="Set DQ:DQS ratio", type=int, choices={4, 8})
+    group.add_argument("--modules-in-rank",      default=1,               help="Set DQ:DQS ratio", type=int, choices={1, 2})
     args = parser.parse_args()
     soc_kwargs     = soc_core_argdict(args)
     builder_kwargs = builder_argdict(args)
@@ -424,6 +534,7 @@ def main():
         finish_after_memtest = args.finish_after_memtest,
         dq_dqs_ratio    = args.dq_dqs_ratio,
         with_sub_channels = args.with_sub_channels,
+        modules_in_rank = args.modules_in_rank,
         **soc_kwargs)
 
     # Build/Run ------------------------------------------------------------------------------------
