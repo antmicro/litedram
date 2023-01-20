@@ -530,6 +530,38 @@ class DDR5Tests(unittest.TestCase):
             vcd_name="ddr5_dqs.vcd"
         )
 
+    def test_ddr5_dqs_single(self):
+        dfi_sequence = [
+            {
+                0: dict(wrdata=0xfeff, wrdata_en=1, cs_n=0),
+                1: dict(wrdata=0, wrdata_en=0),
+                2: dict(wrdata=0, wrdata_en=0),
+                3: dict(wrdata=0, wrdata_en=0),
+            },
+            *[{} for _ in range(6)],
+            {},
+        ]
+
+        base_phy = self.phy
+
+        for i in range(self.phy.settings.min_write_latency, self.phy.settings.min_write_latency + 64):
+            self.phy = DDR5SimPHY(sys_clk_freq=self.SYS_CLK_FREQ, aligned_reset_zero=True, masked_write=True, default_write_latency=i)
+
+            min_write_latency = self.phy.settings.min_write_latency
+            dqs_t_wr_latency: str = self.xs * 2 + 'xx'*(2*self.NPHASES*Serializer.LATENCY) + "xx" * self.NPHASES + "xx" + "xx" * (i - 2)
+
+            self.run_test(
+                dfi_sequence = dfi_sequence,
+                pad_checkers = {
+                    "sys4x_90_ddr": {
+                        "dqs_t0": dqs_t_wr_latency + '0010' + '10'+ '00000000',
+                    },
+                },
+                vcd_name="ddr5_dqs_single.vcd"
+            )
+
+        self.phy=base_phy
+
     def test_ddr5_cmd_write_1N(self):
         # Test whole WRITE command sequence verifying data on pads and write_latency from MC perspective
 
