@@ -57,11 +57,13 @@ class DDR5Output:
 
 
 class DDR5DQOePattern(Module):
-    def __init__(self, nphases):
+    def __init__(self, nphases, wlevel_en):
         self.window = window = Signal(nphases+2)
         self.oe = Signal(2*nphases)
         self.comb += [
-            self.oe.eq(Cat([Replicate(window[i], 2) for i in range(nphases)])),
+            If(~wlevel_en,
+                self.oe.eq(Cat([Replicate(window[i], 2) for i in range(nphases)])),
+            ),
         ]
 
 
@@ -243,9 +245,9 @@ class DDR5PHY(Module, AutoCSR):
             getattr(self, prefix+'dly_sel').storage.attr.add("keep")
 
             setattr(self, prefix+'ck_rdly_inc', CSR(name=prefix+'ck_rdly_inc'))
-            setattr(self, prefix+'ck_rdly_dec', CSR(name=prefix+'ck_rdly_dec'))
+            setattr(self, prefix+'ck_rdly_rst', CSR(name=prefix+'ck_rdly_rst'))
             setattr(self, prefix+'ck_wdly_inc', CSR(name=prefix+'ck_wdly_inc'))
-            setattr(self, prefix+'ck_wdly_dec', CSR(name=prefix+'ck_wdly_dec'))
+            setattr(self, prefix+'ck_wdly_rst', CSR(name=prefix+'ck_wdly_rst'))
 
             if with_per_dq_idelay :
                 setattr(self, prefix+'dq_dly_sel', CSRStorage(dq_dqs_ratio))
@@ -417,22 +419,28 @@ class DDR5PHY(Module, AutoCSR):
                 #
                 # The read data valid is asserted for 1 sys_clk cycle when the data is available on the DFI
                 # interface, the latency is the sum of the minimal PHY and user added delays.
+                rddata_en_input = Signal(nphases)
+
+                for i in range(nphases):
+                    self.comb += rddata_en_input[i].eq(getattr(dfi.phases[i], prefix).rddata_en | getattr(self, prefix+'wlevel_en').storage)
+
                 rddata_en = TappedDelayLine(
-                    signal = Cat([getattr(dfi.phases[i], prefix).rddata_en for i in range(nphases)]),
+                    signal = rddata_en_input,
                     ntaps  = read_latency + 3
                 )
                 self.submodules += rddata_en
 
                 default_read_latency = default_read_latency - 2 if default_read_latency > 2 else 0
+                rd_reset_value = min_read_latency + default_read_latency
 
                 rd_window   = Signal(nphases)
-                rd_delay    = Signal(max=4*read_latency, reset=min_read_latency + default_read_latency)
+                rd_delay    = Signal(max=4*read_latency, reset=rd_reset_value)
                 rd_index    = Signal(max=read_latency)
                 rd_offset   = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
 
                 rd_preamble_window  = Signal(nphases)
                 rd_last_preamble_window  = Signal(nphases)
-                rd_preamble         = Signal(max=4*read_latency, reset=min_read_latency + default_read_latency - 2)
+                rd_preamble         = Signal(max=4*read_latency, reset=rd_reset_value - 2)
                 rd_preamble_index   = Signal(max=read_latency)
                 rd_preamble_offset  = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
 
@@ -445,10 +453,9 @@ class DDR5PHY(Module, AutoCSR):
                         rd_delay.eq(rd_delay + 1),
                         rd_preamble.eq(rd_preamble + 1),
                     ).Elif(getattr(self, prefix+'dly_sel').storage[strobe] & \
-                           getattr(self, prefix+'ck_rdly_dec').re & \
-                           (rd_delay > min_read_latency),
-                        rd_delay.eq(rd_delay - 1),
-                        rd_preamble.eq(rd_preamble - 1),
+                           getattr(self, prefix+'ck_rdly_rst').re,
+                        rd_delay.eq(rd_reset_value),
+                        rd_preamble.eq(rd_reset_value - 2),
                     ),
                 ]
 
@@ -518,11 +525,12 @@ class DDR5PHY(Module, AutoCSR):
                     ),
                     If(rd_preamble_cnt == 1,
                         rd_sampled_preamble[2:4].eq(getattr(self.out, prefix+'dqs_t_i')[strobe][0:2]),
+                        rd_preamble_cnt.eq(0),
                     ),
                 ]
 
                 self.comb += [
-                    If(getattr(self, prefix+'dly_sel').storage == strobe,
+                    If(getattr(self, prefix+'dly_sel').storage[strobe],
                         getattr(self, prefix+'preamble').status.eq(rd_sampled_preamble),
                     ),
                 ]
@@ -593,9 +601,7 @@ class DDR5PHY(Module, AutoCSR):
                 # Retime
                 self.comb += [
                     getattr(phase, prefix).rddata_valid.eq( \
-                        getattr(phase, prefix).rddata_valid | \
-                        reduce(or_, rddata_en.output) | \
-                        getattr(self, prefix+'wlevel_en').storage) \
+                        reduce(or_, rddata_en.output)) \
                     for i, phase in enumerate(self.dfi.phases)
                 ]
 
@@ -632,11 +638,13 @@ class DDR5PHY(Module, AutoCSR):
 
                 assert default_write_latency >= min_write_latency or default_write_latency == 0, f"default_write_latency={default_write_latency} is to small, min_write_latency={min_write_latency}"
 
+                wr_reset_value = 0 if default_write_latency < min_write_latency else default_write_latency - min_write_latency
+
                 wr_window       = Signal(nphases + 2)
-                wr_delay        = Signal(max=64+1, reset=0 if default_write_latency == 0 else default_write_latency - min_write_latency)
+                wr_delay        = Signal(max=64+1, reset=wr_reset_value)
                 wr_index        = Signal(max=64//nphases+1)
                 wr_offset       = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
-                wr_data_delay   = Signal(max=64+1, reset=2 if default_write_latency == 0 else default_write_latency + 2 - min_write_latency)
+                wr_data_delay   = Signal(max=64+1, reset=wr_reset_value + 2)
                 wr_data_index   = Signal(max=64//nphases+1)
                 wr_data_offset  = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
 
@@ -647,10 +655,9 @@ class DDR5PHY(Module, AutoCSR):
                         wr_delay.eq(wr_delay + 1),
                         wr_data_delay.eq(wr_data_delay + 1),
                     ).Elif(getattr(self, prefix+'dly_sel').storage[strobe] & \
-                           getattr(self, prefix+'ck_wdly_dec').re & \
-                           (wr_delay > 0),
-                        wr_delay.eq(wr_delay - 1),
-                        wr_data_delay.eq(wr_data_delay - 1),
+                           getattr(self, prefix+'ck_wdly_rst').re,
+                        wr_delay.eq(wr_reset_value),
+                        wr_data_delay.eq(wr_reset_value+2),
                     ),
                 ]
 
@@ -663,10 +670,10 @@ class DDR5PHY(Module, AutoCSR):
 
                 wr_cases = {}
                 for i in range(nphases):
-                    if 2+i <= nphases:
-                        wr_cases[i] = wr_window.eq(Cat(wrdata_en.taps[wr_index+1][:2+i], wrdata_en.taps[wr_index][i:]))
+                    if 2+i <= nphases: # only false for last i = nphases -1
+                        wr_cases[i] = wr_window.eq(Cat(wrdata_en.taps[wr_index+1][nphases-(2+i):], wrdata_en.taps[wr_index][:nphases-i]))
                     else:
-                        wr_cases[i] = wr_window.eq(Cat(wrdata_en.taps[wr_index+2][:2+i-nphases], wrdata_en.taps[wr_index+1][:2+i], wrdata_en.taps[wr_index][i:]))
+                        wr_cases[i] = wr_window.eq(Cat(wrdata_en.taps[wr_index+2][-1], wrdata_en.taps[wr_index+1], wrdata_en.taps[wr_index][0]))
 
                 self.comb += [
                     Case(wr_offset,
@@ -676,14 +683,17 @@ class DDR5PHY(Module, AutoCSR):
 
                 dqs_oe        = Signal(2*nphases)
                 dqs_pattern   = DDR5DQSPattern(
-                    nphases       = nphases,
-                    wlevel_en     = getattr(self, prefix+'wlevel_en').storage,
+                    nphases   = nphases,
+                    wlevel_en = getattr(self, prefix+'wlevel_en').storage,
                 )
                 self.comb += dqs_pattern.window.eq(wr_window)
                 self.submodules += dqs_pattern
 
                 dq_oe        = Signal(2*nphases)
-                dq_pattern   = DDR5DQOePattern(nphases=nphases)
+                dq_pattern   = DDR5DQOePattern(
+                    nphases   = nphases,
+                    wlevel_en = getattr(self, prefix+'wlevel_en').storage,
+                )
                 self.comb += dq_pattern.window.eq(wr_window)
                 self.submodules += dq_pattern
 
@@ -700,9 +710,10 @@ class DDR5PHY(Module, AutoCSR):
                 self.submodules += wr_fifo
 
                 self.comb += [
-                    wr_fifo.din.eq(Cat([Cat([phase.wrdata, phase.wrdata_mask if dq_dqs_ratio >4 else Replicate(phase.wrdata_mask, 2)]) for phase in self.dfi.phases])),
+                    wr_fifo.din.eq(Cat([Cat([getattr(phase, prefix).wrdata[2*strobe*dq_dqs_ratio:2*(strobe+1)*dq_dqs_ratio],
+                                             getattr(phase, prefix).wrdata_mask[strobe*2:(strobe+1)*2] if dq_dqs_ratio > 4 else Replicate(getattr(phase, prefix).wrdata_mask[strobe], 2)]) for phase in self.dfi.phases])),
                     If(wr_data_index > 0,
-                        wr_fifo.we.eq(reduce(or_, [phase.wrdata_en for phase in self.dfi.phases])),
+                        wr_fifo.we.eq(reduce(or_, [getattr(phase, prefix).wrdata_en for phase in self.dfi.phases])),
                     ),
                 ]
 
@@ -718,8 +729,8 @@ class DDR5PHY(Module, AutoCSR):
 
                 self.sync += wr_fifo_data_valid.eq(wr_fifo.re & wr_fifo.readable)
                 self.sync += [
-                    wr_input_data.eq(Cat([phase.wrdata for phase in self.dfi.phases])),
-                    wr_input_dmi.eq(Cat([phase.wrdata_mask for phase in self.dfi.phases])),
+                    wr_input_data.eq(Cat([getattr(phase, prefix).wrdata[2*strobe*dq_dqs_ratio:2*(strobe+1)*dq_dqs_ratio] for phase in self.dfi.phases])),
+                    wr_input_dmi.eq(Cat([getattr(phase, prefix).wrdata_mask[strobe*2:(strobe+1)*2] if dq_dqs_ratio > 4 else Replicate(getattr(phase, prefix).wrdata_mask[strobe], 2) for phase in self.dfi.phases])),
                 ]
 
                 self.comb += [
@@ -780,13 +791,13 @@ class DDR5PHY(Module, AutoCSR):
                     self.comb += getattr(self.out, prefix+'dm_n_o')[strobe].eq(0)
 
                 # DQ ---------------------------------------------------------------------------------------
-                for bit in range(databits):
+                for bit in range(dq_dqs_ratio):
                     # output
                     _wrdata = [
-                        wr_data[i * self.databits + bit] for i in range(2*nphases)
+                        wr_data[i * dq_dqs_ratio + bit] for i in range(2*nphases)
                     ]
 
-                    self.comb += getattr(self.out, prefix+'dq_o')[bit].eq(Cat(_wrdata))
+                    self.comb += getattr(self.out, prefix+'dq_o')[bit + strobe*dq_dqs_ratio].eq(Cat(_wrdata))
 
 
     def get_rst(self, byte, rst, prefix="", clk="sys", dq=False):
