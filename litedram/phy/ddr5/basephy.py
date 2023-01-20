@@ -665,12 +665,14 @@ class DDR5PHY(Module, AutoCSR):
                 for phase in self.dfi.phases
             ]
 
-    def get_rst(self, byte, rst, prefix=""):
+    def get_rst(self, byte, rst, prefix="", clk="sys"):
+        cd_clk = getattr(self.sync, clk)
         t = Signal()
-        self.comb += t.eq((getattr(self, prefix+'dly_sel').storage[byte] & rst) | self._rst.storage)
+        cd_clk += t.eq((getattr(self, prefix+'dly_sel').storage[byte] & rst) | self._rst.storage)
         return t
 
-    def get_inc(self, byte, inc, prefix=""):
+    def get_inc(self, byte, inc, prefix="", clk="sys"):
+        cd_clk = getattr(self.sync, clk)
         t = Signal()
-        self.comb += t.eq(getattr(self, prefix+"dly_sel").storage[byte] & inc)
+        cd_clk += t.eq(getattr(self, prefix+"dly_sel").storage[byte] & inc)
         return t
