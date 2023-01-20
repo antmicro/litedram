@@ -18,8 +18,9 @@ from litedram.phy.ddr5.basephy import DDR5PHY
 from litedram.phy.s7common import S7Common
 
 class S7DDR5PHY(DDR5PHY, S7Common):
-    def __init__(self, pads, *, iodelay_clk_freq, with_odelay, with_idelay=True,
-                 with_per_dq_idelay=False, with_sub_channels=False, **kwargs):
+    def __init__(self, pads, *, iodelay_clk_freq, with_odelay,
+                 with_idelay=True, with_per_dq_idelay=False,
+                 with_sub_channels=False, **kwargs):
         self.iodelay_clk_freq = iodelay_clk_freq
 
         def cdc(i):
@@ -58,9 +59,11 @@ class S7DDR5PHY(DDR5PHY, S7Common):
             **kwargs
         )
 
+        max_delay_taps = math.ceil(self.tck/(1/2/32/iodelay_clk_freq))
+
         _l = self._l
 
-        self.settings.delays = 32
+        self.settings.delays = max_delay_taps
         self.settings.write_leveling = True
         self.settings.write_latency_calibration = True
         self.settings.write_dq_dqs_training = True
@@ -296,7 +299,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                     dout = dqs_i_dly,
                     rst  = self.get_rst(it, _l[prefix+'rdly_dqs_rst'], prefix, "sys2x_io"),
                     inc  = self.get_inc(it, _l[prefix+'rdly_dqs_inc'], prefix, "sys2x_io"),
-                    init = 31,
+                    init = max_delay_taps-1,
                     clk  = "sys2x_io",
                     cnt_value_out = cnt_out,
                     dec  = True,
@@ -384,7 +387,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                     rst  = self.get_rst(it, _l[prefix+'rdly_dq_rst'], prefix, "sys2x_io", dq=True),
                     inc  = self.get_inc(it, _l[prefix+'rdly_dq_inc'], prefix, "sys2x_io", dq=True),
                     clk  = "sys2x_io",
-                    init = 31,
+                    init = max_delay_taps-1,
                     cnt_value_out = cnt_out,
                     dec  = True,
                 )
