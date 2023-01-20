@@ -78,11 +78,18 @@ class CmdInjector(Module, AutoCSR):
         self._store_continuous_cmd = CSR()
         self._store_singleshot_cmd = CSR()
         self._single_shot = CSRStorage(reset=0b0)
-        self._issue_command = CSR() # Only used when in single shot
+        self._issue_command = CSR() # Issues command when in single shot, loads to _continuous_phase_signals when in continuous mode
 
+        self._continuous_intermediate_store = Array(Signal(16 + cs_width + wrdata_mask_width, reset=0b11111) for _ in range(4))
         self._continuous_phase_signals = Array(Signal(16 + cs_width + wrdata_mask_width, reset=0b11111) for _ in range(4))
         # There are limited number of commands that make sens to be emitted continuously: DES, NOP. MPC, CS training pattern,
         self._singleshot_phase_signals = Array(Signal(16 + cs_width + wrdata_mask_width) for _ in range(8)) # BL 16 needs at most 8 DFI transactions (2 for command and 8 for wrdata/rddata)
+
+        self.sync += [
+            If(self._issue_command.re & ~self._single_shot.storage,
+                [self._continuous_phase_signals[i].eq(self._continuous_intermediate_store[i]) for i in range(4)]
+            )
+        ]
 
         continuous_max = max(4 // num_phases, 1)
         singleshot_max = max(8 // num_phases, 1)
@@ -118,7 +125,7 @@ class CmdInjector(Module, AutoCSR):
             self.sync += [
                 If(self._store_continuous_cmd.re,
                     If(self._phase_addr.storage[i],
-                        self._continuous_phase_signals[i].eq(self._command_storage.storage),
+                        self._continuous_intermediate_store[i].eq(self._command_storage.storage),
                     ),
                 ),
             ]

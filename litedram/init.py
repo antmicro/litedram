@@ -1315,6 +1315,7 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
                              f"| {ca} << CSR_SDRAM_DFII_{prefix.upper()}CMDINJECTOR_COMMAND_STORAGE_CA_OFFSET);"
                         b += f"sdram_dfii_{prefix}cmdinjector_phase_addr_write({phases});"
                         b += f"sdram_dfii_{prefix}cmdinjector_store_continuous_cmd_write(1);"
+                        b += f"sdram_dfii_{prefix}cmdinjector_issue_command_write(1);"
                 else:
                     for prefix in prefixes:
                         b += f"sdram_dfii_{prefix}cmdinjector_command_storage_write(" \
@@ -1343,6 +1344,7 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
                                  f"| {ca} << CSR_SDRAM_DFII_{prefix.upper()}CMDINJECTOR_COMMAND_STORAGE_CA_OFFSET);"
                             b += f"sdram_dfii_{prefix}cmdinjector_phase_addr_write({phases});"
                             b += f"sdram_dfii_{prefix}cmdinjector_store_continuous_cmd_write(1);"
+                            b += f"sdram_dfii_{prefix}cmdinjector_issue_command_write(1);"
                     else:
                         for prefix in prefixes:
                             b += f"sdram_dfii_{prefix}cmdinjector_command_storage_write(" \
