@@ -19,10 +19,17 @@ from litedram.DDR5RCD01.RCD_utils import *
 from litedram.DDR5RCD01.SimCSCADriver import SimCSCADriver
 from litedram.DDR5RCD01.DDR5RCD01Decoder import DDR5RCD01Decoder
 
+
 @enum.unique
 class DDR5Opcodes(enum.IntEnum):
     MRR = 0b10101
     MRW = 0b10100
+
+
+class DDR5Commands(enum.IntEnum):
+    MRA_W = 8
+    OP_W = 8
+    
 
 class DDR5RCD01Actor(Module):
     """
@@ -54,7 +61,7 @@ class DDR5RCD01Actor(Module):
                  cs_n_w=2,
                  ca_w=7,
                  ):
-        MAX_UI_NUM = max_ui_num
+        # MAX_UI_NUM = max_ui_num
 
         # qvalid = Signal()
         # qcommands_cs_n = Array(Signal(cs_n_w) for y in range(MAX_UI_NUM))
@@ -62,58 +69,56 @@ class DDR5RCD01Actor(Module):
         # qcommands_par = Array(Signal() for y in range(MAX_UI_NUM))
 
         opcode = Signal(5)
-        is_cmd_MRR = Signal(1)
-        is_cmd_MRW = Signal(1)
+        is_cmd_MRR = Signal()
+        is_cmd_MRW = Signal()
+        is_cmd_None = Signal()
 
         self.comb += If(
             valid,
-            opcode.eq(commands_ca[0][4:0])
+            opcode.eq(commands_ca[0][0:5]),
         )
-
         self.comb += Case(
             opcode, {
                 DDR5Opcodes.MRR: is_cmd_MRR.eq(1),
                 DDR5Opcodes.MRW: is_cmd_MRW.eq(1),
+                "default": is_cmd_None.eq(1),
             }
         )
 
-        mrr_mra = Signal(8)
+        mrr_mra = Signal(DDR5Commands.MRA_W)
         mrr_cw = Signal()
 
         self.comb += If(
             is_cmd_MRR,
-            mrr_mra.eq(Cat(commands_ca[0][7:5],commands_ca[1][5:0])),
+            mrr_mra.eq(Cat(commands_ca[0][5:8], commands_ca[1][0:6])),
             mrr_cw.eq(commands_ca[3][3]),
         )
 
-        mrw_mra = Signal(8)
+        mrw_mra = Signal(DDR5Commands.MRA_W)
         mrw_cw = Signal()
-        mrw_op = Signal(8)
+        mrw_op = Signal(DDR5Commands.OP_W)
 
         self.comb += If(
             is_cmd_MRW,
-            mrw_mra.eq(Cat(commands_ca[0][7:5],commands_ca[1][5:0])),
+            mrw_mra.eq(Cat(commands_ca[0][5:8], commands_ca[1][0:6])),
             mrw_cw.eq(commands_ca[3][3]),
-            mrw_op.eq(commands_ca[2])
+            mrw_op.eq(commands_ca[2]),
         )
+        trigger_mrw = Signal()
+        self.comb += trigger_mrw.eq(is_cmd_MRW & mrw_cw)
 
+
+        
         # TRUTH_TABLE = {
         #     # 2-cycle commands:
-        #------------------------0 1 2 3 4 5    6    0    1    2    3    4    5    6
+        # ------------------------0 1 2 3 4 5    6    0    1    2    3    4    5    6
         #     "MRR":           ["H L H L H MRA0 MRA1 MRA2 MRA3 MRA4 MRA5 MRA6 MRA7 V",
-        #------------------------0 1 2 3 4 5 6 0 1 2 3  4 5 6
+        # ------------------------0 1 2 3 4 5 6 0 1 2 3  4 5 6
         #                       "L L V V V V V V V V CW V V V"],
-        
-        
+
         #     "MRW":           ["H L H L L MRA0 MRA1 MRA2 MRA3 MRA4 MRA5 MRA6 MRA7 V",
         #                       "OP0 OP1 OP2 OP3 OP4 OP5 OP6 OP7 V V CW V V V"],
         # }
-
-
-class mem(Module):
-    def __init__(self):
-
-        pass
 
 
 class TestBed(Module):
@@ -122,31 +127,32 @@ class TestBed(Module):
         cs_n_w = 2
         ca_w = 7
         if_ibuf = If_ibuf()
-        qvalid = Signal()
-        qcommands_cs_n = Array(Signal(cs_n_w) for y in range(max_ui_num))
-        qcommands_ca = Array(Signal(ca_w) for y in range(max_ui_num))
-        qcommands_par = Array(Signal() for y in range(max_ui_num))
+        self.tb_qvalid = Signal()
+        self.tb_qcommands_cs_n = Array(Signal(cs_n_w)
+                                       for y in range(max_ui_num))
+        self.tb_qcommands_ca = Array(Signal(ca_w) for y in range(max_ui_num))
+        self.tb_qcommands_par = Array(Signal() for y in range(max_ui_num))
 
         self.submodules.driver = SimCSCADriver(
             if_ibuf_o=if_ibuf,
         )
 
-        self.submodules.dut = DDR5RCD01Decoder(
+        self.submodules.decoder = DDR5RCD01Decoder(
             if_ibuf=if_ibuf,
-            qvalid=qvalid,
-            qcommands_cs_n=qcommands_cs_n,
-            qcommands_ca=qcommands_ca,
-            qcommands_par=qcommands_par,
+            qvalid=self.tb_qvalid,
+            qcommands_cs_n=self.tb_qcommands_cs_n,
+            qcommands_ca=self.tb_qcommands_ca,
+            qcommands_par=self.tb_qcommands_par,
             max_ui_num=max_ui_num,
             cs_n_w=cs_n_w,
             ca_w=ca_w,
         )
 
         self.submodules.dut = DDR5RCD01Actor(
-            valid=qvalid,
-            commands_cs_n=qcommands_cs_n,
-            commands_ca=qcommands_ca,
-            commands_par=qcommands_par,
+            valid=self.tb_qvalid,
+            commands_cs_n=self.tb_qcommands_cs_n,
+            commands_ca=self.tb_qcommands_ca,
+            commands_par=self.tb_qcommands_par,
             max_ui_num=max_ui_num,
             cs_n_w=cs_n_w,
             ca_w=ca_w,
@@ -156,7 +162,7 @@ class TestBed(Module):
 def run_test(tb):
     logging.debug('Write test')
     yield from tb.driver.seq_cmds()
-    for i in range(1):
+    for i in range(10):
         yield
     logging.debug('Yield from write test.')
 
