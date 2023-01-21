@@ -64,7 +64,7 @@ class DDR5Sim(Module, AutoCSR):
         cd_dqs_rd = "sys8x_ddr"
 
         self.submodules.data_cdc = ClockDomainCrossing(
-            [("we", 1), ("bank", geom_settings.bankbits), ("row", 18), ("col", 11)],
+            [("we", 1), ("masked", 1), ("bank", geom_settings.bankbits), ("row", 18), ("col", 11)],
             cd_from=cd_cmd, cd_to=cd_dq_wr)
 
         cmd = CommandsSim(pads,
@@ -411,6 +411,7 @@ class CommandsSim(Module, AutoCSR):
                 self.data_en.input.eq(1),
                 self.data.sink.valid.eq(1),
                 self.data.sink.we.eq(1),
+                self.data.sink.masked.eq(~self.cs_n_high[11]),
                 self.data.sink.bank.eq(bank),
                 self.data.sink.row.eq(row),
                 self.data.sink.col.eq(col),
@@ -451,7 +452,7 @@ class DataSim(Module, AutoCSR):
             log_level=log_level, clk_freq=clk_freq)
         dqs_kwargs = dict(bl=bl, log_level=log_level, clk_freq=clk_freq)
 
-        self.submodules.dq_wr = ClockDomainsRenamer(cd_dq_wr)(DQWrite(dq=pads.dq, ports=ports, **dq_kwargs))
+        self.submodules.dq_wr = ClockDomainsRenamer(cd_dq_wr)(DQWrite(dq=pads.dq, dmi=pads.dmi, ports=ports, **dq_kwargs))
         self.submodules.dq_rd = ClockDomainsRenamer(cd_dq_rd)(DQRead(dq=pads.dq_i, ports=ports, **dq_kwargs))
         self.submodules.dqs_wr = ClockDomainsRenamer(cd_dqs_wr)(DQSWrite(dqs=pads.dqs, **dqs_kwargs))
         self.submodules.dqs_rd = ClockDomainsRenamer(cd_dqs_rd)(DQSRead(dqs=pads.dqs_i,**dqs_kwargs))
@@ -464,6 +465,7 @@ class DataSim(Module, AutoCSR):
             write.eq(cmds_sim.data_en.taps[cwl-1] & cmds_sim.data.source.valid & cmds_sim.data.source.we),
             read.eq(cmds_sim.data_en.taps[cl-1 + read_skew] & cmds_sim.data.source.valid & ~cmds_sim.data.source.we),
             cmds_sim.data.source.ready.eq(write | read),
+            self.dq_wr.masked.eq(write & cmds_sim.data.source.masked),
             self.dq_wr.trigger.eq(write),
             self.dq_rd.trigger.eq(read),
             self.dqs_wr.trigger.eq(write),
@@ -544,7 +546,7 @@ class DQRead(DQBurst):
     def __init__(self, *, dq, ports, nrows, ncols, bank, row, col, **kwargs):
         super().__init__(nrows=nrows, ncols=ncols, row=row, col=col, **kwargs)
         self.add_fsm([
-            self.log.debug("READ[%d]: bank=%d, row=%d, col=%d, dq=0x%04x",
+            self.log.debug("READ[%d]: bank=%d, row=%d, col=%d, dq=0x%02x",
                 self.burst_counter, bank, row, self.col_burst, dq, once=False),
             ports[bank].we.eq(0),
             ports[bank].adr.eq(self.addr),
