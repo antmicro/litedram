@@ -106,6 +106,7 @@ class MultiplexerDUT(Module):
         settings.phy    = SimpleSettings(**phy_settings)
         settings.geom   = SimpleSettings(**geom_settings)
         settings.timing = SimpleSettings(**timing_settings)
+        settings.max_timings = SimpleSettings(**timing_settings)
         settings.geom.addressbits = max(settings.geom.rowbits, settings.geom.colbits)
         self.settings = settings
 
@@ -127,7 +128,7 @@ class MultiplexerDUT(Module):
         self.interface = LiteDRAMInterface(address_align=address_align, settings=settings)
 
         # Add Registers
-        self.submodules.registers = LiteDRAMControllerRegisterBank(settings.timing)
+        self.submodules.registers = LiteDRAMControllerRegisterBank(settings.timing, settings.max_timings, settings.phy.memtype)
         timing_regs = self.registers.get_register_signals()
 
         # Add Multiplexer

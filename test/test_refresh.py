@@ -90,6 +90,11 @@ class TestRefresh(unittest.TestCase):
         settings.timing.tRP   = 1
         settings.timing.tRFC  = 2
         settings.timing.tZQCS = 64
+        settings.max_timing = Obj()
+        settings.max_timing.tREFI = 128
+        settings.max_timing.tRP   = 1
+        settings.max_timing.tRFC  = 2
+        settings.max_timing.tZQCS = 64
         settings.geom = Obj()
         settings.geom.addressbits = 16
         settings.geom.bankbits    = 3
@@ -115,7 +120,7 @@ class TestRefresh(unittest.TestCase):
 
         class DUT(Module):
             def __init__(self, settings, clk_freq, postponing):
-                self.registers = LiteDRAMControllerRegisterBank(settings.timing)
+                self.registers = LiteDRAMControllerRegisterBank(settings.timing, settings.max_timing, "DDR")
                 timing_regs = self.registers.get_register_signals()
                 self.submodules.refresher = Refresher(settings=settings, clk_freq=clk_freq, timing_regs=timing_regs, postponing=postponing)
 

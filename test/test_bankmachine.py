@@ -10,6 +10,7 @@ import unittest
 from migen import *
 
 from litedram.common import *
+from litedram.modules import memtype_to_max_values
 from litedram.core.bankmachine import BankMachine
 from litedram.core.controller import LiteDRAMControllerRegisterBank
 
@@ -45,6 +46,21 @@ class BankMachineDUT(Module):
         tWR  = 2,
     )
 
+    default_max_timing_settings = dict(
+        tREFI = 781,
+        tWTR  = 1,
+        tCCD  = 1,
+        tRRD  = 2,
+        tZQCS = int(1e9),
+        tRP   = 2,
+        tRCD  = 2,
+        tWR   = 2,
+        tRFC  = 33,
+        tFAW  = 5,
+        tRAS  = 5,
+        tRC   = 7,
+    )
+
     def __init__(self, n,
         controller_settings = None,
         phy_settings        = None,
@@ -60,6 +76,12 @@ class BankMachineDUT(Module):
         phy_settings        = updated(self.default_phy_settings, phy_settings)
         geom_settings       = updated(self.default_geom_settings, geom_settings)
         timing_settings     = updated(self.default_timing_settings, timing_settings)
+        max_timing_settings = self.default_max_timing_settings
+        for key, value in max_timing_settings.items():
+            if key in timing_settings and \
+                timing_settings[key] is not None and \
+                timing_settings[key] > value:
+                max_timing_settings[key] = timing_settings[key]
 
         class SimpleSettings(Settings):
             def __init__(self, **kwargs):
@@ -70,20 +92,29 @@ class BankMachineDUT(Module):
         settings.geom   = SimpleSettings(**geom_settings)
         settings.timing = SimpleSettings(**timing_settings)
         settings.geom.addressbits = max(settings.geom.rowbits, settings.geom.colbits)
+        settings.max_timing = SimpleSettings(**max_timing_settings)
         self.settings = settings
 
         self.address_align = log2_int(burst_lengths[settings.phy.memtype])
         self.address_width = LiteDRAMInterface(self.address_align, settings).address_width
 
-        self.submodules.registers = LiteDRAMControllerRegisterBank(settings.timing)
+        self.submodules.registers = LiteDRAMControllerRegisterBank(settings.timing, settings.max_timing, phy_settings['memtype'])
         timing_regs = self.registers.get_register_signals()
+
+        write_latency = math.ceil(self.settings.phy.cwl / self.settings.phy.nphases)
+        max_precharge_time = write_latency + settings.max_timing.tWR + settings.max_timing.tCCD
+        precharge_time_sig = Signal(max_precharge_time.bit_length())
+        precharge_time = write_latency + timing_regs['tWR'] + timing_regs['tCCD'] # AL=0
+        self.sync += precharge_time_sig.eq(precharge_time)
 
         bankmachine = BankMachine(n=n,
             address_width = self.address_width,
             address_align = self.address_align,
             nranks        = settings.phy.nranks,
             settings      = settings,
-            timing_regs   = timing_regs)
+            timing_regs   = timing_regs,
+            precharge_time_sig = precharge_time_sig,
+        )
         self.submodules.bankmachine = bankmachine
 
     def get_cmd(self):
