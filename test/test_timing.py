@@ -25,10 +25,10 @@ class TestTiming(unittest.TestCase):
                 yield
                 if (yield dut.txxd.ready) != c2bool(ready):
                     dut.errors += 1
-        
+
         class DUT(Module):
             def __init__(self, txxd):
-                txxd_sig = Signal(32)
+                txxd_sig = Signal(10)
                 self.comb += txxd_sig.eq(txxd)
                 self.submodules.txxd = tXXDController(txxd_sig)
 
@@ -108,7 +108,7 @@ class TestTiming(unittest.TestCase):
 
         class DUT(Module):
             def __init__(self, txxd):
-                txxd_sig = Signal(32, reset=txxd)
+                txxd_sig = Signal(10, reset=txxd)
                 self.submodules.tfaw = tFAWController(txxd_sig)
 
         dut = DUT(txxd)
@@ -116,25 +116,25 @@ class TestTiming(unittest.TestCase):
         self.assertEqual(dut.errors, 0)
 
     def test_tfaw_controller(self):
-        tfaw = 8
+        tfaw = 8 # 012345670123456
         valids = "_----___________"
-        readys = "-----______-----"
+        readys = "-----____-------"
         with self.subTest(tfaw=tfaw, valids=valids, readys=readys):
             self.tfaw_controller_test(tfaw, valids, readys)
 
-        tfaw = 8
+        tfaw = 8 # 012345670123456
         valids = "_-_-_-_-________"
-        readys = "--------___-----"
+        readys = "--------_-------"
         with self.subTest(tfaw=tfaw, valids=valids, readys=readys):
             self.tfaw_controller_test(tfaw, valids, readys)
 
-        tfaw = 8
+        tfaw = 8 # 012345670123456
         valids = "_-_-___-_-______"
-        readys = "----------_-----"
+        readys = "----------------"
         with self.subTest(tfaw=tfaw, valids=valids, readys=readys):
             self.tfaw_controller_test(tfaw, valids, readys)
 
-        tfaw = 8
+        tfaw = 8 # 012345670123456
         valids = "_-_-____-_-______"
         readys = "-----------------"
         with self.subTest(tfaw=tfaw, valids=valids, readys=readys):
