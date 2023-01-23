@@ -47,8 +47,10 @@ class ControllerSettings(Settings):
 
 REGISTER_NAMES = ("tRP", "tRCD", "tWR", "tWTR", "tREFI", "tRFC", "tFAW", "tCCD", "tRRD", "tRC", "tRAS", "tZQCS")
 class LiteDRAMControllerRegisterBank(Module, AutoCSR):
-    def __init__(self, initial_timings):
+    def __init__(self, initial_timings, memtype):
         for reg in REGISTER_NAMES:
+            if reg == "tZQCS" and memtype in ["LPDDR4", "LPDDR5"]:
+                continue # ZQCS refresher does not work with LPDDR4 and LPDDR5
             try:
                 reset_val = getattr(initial_timings, reg)
             except AttributeError:
@@ -90,7 +92,7 @@ class LiteDRAMController(Module):
 
         # Registers --------------------------------------------------------------------------------
 
-        self.registers = registers = LiteDRAMControllerRegisterBank(timing_settings)
+        self.registers = registers = LiteDRAMControllerRegisterBank(timing_settings, phy_settings.memtype)
         timing_regs = registers.get_register_signals()
 
         # LiteDRAM Interface (User) ----------------------------------------------------------------
