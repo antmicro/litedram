@@ -391,24 +391,20 @@ class LiteDRAMNativeReadPort(LiteDRAMNativePort):
 class tXXDController(Module):
     def __init__(self, txxd):
         self.valid = valid = Signal()
-        self.ready = ready = Signal()
+        self.ready = ready = Signal(reset=1)
         ready.attr.add("no_retiming")
 
         # # #
 
         if txxd is not None:
-            count = Signal(max(txxd.nbits, 2))
+            count = Signal.like(txxd)
             self.sync += \
                 If(valid,
                     count.eq(txxd - 1),
-                    If(txxd <= 1,
-                        ready.eq(1)
-                    ).Else(
-                        ready.eq(0)
-                    )
+                    ready.eq(txxd <= 1),
                 ).Elif(~ready,
                     count.eq(count - 1),
-                    If(count <= 1,
+                    If(count == 1,
                         ready.eq(1)
                     )
                 )
@@ -422,22 +418,29 @@ class tFAWController(Module):
 
         # # #
 
+        # TODO: base count only on incoming and outgoing bits from the shift register
+
         if tfaw is not None:
-            count  = Signal(max=max(tfaw.nbits, 2))
-            window = Signal(tfaw.nbits)
-            window_pass = Signal(tfaw.nbits)
-            self.sync += window.eq(Cat(valid, window))
-            for i in range(tfaw.nbits):
-                self.comb += If(tfaw > i, window_pass[i].eq(window[i])).Else(window_pass[i].eq(0))
-            self.comb += count.eq(reduce(add, [window_pass[i] for i in range(tfaw.nbits)]))
-            self.sync += \
-                If(count < 4,
-                    If(count == 3,
-                        ready.eq(~valid)
-                    ).Else(
-                        ready.eq(1)
-                    )
-                )
+            count  = Signal(3)
+            access = Signal.like(tfaw)
+            self.sync += access.eq(tfaw-1)
+
+            window = Array(Signal() for _ in range(2**tfaw.nbits))
+            window_pass = Signal((2**tfaw.nbits))
+            for i in range(1, 2**tfaw.nbits):
+                self.sync += window[i].eq(window[i-1])
+            self.sync += window[0].eq(valid)
+
+            self.sync += [
+                If(window[access] & valid,
+                ).Elif(window[access],
+                    count.eq(count - 1),
+                ).Elif(valid & ready,
+                    count.eq(count + 1),
+                ),
+            ]
+
+            self.comb += ready.eq(~count[2] | window[access])
 
 
 class TimelineCounter(Module):
