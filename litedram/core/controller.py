@@ -47,15 +47,21 @@ class ControllerSettings(Settings):
 
 REGISTER_NAMES = ("tRP", "tRCD", "tWR", "tWTR", "tREFI", "tRFC", "tFAW", "tCCD", "tRRD", "tRC", "tRAS", "tZQCS")
 class LiteDRAMControllerRegisterBank(Module, AutoCSR):
-    def __init__(self, initial_timings, memtype):
+    def __init__(self, initial_timings, max_expected_values, memtype):
         for reg in REGISTER_NAMES:
             if reg == "tZQCS" and memtype in ["LPDDR4", "LPDDR5"]:
                 continue # ZQCS refresher does not work with LPDDR4 and LPDDR5
             try:
+                width = getattr(max_expected_values, reg)
+            except AttributeError:
+                width = None
+            width = width.bit_length() if width is not None else 1
+            try:
                 reset_val = getattr(initial_timings, reg)
             except AttributeError:
                 reset_val = None
-            csr = CSRStorage(32, name=reg, reset=reset_val if reset_val is not None else 0)
+            csr = CSRStorage(width, name=reg, reset=reset_val if reset_val is not None else 0)
+            assert reset_val is None or reset_val < 2**width, (reg, reset_val, 2**width)
             setattr(self, reg, csr)
 
     def get_register_signals(self):
@@ -73,7 +79,7 @@ class LiteDRAMControllerRegisterBank(Module, AutoCSR):
 # Controller ---------------------------------------------------------------------------------------
 
 class LiteDRAMController(Module):
-    def __init__(self, phy_settings, geom_settings, timing_settings, clk_freq,
+    def __init__(self, phy_settings, geom_settings, timing_settings, max_expected_values, clk_freq,
         controller_settings=ControllerSettings()):
         if phy_settings.memtype == "SDR":
             burst_length = phy_settings.nphases
@@ -92,7 +98,7 @@ class LiteDRAMController(Module):
 
         # Registers --------------------------------------------------------------------------------
 
-        self.registers = registers = LiteDRAMControllerRegisterBank(timing_settings, phy_settings.memtype)
+        self.registers = registers = LiteDRAMControllerRegisterBank(timing_settings, max_expected_values, phy_settings.memtype)
         timing_regs = registers.get_register_signals()
 
         # LiteDRAM Interface (User) ----------------------------------------------------------------
@@ -116,14 +122,24 @@ class LiteDRAMController(Module):
             postponing  = self.settings.refresh_postponing)
 
         # Bank Machines ----------------------------------------------------------------------------
+
+        # tWTP (write-to-precharge) calculation ----------------------------------------------------
+        write_latency = math.ceil(self.settings.phy.cwl / self.settings.phy.nphases)
+        max_precharge_time = write_latency + max_expected_values.tWR + max_expected_values.tCCD # AL=0
+        precharge_time_sig = Signal(max_precharge_time.bit_length())
+        precharge_time = write_latency + timing_regs['tWR'] + timing_regs['tCCD'] # AL=0
+        # Value changes only on registers update, use sync to reduce critical path length
+        self.sync += precharge_time_sig.eq(precharge_time)
+
         bank_machines = []
         for n in range(nranks*nbanks):
             bank_machine = BankMachine(n,
-                address_width = interface.address_width,
-                address_align = address_align,
-                nranks        = nranks,
-                settings      = self.settings,
-                timing_regs   = timing_regs)
+                address_width       = interface.address_width,
+                address_align       = address_align,
+                nranks              = nranks,
+                settings            = self.settings,
+                timing_regs         = timing_regs,
+                precharge_time_sig  = precharge_time_sig)
             bank_machines.append(bank_machine)
             self.submodules += bank_machine
             self.comb += getattr(interface, "bank"+str(n)).connect(bank_machine.req)

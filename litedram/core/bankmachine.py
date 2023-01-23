@@ -86,7 +86,7 @@ class BankMachine(Module):
     cmd : Endpoint(cmd_request_rw_layout)
         Stream of commands to the Multiplexer
     """
-    def __init__(self, n, address_width, address_align, nranks, settings, timing_regs):
+    def __init__(self, n, address_width, address_align, nranks, settings, timing_regs, precharge_time_sig):
         self.req = req = Record(cmd_layout(address_width))
         self.refresh_req = refresh_req = Signal()
         self.refresh_gnt = refresh_gnt = Signal()
@@ -150,10 +150,6 @@ class BankMachine(Module):
         ]
 
         # tWTP (write-to-precharge) controller -----------------------------------------------------
-        write_latency = math.ceil(settings.phy.cwl / settings.phy.nphases)
-        precharge_time = write_latency + timing_regs['tWR'] + timing_regs['tCCD'] # AL=0
-        precharge_time_sig = Signal(max(write_latency.bit_length(), timing_regs['tWR'].nbits, timing_regs['tCCD'].nbits) + 1)
-        self.comb += precharge_time_sig.eq(precharge_time)
         self.submodules.twtpcon = twtpcon = tXXDController(precharge_time_sig)
         self.comb += twtpcon.valid.eq(cmd.valid & cmd.ready & cmd.is_write)
 

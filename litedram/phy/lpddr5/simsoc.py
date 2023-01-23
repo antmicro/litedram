@@ -71,6 +71,22 @@ class LPDDR5ExampleModule(SDRAMModule):
     # x16, DVFSC disabled, Write Link ECC diabled
     # TODO: missing timings: tCCD, tZQCS
     memtype = "LPDDR5"
+    maximal_values = dict(
+        tREFI   = (None, 32e6/8192),
+        tWTR    = (4, 21),
+        tCCD    = (32, None),
+        tRRD    = (2, 10),
+        tRP     = (2, 21),
+        tRCD    = (2, 19),
+        tWR     = (3, 43),
+        tRFC    = (None, 380),
+        tRC     = (5, 63),
+        tFAW    = (None, 40),
+        tRAS    = (3, 42),
+        tZQCS   = (None, 6000),
+    )
+
+
 
     nbanks      = 16
     nrows       = 32768

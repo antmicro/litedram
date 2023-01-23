@@ -31,10 +31,10 @@ class _TechnologyTimings(Settings):
         self.set_attributes(locals())
 
 
-_speedgrade_timings = ["tRP", "tRCD", "tWR", "tRFC", "tFAW", "tRAS"]
+_speedgrade_timings = ["tRP", "tRCD", "tWR", "tRFC", "tFAW", "tRAS", "tRC"]
 
 class _SpeedgradeTimings(Settings):
-    def __init__(self, tRP, tRCD, tWR, tRFC, tFAW, tRAS):
+    def __init__(self, tRP, tRCD, tWR, tRFC, tFAW, tRAS, tRC=None):
         self.set_attributes(locals())
 
 # SPD ----------------------------------------------------------------------------------------------
@@ -312,38 +312,72 @@ class SDRAMModule:
     various speedgrades.
     """
     registered = False
-    def __init__(self, clk_freq, rate, speedgrade=None, fine_refresh_mode=None):
+    def __init__(self, clk_freq, rate, speedgrade=None, fine_refresh_mode=None, address_align=True, timing_settings=True):
         self.clk_freq      = clk_freq
         self.rate          = rate
-        self.speedgrade    = speedgrade
-        self.geom_settings = GeomSettings(
-            bankbits = log2_int(self.nbanks),
-            rowbits  = log2_int(self.nrows),
-            colbits  = log2_int(self.ncols),
-        )
-        assert not (self.memtype != "DDR4" and fine_refresh_mode != None)
-        assert fine_refresh_mode in [None, "1x", "2x", "4x"]
-        if (fine_refresh_mode is None) and (self.memtype == "DDR4"):
-            fine_refresh_mode = "1x"
-        self.timing_settings = TimingSettings(
-            tRP   = self.ck_ns_to_cycles(self.get("tRP")),
-            tRCD  = self.ck_ns_to_cycles(self.get("tRCD")),
-            tWR   = self.ck_ns_to_cycles(self.get("tWR")),
-            tREFI = self.ck_ns_to_cycles(self.get("tREFI", fine_refresh_mode), margin=False),
-            tRFC  = self.ck_ns_to_cycles(self.get("tRFC", fine_refresh_mode)),
-            tWTR  = self.ck_ns_to_cycles(self.get("tWTR")),
-            tFAW  = None if self.get("tFAW") is None else self.ck_ns_to_cycles(self.get("tFAW")),
-            tCCD  = None if self.get("tCCD") is None else self.ck_ns_to_cycles(self.get("tCCD")),
-            tRRD  = None if self.get("tRRD") is None else self.ck_ns_to_cycles(self.get("tRRD")),
-            tRC   = None if self.get("tRAS") is None else self.ck_ns_to_cycles(self.get("tRP") + self.get("tRAS")),
-            tRAS  = None if self.get("tRAS") is None else self.ck_ns_to_cycles(self.get("tRAS")),
-            tZQCS = None if self.get("tZQCS") is None else self.ck_ns_to_cycles(self.get("tZQCS"))
-        )
-        self.timing_settings.fine_refresh_mode = fine_refresh_mode
+        num, denum         = self.rate_frac
+        if speedgrade is not None:
+            self.speedgrade = speedgrade
+        else:
+            self.speedgrade = clk_freq*denum
+            if "DDR" in self.memtype:
+                self.speedgrade *= 2
+            self.speedgrade = str(int(self.speedgrade/1e6))
+        if address_align:
+            self.geom_settings = GeomSettings(
+                bankbits = log2_int(self.nbanks),
+                rowbits  = log2_int(self.nrows),
+                colbits  = log2_int(self.ncols),
+            )
 
-    def get(self, name, key=None):
-        assert name in _speedgrade_timings + _technology_timings, "Unknown name: {}".format(name)
-        timing = self.get_timing(name)
+        self.maximal_timing_values = TimingSettings(
+            tRP   = self.ck_ns_to_cycles(self.get("tRP", timing_clip=True)),
+            tRCD  = self.ck_ns_to_cycles(self.get("tRCD", timing_clip=True)),
+            tWR   = self.ck_ns_to_cycles(self.get("tWR", timing_clip=True)),
+            tREFI = self.ck_ns_to_cycles(self.get("tREFI", timing_clip=True), margin=False),
+            tRFC  = self.ck_ns_to_cycles(self.get("tRFC", timing_clip=True)),
+            tWTR  = self.ck_ns_to_cycles(self.get("tWTR", timing_clip=True)),
+            tFAW  = None if self.get("tFAW",  timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tFAW",  timing_clip=True)),
+            tCCD  = None if self.get("tCCD",  timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tCCD",  timing_clip=True)),
+            tRRD  = None if self.get("tRRD",  timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tRRD",  timing_clip=True)),
+            tRC   = None if self.get("tRC",   timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tRC",   timing_clip=True)),
+            tRAS  = None if self.get("tRAS",  timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tRAS",  timing_clip=True)),
+            tZQCS = None if self.get("tZQCS", timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tZQCS", timing_clip=True))
+        )
+
+        if timing_settings:
+            assert self.memtype in ("DDR4", "DDR5") or fine_refresh_mode == None
+            assert fine_refresh_mode in [None, "1x", "2x", "4x"]
+            if (fine_refresh_mode is None) and (self.memtype in ("DDR4", "DDR5")):
+                fine_refresh_mode = "1x"
+            self.timing_settings = TimingSettings(
+                tRP   = self.ck_ns_to_cycles(self.get("tRP")),
+                tRCD  = self.ck_ns_to_cycles(self.get("tRCD")),
+                tWR   = self.ck_ns_to_cycles(self.get("tWR")),
+                tREFI = self.ck_ns_to_cycles(self.get("tREFI", fine_refresh_mode), margin=False),
+                tRFC  = self.ck_ns_to_cycles(self.get("tRFC", fine_refresh_mode)),
+                tWTR  = self.ck_ns_to_cycles(self.get("tWTR")),
+                tFAW  = None if self.get("tFAW") is None else self.ck_ns_to_cycles(self.get("tFAW")),
+                tCCD  = None if self.get("tCCD") is None else self.ck_ns_to_cycles(self.get("tCCD")),
+                tRRD  = None if self.get("tRRD") is None else self.ck_ns_to_cycles(self.get("tRRD")),
+                tRC   = None if self.get("tRAS") is None else self.ck_ns_to_cycles(self.get("tRP") + self.get("tRAS")),
+                tRAS  = None if self.get("tRAS") is None else self.ck_ns_to_cycles(self.get("tRAS")),
+                tZQCS = None if self.get("tZQCS") is None else self.ck_ns_to_cycles(self.get("tZQCS"))
+            )
+            self.timing_settings.fine_refresh_mode = fine_refresh_mode
+            for key in _technology_timings + _speedgrade_timings:
+                module_value = getattr(self.timing_settings, key)
+                if module_value is None:
+                    continue
+                max_value = getattr(self.maximal_timing_values, key)
+                assert module_value <= max_value, (key, module_value, max_value)
+
+    def get(self, name, key=None, timing_clip=False):
+        if not timing_clip:
+            assert name in _speedgrade_timings + _technology_timings, "Unknown name: {}".format(name)
+        else:
+            assert name in self.maximal_values, "Unknown name: {}".format(name)
+        timing = self.get_timing(name, timing_clip)
         if timing is None:
             return None
         if (timing is not None) and (key is not None):
@@ -356,14 +390,30 @@ class SDRAMModule:
         ns = ns or 0
         return Timing(ck, ns)
 
-    def get_timing(self, name):
-        if name in _speedgrade_timings:
-            return self.get_speedgrade_timing(name)
-        return self.get_technology_timing(name)
+    def get_timing(self, name, timing_clip=False):
+        if not timing_clip:
+            if name in _speedgrade_timings:
+                return self.get_speedgrade_timing(name)
+            return self.get_technology_timing(name)
+        else:
+            return self.maximal_values[name]
 
     def get_speedgrade_timing(self, name):
         if hasattr(self, "speedgrade_timings"):
             speedgrade = "default" if self.speedgrade is None else self.speedgrade
+            best = None
+            if speedgrade not in self.speedgrade_timings:
+                for key in self.speedgrade_timings:
+                    if key == "default":
+                        continue
+                    if int(key) >= int(speedgrade) and best is None:
+                        best = int(key)
+                    elif int(key) >= int(speedgrade) and int(key) < best:
+                         best = int(key)
+                assert best is not None or len(self.speedgrade_timings) == 1, f"All module's speedgrades are smaller than requested: {speedgrade}"
+                speedgrade = str(best)
+                if best is None:
+                    speedgrade = "default"
             return getattr(self.speedgrade_timings[speedgrade], name)
         name = name + "_" + self.speedgrade if self.speedgrade is not None else name
         try:
@@ -413,7 +463,11 @@ class SDRAMModule:
         spd = spd_cls(spd_data)
 
         # Create a deriving class to avoid modifying this one
-        class _SDRAMModule(cls):
+        sdram_cls = {
+            0x0b: DDR3Module,
+            0x0c: DDR4Module,
+        }[spd_data[2]]
+        class _SDRAMModule(sdram_cls):
             memtype = spd.memtype
             nbanks = spd.nbanks
             nrows = spd.nrows
@@ -438,12 +492,29 @@ class SDRAMModule:
             speedgrade        = spd.speedgrade,
             fine_refresh_mode = fine_refresh_mode)
 
-class SDRAMRegisteredModule(SDRAMModule): registered = True
+class SDRAMRegisteredModule(): registered = True
 
 # SDR ----------------------------------------------------------------------------------------------
 
-class SDRModule(SDRAMModule):                     memtype = "SDR"
-class SDRRegisteredModule(SDRAMRegisteredModule): memtype = "SDR"
+class SDRModule(SDRAMModule):
+    memtype = "SDR"
+    # values taken from IS42S16160 and AS4C4M16SA-C&I datasheets
+    maximal_values = dict(
+        tREFI   = (None, 64e6/1024),
+        tWTR    = (2, None),
+        tCCD    = (1, None),
+        tRRD    = (None, 14),
+        tRP     = (None, 21),
+        tRCD    = (None, 21),
+        tWR     = 2,
+        tRFC    = (None, 67.5),
+        tRC     = (None, 67.5),
+        tFAW    = None,
+        tRAS    = (None, 45),
+        tZQCS   = None,
+    )
+class SDRRegisteredModule(SDRModule, SDRAMRegisteredModule):
+    pass
 
 class IS42S16160(SDRModule):
     # geometry
@@ -555,8 +626,24 @@ class W9825G6KH6(SDRModule):
 
 # DDR ----------------------------------------------------------------------------------------------
 
-class DDRModule(SDRAMModule):                     memtype = "DDR"
-class DDRRegisteredModule(SDRAMRegisteredModule): memtype = "DDR"
+class DDRModule(SDRAMModule):
+    memtype = "DDR"
+    maximal_values = dict(
+        tREFI   = (None, 64e6/1024),
+        tWTR    = (2, None),
+        tCCD    = (1, None),
+        tRRD    = (None, 15),
+        tRP     = (None, 20),
+        tRCD    = (None, 20),
+        tWR     = (None, 15),
+        tRFC    = (None, 120),
+        tRC     = (None, 70),
+        tFAW    = None,
+        tRAS    = (None, 50),
+        tZQCS   = None,
+    )
+class DDRRegisteredModule(DDRModule, SDRAMRegisteredModule):
+    pass
 
 class MT46V32M16(DDRModule):
     # geometry
@@ -569,8 +656,23 @@ class MT46V32M16(DDRModule):
 
 # LPDDR --------------------------------------------------------------------------------------------
 
-class LPDDRModule(SDRAMModule):                     memtype = "LPDDR"
-class LPDDRRegisteredModule(SDRAMRegisteredModule): memtype = "LPDDR"
+class LPDDRModule(SDRAMModule):
+    memtype = "LPDDR"
+    max_minimal_values = dict(
+        tREFI   = (None, 64e6/8192),
+        tWTR    = (2, None),
+        tCCD    = (1, None),
+        tRRD    = (None, 12),
+        tRP     = (None, 18),
+        tRCD    = (None, 18),
+        tWR     = (None, 15),
+        tRFC    = (None, 72),
+        tRC     = (None, 60),
+        tFAW    = None,
+        tRAS    = (None, 42),
+    )
+class LPDDRRegisteredModule(LPDDRModule, SDRAMRegisteredModule):
+    pass
 
 class MT46H32M16(LPDDRModule):
     # geometry
@@ -602,8 +704,25 @@ class MT46H32M32(LPDDRModule):
 
 # DDR2 ---------------------------------------------------------------------------------------------
 
-class DDR2Module(SDRAMModule):                     memtype = "DDR2"
-class DDR2RegisteredModule(SDRAMRegisteredModule): memtype = "DDR2"
+class DDR2Module(SDRAMModule):
+    memtype = "DDR2"
+    maximal_values = dict(
+        tREFI   = (None, 64e6/8192),
+        tWTR    = (None, 10),
+        tCCD    = (2, None),
+        tRRD    = (None, 10),
+        tRP     = (None, 20),
+        tRCD    = (None, 20),
+        tWR     = (None, 15),
+        tRFC    = (None, 327.5),
+        tRC     = (None, 65),
+        tFAW    = (None, 50),
+        tRAS    = (None, 45),
+        tZQCS   = None,
+    )
+
+class DDR2RegisteredModule(DDR2Module, SDRAMRegisteredModule):
+    pass
 
 class MT47H128M8(DDR2Module):
     # geometry
@@ -643,8 +762,25 @@ class P3R1GE4JGF(DDR2Module):
 
 # DDR3 (Chips) -------------------------------------------------------------------------------------
 
-class DDR3Module(SDRAMModule):                     memtype = "DDR3"
-class DDR3RegisteredModule(SDRAMRegisteredModule): memtype = "DDR3"
+class DDR3Module(SDRAMModule):
+    memtype = "DDR3"
+    maximal_values = dict(
+        tREFI   = (None, 64e6/8192),
+        tWTR    = (4, 7.5),
+        tCCD    = (4, None),
+        tRRD    = (4, 10),
+        tRP     = (None, 15),
+        tRCD    = (None, 15),
+        tWR     = (None, 15),
+        tRFC    = (None, 350),
+        tRC     = (None, 52.5),
+        tFAW    = (None, 50),
+        tRAS    = (None, 37.5),
+        tZQCS   = (512, 640),
+    )
+
+class DDR3RegisteredModule(DDR3Module, SDRAMRegisteredModule):
+    pass
 
 class AS4C128M16(DDR3Module):
     # geometry
@@ -907,7 +1043,22 @@ class MT16KTF1G64HZ(DDR3Module):
 
 # RPC ----------------------------------------------------------------------------------------------
 
-class RPCModule(SDRAMModule): memtype = "RPC"
+class RPCModule(SDRAMModule):
+    memtype = "RPC"
+    maximal_values = dict(
+        tREFI   = (None, 64e6/4096),
+        tWTR    = (16, None),
+        tCCD    = (29, None),
+        tRRD    = (None, 7.5),
+        tRP     = (None, 14),
+        tRCD    = (None, 14),
+        tWR     = (None, 15),
+        tRFC    = (300, None),
+        tRC     = (None, 49),
+        tFAW    = None,
+        tRAS    = (None, 35),
+        tZQCS   = (None, 90),
+    )
 
 class EM6GA16L(RPCModule):
     # 64MBits per bank => 256Mb
@@ -937,8 +1088,25 @@ class EM6GA16L(RPCModule):
 
 # DDR4 (Chips) -------------------------------------------------------------------------------------
 
-class DDR4Module(SDRAMModule):                     memtype = "DDR4"
-class DDR4RegisteredModule(SDRAMRegisteredModule): memtype = "DDR4"
+class DDR4Module(SDRAMModule):
+    memtype = "DDR4"
+    maximal_values = dict(
+        tREFI   = (None, 64e6/8192),
+        tWTR    = (4, 7.5),
+        tCCD    = (5, 6.25),
+        tRRD    = (4, 7.5),
+        tRP     = (None, 15),
+        tRCD    = (None, 15),
+        tWR     = (None, 15),
+        tRFC    = (None, 550),
+        tRC     = (None, 50),
+        tFAW    = (28, 35),
+        tRAS    = (None, 35),
+        tZQCS   = (512, None),
+    )
+
+class DDR4RegisteredModule(DDR4Module, SDRAMRegisteredModule):
+    pass
 
 class EDY4016A(DDR4Module):
     # geometry
@@ -1145,6 +1313,20 @@ class M393A4K40DB3(M393A2K40DB3): pass
 
 class MT53E256M16D1(SDRAMModule):
     memtype = "LPDDR4"
+    maximal_values = dict(
+        tREFI   = (None, 32e6/8192),
+        tWTR    = (8, 12),
+        tCCD    = (32, None),
+        tRRD    = (4, 10),
+        tRP     = (4, 23),
+        tRCD    = (4, 18),
+        tWR     = (6, 20),
+        tRFC    = (None, 380),
+        tRC     = (None, 69),
+        tFAW    = (None, 40),
+        tRAS    = (3, 44),
+        tZQCS   = None,
+    )
 
     nbanks = 8
     nrows = 32768
@@ -1161,3 +1343,17 @@ class MT53E256M16D1(SDRAMModule):
         "1866": _SpeedgradeTimings(tRP=(3, 21), tRCD=(4, 18), tWR=(4, 18), tRFC=180, tFAW=40, tRAS=(3, 42)),  # TODO: tRAS_max
     }
     speedgrade_timings["default"] = speedgrade_timings["1866"]
+
+def memtype_to_max_values(memtype, freq, ratio):
+    cls = {
+        "SDR": SDRModule,
+        "DDR": DDRModule,
+        "LPDDR": LPDDRModule,
+        "DDR2": DDR2Module,
+        "DDR3": DDR3Module,
+        "DDR4": DDR4Module,
+        "LPDDR4": MT53E256M16D1,
+        "RPC": RPCModule,
+
+    }[memtype]
+    return cls(freq, f"1:{ratio}", address_align=False, timing_settings=False).maximal_timing_values
