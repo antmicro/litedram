@@ -49,8 +49,8 @@ REGISTER_NAMES = ("tRP", "tRCD", "tWR", "tWTR", "tREFI", "tRFC", "tFAW", "tCCD",
 class LiteDRAMControllerRegisterBank(Module, AutoCSR):
     def __init__(self, initial_timings, max_expected_values, memtype):
         for reg in REGISTER_NAMES:
-            if reg == "tZQCS" and memtype in ["LPDDR4", "LPDDR5"]:
-                continue # ZQCS refresher does not work with LPDDR4 and LPDDR5
+            if reg == "tZQCS" and memtype in ["LPDDR4", "LPDDR5", "DDR5"]:
+                continue # ZQCS refresher does not work with LPDDR4, LPDDR5 and DDR5
             try:
                 width = getattr(max_expected_values, reg)
             except AttributeError:
