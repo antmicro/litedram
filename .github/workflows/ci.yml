@@ -3,7 +3,7 @@ name: ci
 on: [push, pull_request]
 
 env:
-  LITEX_BRANCH: antmicro/mdudek/rowhammer-tester-ddr5-support-no-dynamic-timings
+  LITEX_BRANCH: antmicro/ddr5-support
 
 jobs:
   build:
