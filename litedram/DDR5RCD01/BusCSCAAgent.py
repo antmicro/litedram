@@ -69,10 +69,10 @@ class BusCSCAAgent(Module):
             self.seq_item_ca = []
             self.seq_item_cs = []
             self.setup_seq_item(seq_collection_item)
-            logging.debug("Sequence CS= " + str(self.seq_item_cs))
-            logging.debug("Sequence CA= " + str(self.seq_item_ca))
+            # logging.debug("Sequence CS= " + str(self.seq_item_cs))
+            # logging.debug("Sequence CA= " + str(self.seq_item_ca))
             self.seq_item = list(zip(self.seq_item_cs, self.seq_item_ca))
-            logging.debug("Sequence ADDED = " + str(self.seq_item))
+            # logging.debug("Sequence ADDED = " + str(self.seq_item))
             self.sequence = self.sequence + self.seq_item
         logging.debug("Sequence TOTAL = " + str(self.sequence))
 
@@ -81,8 +81,9 @@ class BusCSCAAgent(Module):
         datarate : DDR|SDR1|SDR2
         ui : 1|2
         """
-
+        # breakpoint()
         self.setup_seq_cs(
+            cs_signalling=seq_collection_item["cs_signalling"],
             datarate=seq_collection_item["datarate"],
             ui=seq_collection_item["ui"],
             dest_rank=seq_collection_item["destination_rank"],
@@ -107,37 +108,59 @@ class BusCSCAAgent(Module):
         self.seq_item_cs.append(~0)
         self.seq_item_ca.append(~0)
 
-    def setup_seq_cs(self, datarate="DDR", ui=2, dest_rank="AB"):
+    def setup_seq_cs(self, cs_signalling="normal", datarate="DDR", ui=2, dest_rank="AB"):
         cs = []
-        if datarate == "DDR":
-            for id in range(2*ui):
-                if id in [0, 1]:
-                    if dest_rank == "AB":
-                        cs.append(0b00)
-                    elif dest_rank == "A":
-                        cs.append(0b01)
-                    elif dest_rank == "B":
-                        cs.append(0b10)
-                else:
+        if cs_signalling == "normal":
+            if datarate == "DDR":
+                for id in range(2*ui):
+                    if id in [0, 1]:
+                        if dest_rank == "AB":
+                            cs.append(0b00)
+                        elif dest_rank == "A":
+                            cs.append(0b01)
+                        elif dest_rank == "B":
+                            cs.append(0b10)
+                    else:
+                        cs.append(0b11)
+            elif datarate == "SDR1":
+                cs = []
+            elif datarate == "SDR2":
+                cs = []
+        elif cs_signalling == "inactive":
+            if datarate == "DDR":
+                for id in range(2*ui):
                     cs.append(0b11)
-        elif datarate == "SDR1":
-            cs = []
-        elif datarate == "SDR2":
-            cs = []
+            elif datarate == "SDR1":
+                cs = []
+            elif datarate == "SDR2":
+                cs = []
+        elif cs_signalling == "double_ui":
+            if datarate == "DDR":
+                for id in range(2*ui):
+                    if id in [0, 1, 2, 3]:
+                        if dest_rank == "AB":
+                            cs.append(0b00)
+                        elif dest_rank == "A":
+                            cs.append(0b01)
+                        elif dest_rank == "B":
+                            cs.append(0b10)
+                    else:
+                        cs.append(0b11)
+        
         self.seq_item_cs = cs
 
     def setup_seq_ca(self, datarate="DDR", ui=2, dest_rank="AB", opcode=0x00, payload=None, randomize_payload=False):
         # breakpoint()
         if randomize_payload:
-            mra = random.randint(0, 127)
-            op = random.randint(0, 127)
+            mra = random.randint(0, 255)
+            op = random.randint(0, 255)
             cw = random.randint(0, 1)
             payload = Payload(mra, op, cw)
 
-        assert payload.mra <= 127
+        assert payload.mra <= 255
         assert payload.mra >= 0
 
-        assert payload.op <= 127
+        assert payload.op <= 255
         assert payload.op >= 0
 
         assert payload.cw <= 1
@@ -149,7 +172,19 @@ class BusCSCAAgent(Module):
         ca = []
 
         if ui == 1:
-            ca = [0x00, 0xFF]
+            """
+            Non standard
+            """
+            if opcode == "NOP":
+                mra_01 = payload.mra & 0b000_0011
+                ui_0 = (opcode | (mra_01 << 5))
+                ui_1 = (payload.mra >> 2)
+                ca = [ui_0, ui_1]
+            else:
+                mra_01 = payload.mra & 0b000_0011
+                ui_0 = (opcode | (mra_01 << 5))
+                ui_1 = (payload.mra >> 2)
+                ca = [ui_0, ui_1]
 
         if ui == 2:
             if opcode == 0b00101:
@@ -178,9 +213,19 @@ class BusCSCAAgent(Module):
                 UI_3 |   V||    V||    V||   CW||    V||    V||    V|
                      | CA0||  CA1||  CA2||  CA3||  CA4||  CA5||  CA6|
                 """
-                raise NotImplemented
-            else:
+                # TODO correct
                 ca = [0x00, 0xFF, 0xFF, 0x00]
+            else:
+                """
+                As in MRW
+                """
+                mra_01 = payload.mra & 0b000_0011
+                ui_0 = (opcode | (mra_01 << 5))
+                ui_1 = (payload.mra >> 1)
+                ui_2 = payload.op & 0b011_1111
+                ui_3 = (payload.op & 0b100_0000 >> 6) | (payload.cw << 3)
+                ca = [ui_0, ui_1, ui_2, ui_3]
+
 
         self.seq_item_ca = ca
 
