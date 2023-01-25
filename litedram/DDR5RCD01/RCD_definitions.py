@@ -5,6 +5,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 from enum import Enum
+import enum
 from migen import *
 #
 TIE_LOW = 0
@@ -35,6 +36,27 @@ CW_ALL_NUM = CW_DA_REGS_NUM+CW_PAGE_PTRS_NUM+CW_PAGE_REG_NUM
 
 ADDR_CW_READ_POINTER = 0x5E
 ADDR_CW_PAGE = 0x5F
+
+@enum.unique
+class DDR5Opcodes(enum.IntEnum):
+    """
+    MRR
+          | CA0||  CA1||  CA2||  CA3||  CA4||  CA5||  CA6|
+    UI_0  |   H||    L||    H||    L||    H|| MRA0|| MRA1|
+    UI_1  |MRA2|| MRA3|| MRA4|| MRA5|| MRA6|| MRA7||    V|
+    UI_2  |   L||    L||    V||    V||    V||    V||    V|
+    UI_3  |   V||    V||    V||   CW||    V||    V||    V|
+          | CA0||  CA1||  CA2||  CA3||  CA4||  CA5||  CA6|
+    MRW
+          | CA0||  CA1||  CA2||  CA3||  CA4||  CA5||  CA6|
+    UI_0  |   H||    L||    H||    L||    L|| MRA0|| MRA1|
+    UI_1  |MRA2|| MRA3|| MRA4|| MRA5|| MRA6|| MRA7||    V|
+    UI_2  | OP0||  OP1||  OP2||  OP3||  OP4||  OP5||  OP6|
+    UI_3  | OP7||    V||    V||   CW||    V||    V||    V|
+          | CA0||  CA1||  CA2||  CA3||  CA4||  CA5||  CA6|
+    """
+    MRR = 0b10101
+    MRW = 0b00101
 
 
 class ControlWordAttributes(Enum):

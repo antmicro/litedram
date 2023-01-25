@@ -16,14 +16,9 @@ from litedram.DDR5RCD01.RCD_definitions import *
 from litedram.DDR5RCD01.RCD_interfaces import *
 from litedram.DDR5RCD01.RCD_interfaces_external import *
 from litedram.DDR5RCD01.RCD_utils import *
-from litedram.DDR5RCD01.SimCSCADriver import SimCSCADriver
-from litedram.DDR5RCD01.DDR5RCD01Decoder import DDR5RCD01Decoder
-from litedram.DDR5RCD01.DDR5RCD01Actor import DDR5RCD01Actor
-from litedram.DDR5RCD01.DDR5RCD01Actor import DDR5Commands
-from litedram.DDR5RCD01.DDR5RCD01Actor import DDR5Opcodes
 
 
-class RCD01SpecialMRA(enum.IntEnum):
+class RCD01SpecialMR(enum.IntEnum):
     MRW_5E = 0x5E
     MRW_3F = 0x3F
 
@@ -34,7 +29,6 @@ class DDR5RCD01ActorMRW(Module):
 
         acts on a command MRW with CW set to HIGH
         DRAMs ignore if CW is HIGH
-
 
 
         Module
@@ -56,16 +50,16 @@ class DDR5RCD01ActorMRW(Module):
                  mrw_mra,
                  mrw_op,
                  mrw_cw,
-                 RW5E_we,
                  RW5E_d,
+                 RW5E_addr,
+                 RW5E_we,
                  RW5E_star_q,
                  mrw_op_o,
                  mrw_op_override,
-                 
                  ):
 
         self.comb += If(
-            mrw_mra == RCD01SpecialMRA.MRW_5E,
+            mrw_mra == RCD01SpecialMR.MRW_5E,
             RW5E_we.eq(1),
             RW5E_d.eq(mrw_op),
         ).Else(
@@ -74,7 +68,7 @@ class DDR5RCD01ActorMRW(Module):
         )
 
         self.comb += If(
-            mrw_mra == RCD01SpecialMRA.MRW_3F,
+            mrw_mra == RCD01SpecialMR.MRW_3F,
             mrw_op_override.eq(1),
             mrw_op_o.eq(RW5E_star_q)
         ).Else(
@@ -82,11 +76,12 @@ class DDR5RCD01ActorMRW(Module):
             mrw_op_o.eq(0)
         )
 
+        self.comb += RW5E_addr.eq(RCD01SpecialMR.MRW_5E)
+
 
 class TestBed(Module):
     def __init__(self):
-
-        self.submodules.dut = DDR5RCD01ActorMRW()
+        pass
 
 
 def run_test(tb):
@@ -97,10 +92,4 @@ def run_test(tb):
 
 
 if __name__ == "__main__":
-    eT = EngTest()
-    logging.info("<- Module called")
-    tb = TestBed()
-    logging.info("<- Module ready")
-    run_simulation(tb, run_test(tb), vcd_name=eT.wave_file_name)
-    logging.info("<- Simulation done")
-    logging.info(str(eT))
+    raise UnderConstruction
