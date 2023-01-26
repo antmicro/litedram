@@ -68,19 +68,21 @@ class BusCSCAGeneric1(BusCSCACommand):
         self.cmd["cs_signalling"] = "normal"
         self.cmd["opcode"] = 0b11111
         self.cmd["payload"] = Payload(0x00, 0x00, 0x0)
-        self.cmd["randomize_payload"] = True
+        self.cmd["randomize_payload"] = False
         self.cmd["datarate"] = "DDR"
         self.cmd["ui"] = 1
+        self.cmd["is_padded"] = True
 
 class BusCSCAGeneric2(BusCSCACommand):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.cmd["cs_signalling"] = "normal"
-        self.cmd["opcode"] = 0b11111
+        self.cmd["opcode"] = 0b11101
         self.cmd["payload"] = Payload(0x00, 0x00, 0x0)
-        self.cmd["randomize_payload"] = True
+        self.cmd["randomize_payload"] = False
         self.cmd["datarate"] = "DDR"
         self.cmd["ui"] = 2
+        self.cmd["is_padded"] = True
 
 class BusCSCAMRR(BusCSCACommand):
     def __init__(self, **kwargs):

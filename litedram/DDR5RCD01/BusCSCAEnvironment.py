@@ -37,8 +37,10 @@ class BusCSCAEnvironment(Module):
             Range (i,i+i,...)
             Fixed
 
-        ["MRW_2_RCD_PATTERN_ITER", range=[23,46], payload="random|fixed|range"] # Perform MRWs from addr 23,46
-        ["MRW_2_RCD_PATTERN_RND", n=20 writes, payload="random|fixed|range"] # Perform MRWs at random addresses
+        # Perform MRWs from addr 23,46
+        ["MRW_2_RCD_PATTERN_ITER", range=[23,46], payload="random|fixed|range"]
+        # Perform MRWs at random addresses
+        ["MRW_2_RCD_PATTERN_RND", n=20 writes, payload="random|fixed|range"]
         ["MRW_2_RCD_SINGLE", dest_register=0x5E, dest_val=0xFF]
         ["MRW_2_DRAM_SINGLE", 3]
     """
@@ -66,8 +68,35 @@ class BusCSCAEnvironment(Module):
                 addr_begin=0x12,
                 pattern_len=4
             )
+        elif scenario_select == "simple_generic":
+            self.queue = self.simple_generic(
+                inactive_pre_len=5,
+                inactive_inter_len=1,
+                inactive_post_len=1,
+                pattern_len=4
+            )
         else:
             self.queue = []
+
+    def simple_generic(self,
+                       inactive_pre_len=5,
+                       inactive_inter_len=1,
+                       inactive_post_len=1,
+                       pattern_len=4
+                       ):
+        scenario = []
+        for i in range(inactive_pre_len):
+            scenario += [BusCSCAInactive().cmd]
+
+        for i in range(pattern_len):
+            scenario += self.generic_mix()
+            for j in range(inactive_inter_len):
+                scenario += [BusCSCAInactive().cmd]
+
+        for i in range(inactive_post_len):
+            scenario += [BusCSCAInactive().cmd]
+
+        return scenario
 
     def scenario_cw_wr_rd(self, inactive_pre_len=2, inactive_inter_len=2, inactive_post_len=2, pattern="consecutive", addr_begin=0, pattern_len=3):
         scenario = []
@@ -90,6 +119,15 @@ class BusCSCAEnvironment(Module):
             scenario += [BusCSCAInactive().cmd]
 
         return scenario
+
+    def generic_mix(self):
+        flow = []
+        flow += [
+            BusCSCAGeneric1().cmd,
+            BusCSCAGeneric2().cmd,
+            BusCSCAGeneric1().cmd,
+        ]
+        return flow
 
     def CW_read(self, rw_addr=0x00):
         """
