@@ -103,6 +103,118 @@ class DDR5DQSPattern(Module):
         ]
 
 
+class DDR5PHYAddress(Module):
+    def __init__(self, out, dfi, rdimm_mode, prefix):
+        # DDR5 CS/CA/PAR PATH ----------------------------------------------------------------------
+
+        nranks = len(getattr(dfi.phases[0], prefix).cs_n)
+        assert nranks > 0
+        nphases = len(dfi.phases)
+        assert nphases > 0 and (nphases & (nphases-1)) == 0
+
+        # DDR5 CS ----------------------------------------------------------------------------------
+        for rank in range(nranks):
+            carry_cs_n = Signal(reset=1)
+            self.sync += [
+                If(dfi.phases[-1].mode_2n,
+                    carry_cs_n.eq(getattr(dfi.phases[-1], prefix).cs_n[rank])
+                ).Else(
+                    carry_cs_n.eq(1)
+                )
+            ]
+
+            for j, phase in enumerate(dfi.phases):
+                self.comb += [
+                    If(~phase.mode_2n,
+                        getattr(out, prefix + 'cs_n')[rank][2*j].eq(
+                            getattr(phase, prefix).cs_n[rank] & (carry_cs_n if j == 0 else 1)
+                        ),
+                        getattr(out, prefix + 'cs_n')[rank][2*j+1].eq(
+                            getattr(phase, prefix).cs_n[rank]
+                        ),
+                    ).Else(
+                        getattr(out, prefix + 'cs_n')[rank][2*j].eq(
+                            carry_cs_n if j == 0 else getattr(dfi.phases[j-1], prefix).cs_n[rank]
+                        ),
+                        getattr(out, prefix + 'cs_n')[rank][2*j+1].eq(
+                            getattr(phase, prefix).cs_n[rank]
+                        ),
+                    ),
+                ]
+
+        # DDR5 PAR -------------------------------------------------------------------------------------
+        self.comb += getattr(out, prefix + 'par').eq(
+            Cat([reduce(xor, getattr(phase, prefix).address[7*i:7+7*i])] for phase in dfi.phases for i in range(2)))
+
+        # DDR5 CA --------------------------------------------------------------------------------------
+            # RDIMM 2N mode ----------------------------------------------------------------------------
+        mem   = Signal(max(3, nphases))
+
+        take_lower_bits   = Signal(nphases)
+        take_lower_bits_m = Signal(nphases)
+        take_lower_bits_1 = Signal(nphases)
+        take_lower_bits_2 = Signal(nphases)
+        for i in range(1, len(take_lower_bits)):
+            self.comb += take_lower_bits_1[i].eq(~reduce(and_, getattr(dfi.phases[i-1], prefix).cs_n))
+        for i in range(3, len(take_lower_bits)):
+            self.comb += take_lower_bits_2[i].eq(
+                ~reduce(and_, getattr(dfi.phases[i-3], prefix).cs_n) & ~getattr(dfi.phases[i-3], prefix).address[1]
+            )
+
+        self.comb += take_lower_bits_m.eq(Cat([phase.mode_2n for phase in dfi.phases]))
+        for i in range(0, 3, nphases):
+            for j in range(nphases):
+                if i+j >= 3:
+                    break
+                arr = []
+                if i+j+nphases < 3:
+                    arr.append(mem[i+j+nphases])
+                if i + j < 1:
+                    phase = getattr(dfi.phases[nphases-1+i+j], prefix)
+                    arr.append(~reduce(and_, phase.cs_n))
+                if 0 <= nphases-3 + i+j:
+                    phase = getattr(dfi.phases[nphases-3+i+j], prefix)
+                    arr.append(~reduce(and_, phase.cs_n) & ~phase.address[1])
+                self.sync += mem[i+j].eq(reduce(or_, arr))
+
+        for i in range(nphases):
+            self.comb += take_lower_bits[i].eq(
+                (take_lower_bits_1[i] | take_lower_bits_2[i] | mem[i]) & take_lower_bits_m[i]
+            )
+
+            # CA Slicer ----------------------------------------------------------------------------
+        for bit in range(7):
+            for j, phase in enumerate(dfi.phases):
+                sig = getattr(out, prefix+'ca')[bit][j*2:j*2+2]
+                ca = getattr(phase, prefix).address
+                self.comb += [
+                    If(rdimm_mode,
+                        If(phase.mode_2n,
+                            If(~take_lower_bits[j],
+                                sig.eq(Replicate(ca[bit], 2)),
+                            ).Else(
+                                sig.eq(Replicate(ca[bit + 7], 2)),
+                            )
+                        ).Else(
+                            sig.eq(Cat([ca[bit + 7*i] for i in range (2)])),
+                        ),
+                    ).Else(
+                        sig.eq(Cat([ca[bit] for _ in range (2)])),
+                    ),
+                ]
+
+        for bit in range(7, 14):
+            _ca = getattr(out, prefix+'ca')[bit]
+            for j, phase in enumerate(dfi.phases):
+                self.comb += [
+                    If(~rdimm_mode,
+                        _ca[j*2:j*2+2].eq(Replicate(getattr(phase, prefix).address[bit], 2)),
+                    ).Else(
+                        _ca[j*2:j*2+2].eq(Replicate(0, 2)),
+                    ),
+                ]
+
+
 class DDR5PHY(Module, AutoCSR):
     """Core of DDR5 PHYs.
 
@@ -149,6 +261,7 @@ class DDR5PHY(Module, AutoCSR):
                  with_clock_odelay=False, with_address_odelay=False,
                  with_idelay=False, with_per_dq_idelay=False, csr_cdc=None, csr_cdc_90=None,
                  rd_extra_delay=Latency(sys=0), address_lines=13,
+                 i_domain=None, i_doman_ratio=1, o_doamin=None, o_domain_ratio=1,
                  default_read_latency=0, default_write_latency=0):
 
         self.pads        = pads
@@ -379,71 +492,7 @@ class DDR5PHY(Module, AutoCSR):
         self.comb += [phase.alert_n.eq(self.out.alert_n[i*2] & self.out.alert_n[i*2+1]) for i, phase in enumerate(self.dfi.phases)]
 
         for prefix in prefixes:
-            # DDR5 Commands --------------------------------------------------------------------------
-
-            for rank in range(nranks):
-                carry_cs_n = Signal(reset=1)
-                self.sync += [
-                    If(dfi.phases[-1].mode_2n,
-                        carry_cs_n.eq(getattr(dfi.phases[-1], prefix).cs_n[rank])
-                    ).Else(
-                        carry_cs_n.eq(1)
-                    )
-                ]
-
-                for j, phase in enumerate(dfi.phases):
-                    self.comb += [
-                        If(~phase.mode_2n,
-                            getattr(self.out, prefix + 'cs_n')[rank][2*j].eq(
-                                getattr(phase, prefix).cs_n[rank] & (carry_cs_n if j == 0 else 1)
-                            ),
-                            getattr(self.out, prefix + 'cs_n')[rank][2*j+1].eq(
-                                getattr(phase, prefix).cs_n[rank]
-                            ),
-                        ).Else(
-                            getattr(self.out, prefix + 'cs_n')[rank][2*j].eq(
-                                carry_cs_n if j == 0 else getattr(dfi.phases[j-1], prefix).cs_n[rank]
-                            ),
-                            getattr(self.out, prefix + 'cs_n')[rank][2*j+1].eq(
-                                getattr(phase, prefix).cs_n[rank]
-                            ),
-                        ),
-                    ]
-
-            self.comb += getattr(self.out, prefix + 'par').eq(
-                Cat([reduce(xor, getattr(phase, prefix).address[7*i:7+7*i])] for phase in dfi.phases for i in range(2)))
-
-            stage_cnt = Signal()
-            self.sync += [
-                If(~reduce(and_, getattr(phase, prefix).cs_n),
-                    stage_cnt.eq(0),
-                ).Else(
-                    stage_cnt.eq(~stage_cnt),
-                )
-            ]
-
-            for bit in range(7):
-                for j, phase in enumerate(dfi.phases):
-                    self.comb += [
-                        If(self._rdimm_mode.storage,
-                            If(phase.mode_2n,
-                                If(~reduce(and_, getattr(phase, prefix).cs_n) | stage_cnt == 0,
-                                    getattr(self.out, prefix+'ca')[bit].eq(Replicate(getattr(phase, prefix).address[bit], 2))
-                                ).Else(
-                                    getattr(self.out, prefix+'ca')[bit].eq(Replicate(getattr(phase, prefix).address[bit + 7], 2))
-                                )
-                            ).Else(
-                                getattr(self.out, prefix+'ca')[bit].eq(
-                                    Cat([getattr(phase, prefix).address[bit + 7*i] for phase in dfi.phases for i in range (2)]))
-                            ),
-                        ).Else(
-                            getattr(self.out, prefix+'ca')[bit].eq(
-                                Cat([getattr(phase, prefix).address[bit] for phase in dfi.phases for _ in range (2)]))
-                        ),
-                    ]
-            for bit in range(7, 14):
-                self.comb += getattr(self.out, prefix+'ca')[bit].eq(
-                    Cat([getattr(phase, prefix).address[bit] for phase in dfi.phases for _ in range (2)]))
+            self.submodules += DDR5PHYAddress(self.out, dfi, self._rdimm_mode.storage, prefix)
 
             for strobe in range(strobes):
                 # Read Control Path ------------------------------------------------------------------------
