@@ -200,7 +200,6 @@ class TestBed(Module):
 def run_test(tb):
     logging.debug('Write test')
     yield from tb.driver.seq_cmds()
-    breakpoint()
     for i in range(10):
         yield
     logging.debug('Yield from write test.')

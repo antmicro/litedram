@@ -63,4 +63,4 @@ class EngTest():
         return description
 
 if __name__ == "__main__":
-    raise NotImplementedError("Test of this block is not provided.")
+    raise NotSupportedException

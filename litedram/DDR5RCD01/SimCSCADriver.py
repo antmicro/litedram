@@ -162,16 +162,6 @@ class SimCSCADriver(Module):
                 tmp = (yield seq_ca)
                 print(tmp)
                 print("seq_ca is a Signal")
-            # tmp2 = yield seq_ca
-            # yield tmp.eq(seq_ca)
-            # print((yield tmp))
-            # print(tmp2)
-            # print(seq_ca)
-            # print(type(seq_ca))
-            # print("-"*80)
-            # print(tmp)
-            # print(type(tmp))
-            # print("-"*80)
             yield from self.drive_cs_ca(seq_cs, seq_ca)
         for i in range(1):
             yield

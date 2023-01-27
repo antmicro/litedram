@@ -8,7 +8,7 @@
 from migen import *
 # LiteDRAM : RCD
 from litedram.DDR5RCD01.DDR5RCD01SidebandSimulationPads import DDR5RCD01SidebandSimulationPads
-
+from litedram.DDR5RCD01.RCD_utils import *
 
 class I2CSlave(Module):
     """ I2C Slave
@@ -24,4 +24,4 @@ class I2CSlave(Module):
 
 
 if __name__ == "__main__":
-    raise NotImplementedError("Test of this block is not provided.")
+    raise NotSupportedException

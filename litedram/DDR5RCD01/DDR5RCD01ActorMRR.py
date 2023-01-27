@@ -81,6 +81,7 @@ def run_test(tb):
 
 
 if __name__ == "__main__":
+    UnderConstruction
     eT = EngTest()
     logging.info("<- Module called")
     tb = TestBed()

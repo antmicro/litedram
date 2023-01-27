@@ -7,6 +7,7 @@
 from enum import Enum
 import enum
 from migen import *
+from litedram.DDR5RCD01.RCD_utils import *
 #
 TIE_LOW = 0
 TIE_HIGH = 1
@@ -372,4 +373,4 @@ class dimm_type(Enum):
     SODIMM = 5
 
 if __name__ == "__main__":
-    raise NotImplementedError("Test of this block is not provided.")
+    raise NotSupportedException

@@ -196,9 +196,9 @@ def behav_iter_addr(addr):
 
 
 if __name__ == "__main__":
+    raise UnderConstruction
     eT = EngTest()
     logging.info("<- Module called")
-    raise NotImplementedError("Test of this block is to be done.")
     tb = TestBed()
     logging.info("<- Module ready")
     run_simulation(tb, run_test(tb), vcd_name=eT.wave_file_name)

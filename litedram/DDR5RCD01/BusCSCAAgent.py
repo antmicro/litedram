@@ -240,6 +240,7 @@ class TestBed(Module):
 def run_test(tb):
     command_queue = [
         {
+            "cs_signalling" : "normal",
             "opcode": 0b00101,
             "payload": Payload(0x10, 0x20, 0x1),
             "randomize_payload": False,
@@ -250,6 +251,7 @@ def run_test(tb):
             "padding_len": 1
         },
         {
+            "cs_signalling" : "normal",
             "opcode": 0b00101,
             "payload": Payload(0x10, 0x20, 0x0),
             "randomize_payload": False,
@@ -260,6 +262,7 @@ def run_test(tb):
             "padding_len": 1
         },
         {
+            "cs_signalling" : "normal",
             "opcode": 0b11111,
             "payload": Payload(0x10, 0x20, 0x0),
             "randomize_payload": True,

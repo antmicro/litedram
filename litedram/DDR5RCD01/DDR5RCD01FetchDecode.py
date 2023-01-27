@@ -120,8 +120,8 @@ def behav_write_word(tb, d_dcs, d_dca, d_dpar):
 
 
 if __name__ == "__main__":
+    raise UnderConstruction
     eT = EngTest()
-    raise NotImplementedError("The test of this block is to be done.")
     logging.info("<- Module called")
     tb = TestBed()
     logging.info("<- Module ready")

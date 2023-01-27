@@ -52,5 +52,4 @@ class DDR5RCD01CoreEgressSimulationPads(SimulationPads):
 
 
 if __name__ == "__main__":
-    # raise NotImplementedError("Test of this block is not provided.")
     pe_sc = DDR5RCD01CoreEgressSimulationPads()
