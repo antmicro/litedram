@@ -24,6 +24,13 @@ from litedram.DDR5RCD01.BusCSCACommand import *
 Payload = namedtuple('payload', ['mra', 'op', 'cw'])
 
 
+@enum.unique
+class EnvironmentScenarios(enum.IntEnum):
+    NONE = 0
+    TEST_CW_WR_RD = 1
+    SIMPLE_GENERIC = 2
+
+
 class BusCSCAEnvironment(Module):
     """
         Scenarios:
@@ -53,13 +60,14 @@ class BusCSCAEnvironment(Module):
             if_ibuf_o=if_ibuf_o,
         )
         self.submodules.agent = xBusCSCAAgent
+        self.scenarios = []
 
-    def run_env(self, scenario_select="None"):
+    def run_env(self, scenario_select=EnvironmentScenarios.NONE):
         self.build_scenario(scenario_select=scenario_select)
         yield from self.agent.run_agent(self.queue)
 
-    def build_scenario(self, scenario_select="test_cw_wr_rd"):
-        if scenario_select == "test_cw_wr_rd":
+    def build_scenario(self, scenario_select=EnvironmentScenarios.TEST_CW_WR_RD):
+        if scenario_select == EnvironmentScenarios.TEST_CW_WR_RD:
             self.queue = self.scenario_cw_wr_rd(
                 inactive_pre_len=100,
                 inactive_inter_len=1,
@@ -68,7 +76,7 @@ class BusCSCAEnvironment(Module):
                 addr_begin=0x12,
                 pattern_len=4
             )
-        elif scenario_select == "simple_generic":
+        elif scenario_select == EnvironmentScenarios.SIMPLE_GENERIC:
             self.queue = self.simple_generic(
                 inactive_pre_len=5,
                 inactive_inter_len=1,
@@ -124,8 +132,13 @@ class BusCSCAEnvironment(Module):
         flow = []
         flow += [
             BusCSCAGeneric1().cmd,
+            BusCSCAGeneric1A().cmd,
+            BusCSCAGeneric1B().cmd,
+            BusCSCAGeneric1AB().cmd,
             BusCSCAGeneric2().cmd,
-            BusCSCAGeneric1().cmd,
+            BusCSCAGeneric2A().cmd,
+            BusCSCAGeneric2B().cmd,
+            BusCSCAGeneric2AB().cmd,
         ]
         return flow
 
@@ -154,7 +167,7 @@ class TestBed(Module):
 
 def run_test(tb):
     logging.debug('Write test')
-    scenario_select = "test_cw_wr_rd"
+    scenario_select = EnvironmentScenarios.TEST_CW_WR_RD
     yield from tb.dut.run_env(scenario_select=scenario_select)
     logging.debug('Yield from write test.')
 

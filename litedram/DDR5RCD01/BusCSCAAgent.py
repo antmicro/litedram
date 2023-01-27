@@ -69,10 +69,7 @@ class BusCSCAAgent(Module):
             self.seq_item_ca = []
             self.seq_item_cs = []
             self.setup_seq_item(seq_collection_item)
-            # logging.debug("Sequence CS= " + str(self.seq_item_cs))
-            # logging.debug("Sequence CA= " + str(self.seq_item_ca))
             self.seq_item = list(zip(self.seq_item_cs, self.seq_item_ca))
-            # logging.debug("Sequence ADDED = " + str(self.seq_item))
             self.sequence = self.sequence + self.seq_item
         logging.debug("Sequence TOTAL = " + str(self.sequence))
 
@@ -81,7 +78,6 @@ class BusCSCAAgent(Module):
         datarate : DDR|SDR1|SDR2
         ui : 1|2
         """
-        # breakpoint()
         self.setup_seq_cs(
             cs_signalling=seq_collection_item["cs_signalling"],
             datarate=seq_collection_item["datarate"],
@@ -150,7 +146,6 @@ class BusCSCAAgent(Module):
         self.seq_item_cs = cs
 
     def setup_seq_ca(self, datarate="DDR", ui=2, dest_rank="AB", opcode=0x00, payload=None, randomize_payload=False):
-        # breakpoint()
         if randomize_payload:
             mra = random.randint(0, 255)
             op = random.randint(0, 255)

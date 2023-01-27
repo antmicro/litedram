@@ -49,6 +49,7 @@ class BusCSCACommand():
         s += "-"*20
         return s
 
+
 class BusCSCAInactive(BusCSCACommand):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -62,16 +63,36 @@ class BusCSCAInactive(BusCSCACommand):
         self.cmd["is_padded"] = False
         self.cmd["padding_len"] = 1
 
+
 class BusCSCAGeneric1(BusCSCACommand):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.cmd["cs_signalling"] = "normal"
         self.cmd["opcode"] = 0b11111
         self.cmd["payload"] = Payload(0x00, 0x00, 0x0)
-        self.cmd["randomize_payload"] = False
+        self.cmd["randomize_payload"] = True
         self.cmd["datarate"] = "DDR"
         self.cmd["ui"] = 1
         self.cmd["is_padded"] = True
+
+
+class BusCSCAGeneric1A(BusCSCAGeneric1):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.cmd["destination_rank"] = "A"
+
+
+class BusCSCAGeneric1B(BusCSCAGeneric1):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.cmd["destination_rank"] = "B"
+
+
+class BusCSCAGeneric1AB(BusCSCAGeneric1):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.cmd["destination_rank"] = "AB"
+
 
 class BusCSCAGeneric2(BusCSCACommand):
     def __init__(self, **kwargs):
@@ -79,10 +100,29 @@ class BusCSCAGeneric2(BusCSCACommand):
         self.cmd["cs_signalling"] = "normal"
         self.cmd["opcode"] = 0b11101
         self.cmd["payload"] = Payload(0x00, 0x00, 0x0)
-        self.cmd["randomize_payload"] = False
+        self.cmd["randomize_payload"] = True
         self.cmd["datarate"] = "DDR"
         self.cmd["ui"] = 2
         self.cmd["is_padded"] = True
+
+
+class BusCSCAGeneric2A(BusCSCAGeneric2):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.cmd["destination_rank"] = "A"
+
+
+class BusCSCAGeneric2B(BusCSCAGeneric2):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.cmd["destination_rank"] = "B"
+
+
+class BusCSCAGeneric2AB(BusCSCAGeneric2):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.cmd["destination_rank"] = "AB"
+
 
 class BusCSCAMRR(BusCSCACommand):
     def __init__(self, **kwargs):
@@ -129,7 +169,7 @@ if __name__ == "__main__":
         padding_len=padding_len,
     )
     print(str(modified_cmd))
-    
+
     # Example inactive
     inactive_cmd = BusCSCAInactive()
     print(str(inactive_cmd))
@@ -139,6 +179,6 @@ if __name__ == "__main__":
     print(str(mrr_cmd))
 
     # MRW
-    mrw_cmd = BusCSCAMRW(payload=Payload(mra=0x12,op=0x34,cw=1))
+    mrw_cmd = BusCSCAMRW(payload=Payload(mra=0x12, op=0x34, cw=1))
     # mrw_cmd = BusCSCAMRW()
     print(str(mrw_cmd))
