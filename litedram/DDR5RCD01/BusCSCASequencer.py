@@ -32,7 +32,7 @@ class BusCSCASequencer(Module):
     """
 
     def __init__(self, if_ibuf_o, dcs_n_w=2, dca_w=7):
-
+        self.is_sim_finished = [False]
         xBusCSCADriver = BusCSCADriver(
             if_ibuf_o=if_ibuf_o
         )
@@ -44,6 +44,15 @@ class BusCSCASequencer(Module):
             cs = item[0]
             ca = item[1]
             yield from self.xBusCSCADriver.drive_cs_ca(cs, ca)
+        """
+            Extra ESTIMATE_RCD_LATENCY cycles are simulated to make sure
+            that all commands propagated through the RCD Core. The value
+            is an estimate and may be subject to change
+        """
+        ESTIMATE_RCD_LATENCY=16
+        for _ in range(ESTIMATE_RCD_LATENCY):
+            yield
+        self.is_sim_finished[0] = True
         
 
 

@@ -123,6 +123,7 @@ class If_obuf(Record):
             ('qbca_b', qca_w, False),
 
             # Clock outputs
+            # TODO comments are out of date!
             # Rank 0, Row A
             ('qack_t', 1, False),
             ('qack_c', 1, False),

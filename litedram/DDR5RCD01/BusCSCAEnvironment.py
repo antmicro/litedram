@@ -78,8 +78,8 @@ class BusCSCAEnvironment(Module):
             )
         elif scenario_select == EnvironmentScenarios.SIMPLE_GENERIC:
             self.queue = self.simple_generic(
-                inactive_pre_len=5,
-                inactive_inter_len=1,
+                inactive_pre_len=100,
+                inactive_inter_len=4,
                 inactive_post_len=1,
                 pattern_len=4
             )

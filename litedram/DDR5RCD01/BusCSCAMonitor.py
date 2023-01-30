@@ -19,121 +19,9 @@ from litedram.DDR5RCD01.RCD_utils import *
 #
 from litedram.DDR5RCD01.BusCSCAEnvironment import BusCSCAEnvironment
 from litedram.DDR5RCD01.BusCSCAEnvironment import EnvironmentScenarios
-
-
-@enum.unique
-class MonitorCmdTypes(enum.IntEnum):
-    INACTIVE = 0x1
-    SINGLE_UI = 0x2
-    DOUBLE_UI = 0x3
-    FOLLOW_UP = 0xF
-
-
-class MonitorQueue:
-    def __init__(self):
-        self.q = []
-        self.q_filter_inactive = []
-
-    def set_statistics(self):
-        self.pattern_num = len(self.q)
-        self.received_cmds = len(self.q_filter_inactive)
-
-    def filter_inactive(self):
-        filter_ids = []
-        for q_id, q_item in enumerate(self.q):
-            for cmd_item in q_item:
-                if cmd_item.cmd[0].cmd_type == MonitorCmdTypes.INACTIVE:
-                    is_filtered = True
-                else:
-                    is_filtered = False
-            if not is_filtered:
-                self.q_filter_inactive.append(q_item)
-        self.set_statistics()
-
-    def __eq__(self, other):
-        pass
-
-    def __str__(self, is_filtered=False):
-        if is_filtered:
-            q = self.q_filter_inactive
-        else:
-            q = self.q
-
-        s = ""
-
-        for q_id, q_item in enumerate(q):
-            s += f" --- Q[{q_id}]\r\n"
-            for cmd_item in q_item:
-                for id, cmd in enumerate(cmd_item.cmd):
-                    s += f"UI[{id}]: "
-                    s += str(cmd)
-                    s += "\r\n"
-        s += "Monitor statistics\r\n"
-        s += "------------------\r\n"
-        s += f"Received [{self.received_cmds}] commands in [{self.pattern_num}] patterns\r\n"
-        return s
-
-
-class MonitorCmd:
-    def __init__(self, monitor_ctrl_list):
-        self.cmd = monitor_ctrl_list
-
-    def __eq__(self, other):
-        pass
-
-
-@dataclass
-class MonitorCtrl:
-    """
-    Track monitor signals
-    """
-    is_active: int
-    is_follow_up: int
-    cmd_len: int
-    cmd_type: int
-    dcs_n: int
-    dca: int
-    dpar: int
-
-    def __init__(self, tuple):
-        attrs = ["is_active", "is_follow_up", "cmd_len",
-                 "cmd_type", "dcs_n", "dca", "dpar"]
-        for id, attr in enumerate(attrs):
-            setattr(self, attr, tuple[id])
-
-    def __str__(self, debug=False):
-        if debug:
-            s = ""
-            if self.is_active:
-                s += "is_active = " + str(self.is_active) + " "
-                s += "cmd_len = " + str(self.cmd_len) + " "
-                if self.is_follow_up:
-                    s += "follow_up_UI"
-                if self.cmd_type != MonitorCmdTypes.FOLLOW_UP:
-                    if self.cmd_type == MonitorCmdTypes.INACTIVE:
-                        s += "cmd_type = " + "INACTIVE" + " "
-                    elif self.cmd_type == MonitorCmdTypes.SINGLE_UI:
-                        s += "cmd_type = " + "1 UI CMD" + " "
-                    elif self.cmd_type == MonitorCmdTypes.DOUBLE_UI:
-                        s += "cmd_type = " + "2 UI CMD" + " "
-                    s += "dcs_n = " + str(self.dcs_n) + " "
-                    s += "dca = " + str(self.dca) + " "
-                    s += "dpar = " + str(self.dpar) + " "
-            else:
-                s += "inactive"
-        else:
-            s = ""
-            if self.is_active:
-                # if self.is_follow_up:
-                #     s += "NUI"
-                # else:
-                #     s += "1UI"
-                s += "dcs_n = " + str(self.dcs_n) + " "
-                s += "dca = " + str(self.dca) + " "
-                s += "dpar = " + str(self.dpar) + " "
-            else:
-                s += "inactive"
-        return s
+from litedram.DDR5RCD01.BusCSCAScoreboard import BusCSCAScoreboard
+from litedram.DDR5RCD01.monitor_definitions import *
+from litedram.DDR5RCD01.unittests.CRG import CRG
 
 
 class BusCSCAMonitor(Module):
@@ -191,20 +79,41 @@ class BusCSCAMonitor(Module):
 
     def __init__(self,
                  if_ibuf_i,
-                 dcs_n_w=2,
-                 dca_w=7,
-                 monit_arr_d=128):
+                 is_sim_finished,
+                 monitor_arr_d=128):
+        self.xarr_post_sim = []
+        self.is_sim_finished = is_sim_finished
+        self.monitor_q = MonitorQueue(q=[])
 
-        dcs_n = Signal(dcs_n_w)
-        dca = Signal(dca_w)
-        dpar = Signal()
-        dpar_w = len(dpar)
+        if isinstance(if_ibuf_i, If_ibuf):
+            self.is_type = MonitorType.DDR
 
-        self.comb += dcs_n.eq(if_ibuf_i.dcs_n)
-        self.comb += dca.eq(if_ibuf_i.dca)
-        self.comb += dpar.eq(if_ibuf_i.dpar)
+            dcs_n_w = len(if_ibuf_i.dcs_n)
+            dcs_n = Signal(dcs_n_w)
 
-        CSCABus_w = dcs_n_w + dca_w + dpar_w
+            dca_w = len(if_ibuf_i.dca)
+            dca = Signal(dca_w)
+
+            dpar = Signal()
+            dpar_w = len(dpar)
+
+            self.comb += dcs_n.eq(if_ibuf_i.dcs_n)
+            self.comb += dca.eq(if_ibuf_i.dca)
+            self.comb += dpar.eq(if_ibuf_i.dpar)
+        elif isinstance(if_ibuf_i, If_bus_csca_o):
+            self.is_type = MonitorType.ONE_N
+
+            dcs_n_w = len(if_ibuf_i.qcs_n)
+            dcs_n = Signal(dcs_n_w)
+
+            dca_w = len(if_ibuf_i.qca)
+            dca = Signal(dca_w)
+
+            self.comb += dcs_n.eq(if_ibuf_i.qcs_n)
+            self.comb += dca.eq(if_ibuf_i.qca)
+        else:
+            raise TypeError(
+                "Monitor received an interface, which is not supported. Expected=[If_ibuf, if_bus_csca_o]")
 
         """
             Create the Array
@@ -229,8 +138,9 @@ class BusCSCAMonitor(Module):
         del_dca = Signal(dca_w, reset=0)
         self.sync += del_dca.eq(dca)
 
-        del_dpar = Signal(reset=0)
-        self.sync += del_dpar.eq(dpar)
+        if self.is_type == MonitorType.DDR:
+            del_dpar = Signal(reset=0)
+            self.sync += del_dpar.eq(dpar)
 
         det_edge = Signal(2)
         self.comb += det_edge.eq(dcs_n ^ del_dcs_n)
@@ -246,14 +156,21 @@ class BusCSCAMonitor(Module):
         is_1_ui_command = Signal()
         self.comb += is_1_ui_command.eq(dca[1])
 
+        if self.is_type == MonitorType.DDR:
+            set_ui_counter_1ui = 2
+            set_ui_counter_2ui = 4
+        elif self.is_type == MonitorType.ONE_N:
+            set_ui_counter_1ui = 2
+            set_ui_counter_2ui = 4
+
         ui_counter = Signal(8)
         self.sync += If(
             det_negedge,
             If(
                 is_1_ui_command,
-                ui_counter.eq(2)
+                ui_counter.eq(set_ui_counter_1ui)
             ).Else(
-                ui_counter.eq(4)
+                ui_counter.eq(set_ui_counter_2ui)
             )
         ).Else(
             If(
@@ -302,19 +219,27 @@ class BusCSCAMonitor(Module):
             Assemble the signals and write to Array
         """
 
-        self.xarr_is_active = Array(Signal() for _ in range(monit_arr_d))
-        self.xarr_is_follow_up = Array(Signal() for _ in range(monit_arr_d))
-        self.xarr_cmd_len = Array(Signal(16) for _ in range(monit_arr_d))
-        self.xarr_cmd_type = Array(Signal(4) for _ in range(monit_arr_d))
-        self.xarr_dcs_n = Array(Signal(dcs_n_w) for _ in range(monit_arr_d))
-        self.xarr_dca = Array(Signal(dca_w) for _ in range(monit_arr_d))
-        self.xarr_dpar = Array(Signal() for _ in range(monit_arr_d))
+        self.xarr_is_active = Array(Signal() for _ in range(monitor_arr_d))
+        self.xarr_is_follow_up = Array(Signal() for _ in range(monitor_arr_d))
+        self.xarr_cmd_len = Array(Signal(16) for _ in range(monitor_arr_d))
+        self.xarr_cmd_type = Array(Signal(4) for _ in range(monitor_arr_d))
+        self.xarr_dcs_n = Array(Signal(dcs_n_w) for _ in range(monitor_arr_d))
+        self.xarr_dca = Array(Signal(dca_w) for _ in range(monitor_arr_d))
+        if self.is_type == MonitorType.DDR:
+            self.xarr_dpar = Array(Signal() for _ in range(monitor_arr_d))
 
         xarr_we = Signal()
 
-        self.comb += xarr_we.eq(
-            counter_save | cmd_active
-        )
+        if self.is_type == MonitorType.DDR:
+            self.comb += xarr_we.eq(
+                counter_save | cmd_active
+            )
+        elif self.is_type == MonitorType.ONE_N:
+            self.comb += xarr_we.eq(
+                counter_save |
+                (cmd_active & (ui_counter == 4)) |
+                (cmd_active & (ui_counter == 2))
+            )
 
         cmd_len = Signal(16)
         self.comb += If(
@@ -335,29 +260,39 @@ class BusCSCAMonitor(Module):
             det_negedge,
             If(
                 is_1_ui_command,
-                cmd_type.eq(MonitorCmdTypes.SINGLE_UI)
+                cmd_type.eq(MonitorCommandType.SINGLE_UI)
             ).Else(
-                cmd_type.eq(MonitorCmdTypes.DOUBLE_UI)
+                cmd_type.eq(MonitorCommandType.DOUBLE_UI)
             )
         ).Else(
             If(
                 cmd_active,
-                cmd_type.eq(MonitorCmdTypes.FOLLOW_UP)
+                cmd_type.eq(MonitorCommandType.FOLLOW_UP)
             ).Else(
-                cmd_type.eq(MonitorCmdTypes.INACTIVE)
+                cmd_type.eq(MonitorCommandType.INACTIVE)
             )
         )
-
-        self.sync += If(
-            xarr_we,
-            self.xarr_is_active[xarr_ptr].eq(cmd_active),
-            self.xarr_is_follow_up[xarr_ptr].eq(is_follow_up),
-            self.xarr_cmd_len[xarr_ptr].eq(cmd_len),
-            self.xarr_cmd_type[xarr_ptr].eq(cmd_type),
-            self.xarr_dcs_n[xarr_ptr].eq(del_dcs_n),
-            self.xarr_dca[xarr_ptr].eq(del_dca),
-            self.xarr_dpar[xarr_ptr].eq(del_dpar),
-        )
+        if self.is_type == MonitorType.DDR:
+            self.sync += If(
+                xarr_we,
+                self.xarr_is_active[xarr_ptr].eq(cmd_active),
+                self.xarr_is_follow_up[xarr_ptr].eq(is_follow_up),
+                self.xarr_cmd_len[xarr_ptr].eq(cmd_len),
+                self.xarr_cmd_type[xarr_ptr].eq(cmd_type),
+                self.xarr_dcs_n[xarr_ptr].eq(del_dcs_n),
+                self.xarr_dca[xarr_ptr].eq(del_dca),
+                self.xarr_dpar[xarr_ptr].eq(del_dpar),
+            )
+        elif self.is_type == MonitorType.ONE_N:
+            self.sync += If(
+                xarr_we,
+                self.xarr_is_active[xarr_ptr].eq(cmd_active),
+                self.xarr_is_follow_up[xarr_ptr].eq(is_follow_up),
+                self.xarr_cmd_len[xarr_ptr].eq(cmd_len),
+                self.xarr_cmd_type[xarr_ptr].eq(cmd_type),
+                self.xarr_dcs_n[xarr_ptr].eq(del_dcs_n),
+                self.xarr_dca[xarr_ptr].eq(del_dca),
+            )
 
         self.sync += If(
             xarr_we,
@@ -366,78 +301,132 @@ class BusCSCAMonitor(Module):
 
         self.xarr_overflow = Signal()
         self.comb += If(
-            xarr_ptr >= monit_arr_d,
+            xarr_ptr >= monitor_arr_d,
             self.xarr_overflow.eq(1)
         )
 
+    def monitor(self):
+        while not self.is_sim_finished[0]:
+            xarr_is_active = yield self.xarr_is_active
+            xarr_is_follow_up = yield self.xarr_is_follow_up
+            xarr_cmd_len = yield self.xarr_cmd_len
+            xarr_cmd_type = yield self.xarr_cmd_type
+            xarr_dcs_n = yield self.xarr_dcs_n
+            xarr_dca = yield self.xarr_dca
+            yield
+        if self.is_type == MonitorType.DDR:
+            xarr_dpar = yield self.xarr_dpar
+            self.xarr_post_sim = list(zip(xarr_is_active, xarr_is_follow_up, xarr_cmd_len,
+                                          xarr_cmd_type, xarr_dcs_n, xarr_dca, xarr_dpar))
+        elif self.is_type == MonitorType.ONE_N:
+            self.xarr_post_sim = list(zip(xarr_is_active, xarr_is_follow_up, xarr_cmd_len,
+                                          xarr_cmd_type, xarr_dcs_n, xarr_dca))
+
     def post_process(self):
-        xarr_is_active = yield self.xarr_is_active
-        xarr_is_follow_up = yield self.xarr_is_follow_up
-        xarr_cmd_len = yield self.xarr_cmd_len
-        xarr_cmd_type = yield self.xarr_cmd_type
-        xarr_dcs_n = yield self.xarr_dcs_n
-        xarr_dca = yield self.xarr_dca
-        xarr_dpar = yield self.xarr_dpar
-
-        xarr_post_sim = list(zip(xarr_is_active, xarr_is_follow_up, xarr_cmd_len,
-                                 xarr_cmd_type, xarr_dcs_n, xarr_dca, xarr_dpar))
-
         xarr_monitor_ctrls = []
-        for id, item in enumerate(xarr_post_sim):
-            xarr_monitor_ctrls.append(MonitorCtrl(item))
-
+        for id, item in enumerate(self.xarr_post_sim):
+            xarr_monitor_ctrls.append(MonitorUI(item, is_type=self.is_type))
+        # breakpoint()
         self.squash_follow_ups(xarr=xarr_monitor_ctrls)
-        self.monit_q.filter_inactive()
+        # breakpoint()
+        self.monitor_q.filter_inactive()
 
     def squash_follow_ups(self, xarr):
-        self.monit_q = MonitorQueue()
         bus_cs_ca_cmd = []
         for id, item in enumerate(xarr):
-            if item.cmd_type == MonitorCmdTypes.SINGLE_UI:
-                """ Expect that the next entry is a follow-up"""
-                if xarr[id+1].cmd_type == MonitorCmdTypes.FOLLOW_UP:
-                    bus_cs_ca_cmd.append(MonitorCmd(
-                        [xarr[id+_] for _ in range(2)]))
+            if item.cmd_type == MonitorCommandType.SINGLE_UI:
+                if self.is_type == MonitorType.DDR:
+                    """ Expect that the next entry is a follow-up"""
+                    if xarr[id+1].cmd_type == MonitorCommandType.FOLLOW_UP:
+                        bus_cs_ca_cmd.append(MonitorCommand(
+                            [xarr[id+_] for _ in range(2)]))
+                elif self.is_type == MonitorType.ONE_N:
+                    # """ Expect that the _+2 is a follow-up"""
+                    # if xarr[id+1].cmd_type == MonitorCommandType.FOLLOW_UP:
+                    bus_cs_ca_cmd.append(
+                        MonitorCommand([xarr[id+_] for _ in [0]])
+                    )
+                    # pass
 
-            if item.cmd_type == MonitorCmdTypes.DOUBLE_UI:
-                """ Expect that the next 3 entries are follow-ups"""
-                follow_up_ids = [1, 2, 3]
-                follow_ups_types = [xarr[id+m].cmd_type for m in follow_up_ids]
-                are_follow_ups = [(MonitorCmdTypes.FOLLOW_UP == follow_up_type)
-                                  for follow_up_type in follow_ups_types]
-                if all(are_follow_ups):
-                    bus_cs_ca_cmd.append(MonitorCmd(
-                        [xarr[id+_] for _ in range(4)]))
+            if item.cmd_type == MonitorCommandType.DOUBLE_UI:
+                if self.is_type == MonitorType.DDR:
+                    """ Expect that the next 3 entries are follow-ups"""
+                    follow_up_ids = [1, 2, 3]
+                    follow_ups_types = [
+                        xarr[id+m].cmd_type for m in follow_up_ids]
+                    are_follow_ups = [(MonitorCommandType.FOLLOW_UP == follow_up_type)
+                                      for follow_up_type in follow_ups_types]
+                    if all(are_follow_ups):
+                        bus_cs_ca_cmd.append(MonitorCommand(
+                            [xarr[id+_] for _ in range(4)]))
+                elif self.is_type == MonitorType.ONE_N:
+                    """ Expect that the _+1 entry is a follow-up"""
+                    follow_up_ids = [1]
+                    follow_ups_types = [
+                        xarr[id+m].cmd_type for m in follow_up_ids]
+                    are_follow_ups = [(MonitorCommandType.FOLLOW_UP == follow_up_type)
+                                      for follow_up_type in follow_ups_types]
+                    if all(are_follow_ups):
+                        bus_cs_ca_cmd.append(MonitorCommand(
+                            [xarr[id+_] for _ in [0, 1]]))
 
-                    pass
+                        pass
 
-            if item.cmd_type == MonitorCmdTypes.INACTIVE:
-                bus_cs_ca_cmd.append(MonitorCmd([xarr[id]]))
+            if item.cmd_type == MonitorCommandType.INACTIVE:
+                bus_cs_ca_cmd.append(MonitorCommand([xarr[id]]))
 
             if bus_cs_ca_cmd != []:
-                self.monit_q.q.append(bus_cs_ca_cmd)
+                self.monitor_q.q.append(bus_cs_ca_cmd[0])
 
             bus_cs_ca_cmd = []
 
 
 class TestBed(Module):
     def __init__(self):
+        RESET_TIME = 1
+        self.generators = {}
+        self.clocks = {
+            "sys":      (128, 63),
+            "sys_rst":  (128, 63+4),
+        }
+        self.submodules.xcrg = CRG(
+            clocks=self.clocks,
+            reset_cnt=RESET_TIME
+        )
         if_ibuf = If_ibuf()
+
         self.submodules.env = BusCSCAEnvironment(
             if_ibuf_o=if_ibuf,
         )
         self.submodules.monitor = BusCSCAMonitor(
-            if_ibuf_i=if_ibuf
+            if_ibuf_i=if_ibuf,
+            is_sim_finished=self.env.agent.sequencer.is_sim_finished
         )
 
+        self.add_generators(
+            self.generators_dict()
+        )
 
-def run_test(tb):
-    logging.debug('Write test')
-    scenario_select = EnvironmentScenarios.SIMPLE_GENERIC
-    yield from tb.env.run_env(scenario_select=scenario_select)
-    yield from tb.monitor.post_process()
-    logging.debug(str(tb.monitor.monit_q))
-    logging.debug('Yield from write test.')
+    def generators_dict(self):
+        return {
+            "sys":
+            [
+                self.env.run_env(
+                    scenario_select=EnvironmentScenarios.SIMPLE_GENERIC),
+                self.monitor.monitor(),
+            ]
+        }
+
+    def add_generators(self, generators):
+        for key, value in generators.items():
+            if key not in self.generators:
+                self.generators[key] = list()
+            if not isinstance(value, list):
+                value = list(value)
+            self.generators[key].extend(value)
+
+    def run_test(self):
+        return self.generators
 
 
 if __name__ == "__main__":
@@ -445,6 +434,19 @@ if __name__ == "__main__":
     logging.info("<- Module called")
     tb = TestBed()
     logging.info("<- Module ready")
-    run_simulation(tb, run_test(tb), vcd_name=eT.wave_file_name)
+    run_simulation(
+        tb,
+        generators=tb.run_test(),
+        clocks=tb.clocks,
+        vcd_name=eT.wave_file_name
+    )
     logging.info("<- Simulation done")
+    tb.monitor.post_process()
+    logging.debug(str(tb.monitor.monitor_q))
+
+    xscoreboard = BusCSCAScoreboard(
+        q1=tb.monitor.monitor_q,
+        q2=tb.monitor.monitor_q
+    )
+    # breakpoint()
     logging.info(str(eT))

@@ -28,7 +28,7 @@ class DDR5RCD01OutputBuffer_CSCA(Module):
     # Driver strength is not on implementation list, also: slew rate control
     """
 
-    def __init__(self, if_i_csca, if_o_csca, if_ctrl, sig_disable_level=1):
+    def __init__(self, if_i_csca, if_o_csca, if_ctrl, sig_disable_level=~0):
         # Single Row CS Bus
         xoutbuf_qcs_n = DDR5RCD01OutBuf(
             d=if_i_csca.qcs_n,

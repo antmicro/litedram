@@ -48,6 +48,8 @@ class BusCSCADriver(Module):
         yield from self.drive_cs_ca(~0, 0)
 
     def drive_cs_ca(self, cs, ca):
+        while (yield ResetSignal("sys")):
+            yield
         yield self.dcs_n.eq(cs)
         yield self.dca.eq(ca)
         yield

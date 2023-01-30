@@ -40,6 +40,7 @@ class EngTest():
         file_name = (full_file_name.split('/')[-1]).split('.')[0]
         log_file_name = dir_name + '/' + file_name+".log"
         wave_file_name = dir_name + '/' + file_name+".vcd"
+        # logger = logging.getLogger('root')
         log_level = level
         # log_level = logging.INFO
         log_handlers = [logging.FileHandler(
