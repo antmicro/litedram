@@ -926,15 +926,6 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
             cmds.append(("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
             return cmds
 
-        def cmd_dqs_odt():
-            op = ((mr[33]&0x38)>>3) | (0b01010<<3)
-            cmds = []
-            cmds.append(("Set DQS_RTT_PARK", prefixes, 0, 0xf|(op<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1)),
-            cmds.append(("Set DQS_RTT_PARK", prefixes, all_cs, 0xf|(op<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2)),
-            cmds.append(("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1)),
-            cmds.append(("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
-            return cmds
-
     else:
         def cmd_ck_odt():
             return []
@@ -942,8 +933,15 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
             return []
         def cmd_ca_odt():
             return []
-        def cmd_dqs_odt():
-            return []
+
+    def cmd_dqs_odt():
+        op = ((mr[33]&0x38)>>3) | (0b01010<<3)
+        cmds = []
+        cmds.append(("Set DQS_RTT_PARK", prefixes, 0, 0xf|(op<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1)),
+        cmds.append(("Set DQS_RTT_PARK", prefixes, all_cs, 0xf|(op<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2)),
+        cmds.append(("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1)),
+        cmds.append(("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
+        return cmds
 
     def cmd_load_vref_odt():
         op = 0x1f
