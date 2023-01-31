@@ -113,6 +113,82 @@ class DDR5Sim(Module, AutoCSR):
 
 # Commands -----------------------------------------------------------------------------------------
 
+class CommandDecoder(Module):
+    def __init__(self, enable_decode, mode_2n, pads, prefix, log):
+
+        self.cs_n_low   = Signal(14)
+        self.cs_n_high  = Signal(14)
+        self.handle_1_tick_cmd  = Signal()
+        self.handle_2_tick_cmd  = Signal()
+        self.handle       = Signal()
+        self.handled      = Signal()
+        self.handling_2UI = Signal()
+
+        # CS_n/CA shift registers
+        ca_pads = Signal.like(getattr(pads, prefix+'ca'))
+        cs_pads = Signal.like(getattr(pads, prefix+'cs_n'))
+        self.comb += [
+            ca_pads.eq(getattr(pads, prefix+'ca')),
+            cs_pads.eq(getattr(pads, prefix+'cs_n')),
+        ]
+        self.cs_n = cs_n = TappedDelayLine(cs_pads, ntaps=3)
+        self.ca   = ca   = TappedDelayLine(ca_pads, ntaps=3)
+        self.submodules += cs_n, ca
+        self.mode_2n = mode_2n
+
+        self.sync += [
+            If(enable_decode,
+                If(~self.handling_2UI & ~(ca_pads[1]) & ~cs_pads,
+                    self.handling_2UI.eq(1),
+                ).Elif(self.handling_2UI,
+                    If(mode_2n,
+                        self.handling_2UI.eq(cs_n.taps[2]),
+                    ).Else(
+                        self.handling_2UI.eq(cs_n.taps[1]),
+                    )
+                ),
+            ),
+        ]
+
+        self.comb += [
+            If(enable_decode,
+                self.decode_1UI_cmd(),
+                self.decode_2UI_cmd(),
+            ),
+            If(self.handle_2_tick_cmd & ~self.handled,
+                log.error(prefix+"Unexpected command: cs_n_low=0b%14b cs_n_high=0b%14b", self.cs_n_low, self.cs_n_high),
+            ),
+            If(self.handle_1_tick_cmd & ~self.handled,
+                log.error(prefix+"Unexpected command: cs_n_low=0b%14b", self.cs_n_low),
+            ),
+        ]
+
+    def decode_1UI_cmd(self):
+        ca = self.ca
+        return \
+            If((self.cs_n.taps[0] == 0b0) & self.ca.taps[0][1] & ~self.handling_2UI,
+                self.handle_1_tick_cmd.eq(1),
+                self.cs_n_low.eq(ca.taps[0]),
+            )
+
+    def decode_2UI_cmd(self):
+        ca = self.ca
+        return \
+            If(self.mode_2n,
+                If((Cat(self.cs_n.taps[0], self.cs_n.taps[2]) == 0b01) & ~self.ca.taps[2][1],
+                    self.handle_2_tick_cmd.eq(1),
+                    self.cs_n_low.eq(ca.taps[2]),
+                    self.cs_n_high.eq(ca.taps[0]),
+                ),
+            ).Else(
+                If((Cat(self.cs_n.taps[0], self.cs_n.taps[1]) == 0b01) & ~self.ca.taps[1][1],
+                    self.handle_2_tick_cmd.eq(1),
+                    self.cs_n_low.eq(ca.taps[1]),
+                    self.cs_n_high.eq(ca.taps[0]),
+                ),
+            )
+
+
 class CommandsSim(Module, AutoCSR):
     """Command simulation
 
@@ -175,18 +251,14 @@ class CommandsSim(Module, AutoCSR):
         # Read preamble training
         self.read_pre_training = read_pre_training = Signal()
 
-        self.cs_n_low   = Signal(14)
-        self.cs_n_high  = Signal(14)
-        self.handle_1_tick_cmd  = Signal()
-        self.handle_2_tick_cmd  = Signal()
-        self.handled_1_tick_cmd = Signal()
         self.mr13_set   = Signal()
         self.mpc_op     = Signal(8)
         self.bl_max     = bl_max
-        self.cs_training_start  = Signal()
-        self.cs_training_end    = Signal()
-        self.ca_training_start  = Signal()
-        self.ca_training_in_prg = Signal()
+        self.cs_training_start       = Signal()
+        self.cs_training_end         = Signal()
+        self.ca_training_start       = Signal()
+        self.ca_training_start_delay = Signal()
+        self.ca_training_in_prg      = Signal()
 
         self.wica_offset = randrange(-1, 5)
 
@@ -202,6 +274,10 @@ class CommandsSim(Module, AutoCSR):
         self.shadowTCA = Signal(3)
 
         cmds_enabled = Signal()
+        decoder_enable = Signal()
+
+        self.submodules.decode = CommandDecoder(decoder_enable, ~self.mode_regs[2][2], pads, prefix, log)
+
         cmd_handlers = OrderedDict(
             MRW  = self.mrw_handler(prefix),
             MRR  = self.mrr_handler(prefix),
@@ -215,40 +291,8 @@ class CommandsSim(Module, AutoCSR):
             NOP  = self.nop_handler(prefix),
         )
 
-        self.comb += [
-            If(cmds_enabled,
-                If(~self.mode_regs[2][2],
-                    If(Cat(cs_n.taps) == 0b011 | (Cat(cs_n.taps) == 0b001),
-                        self.handle_2_tick_cmd.eq(1 & ~self.ca_training_in_prg),
-                        self.cs_n_low.eq(ca.taps[2]),
-                        self.cs_n_high.eq(ca.taps[0]),
-                    ).Elif((Cat(cs_n.taps) == 0b010) | (Cat(cs_n.taps) == 0b000),
-                        self.handle_1_tick_cmd.eq(1 & ~self.ca_training_in_prg),
-                        self.cs_n_low.eq(ca.taps[2]),
-                    ),
-                ).Elif(Cat(cs_n.taps)[0:2] == 0b00,
-                    self.handle_1_tick_cmd.eq(1 & ~self.ca_training_in_prg),
-                    self.cs_n_low.eq(ca.taps[1]),
-                ).Elif(Cat(cs_n.taps)[0:2] == 0b01,
-                    self.handle_2_tick_cmd.eq(1),
-                    self.cs_n_low.eq(ca.taps[1 & ~self.ca_training_in_prg]),
-                    self.cs_n_high.eq(ca.taps[0]),
-                )
-            ),
-            read_pre_training.eq(self.mode_regs[2][0]),
-            If(self.handle_2_tick_cmd & ~reduce(or_, cmd_handlers.values()),
-                self.log.error(prefix+"Unexpected command: cs_n_low=0b%14b cs_n_high=0b%14b", self.cs_n_low, self.cs_n_high),
-            ),
-            If(self.handle_1_tick_cmd & ~reduce(or_, cmd_handlers.values()),
-                self.log.error(prefix+"Unexpected command: cs_n_low=0b%14b", self.cs_n_low),
-            ),
-        ]
-        self.sync += [If(self.handle_1_tick_cmd,
-                        If(reduce(or_, cmd_handlers.values()),
-                            self.handled_1_tick_cmd.eq(1)
-                        ).Else(
-                            self.handled_1_tick_cmd.eq(0)
-                        ))]
+        self.comb += self.decode.handled.eq(reduce(or_, [matched for matched in cmd_handlers.values()]))
+        self.comb += read_pre_training.eq(self.mode_regs[2][0])
 
         def ck(t, freq):
             return math.ceil(t * freq)
@@ -339,11 +383,11 @@ class CommandsSim(Module, AutoCSR):
         )
         fsm.act("MRW",
             cmds_enabled.eq(1),
-            If(self.handle_2_tick_cmd & ~cmd_handlers["MRW"] & ~cmd_handlers["MRR"] & \
-                ~cmd_handlers["MPC"] & ~self.handled_1_tick_cmd,
+            If(self.decode.handle_2_tick_cmd & ~cmd_handlers["MRW"] & \
+                ~cmd_handlers["MRR"] & ~cmd_handlers["MPC"],
                 self.log.warn(prefix+"Only MPC/MRW/MRR commands expected before ZQ calibration"),
                 self.log.warn(" ".join("{}=%d".format(cmd) for cmd in cmd_handlers.keys()), *cmd_handlers.values()),
-                self.log.warn(prefix+"Unexpected command: cs_n_low=0b%14b cs_n_high=0b%14b", self.cs_n_low, self.cs_n_high)
+                self.log.warn(prefix+"Unexpected command: cs_n_low=0b%14b cs_n_high=0b%14b", self.decode.cs_n_low, self.decode.cs_n_high)
             ),
             If(cmd_handlers["MPC"],
                 self.log.info(prefix+"MPC handled op=0b%8b, mr13_set=%b, MPC.DLL_RST=%8b", self.mpc_op, self.mr13_set, int(MPC.DLL_RST)),
@@ -365,7 +409,7 @@ class CommandsSim(Module, AutoCSR):
         fsm.act("ZQC",
             self.tzqcal.trigger.eq(1),
             cmds_enabled.eq(1),
-            If(self.handle_2_tick_cmd | self.handle_1_tick_cmd,
+            If(self.decode.handle_1_tick_cmd,
                 If(~(cmd_handlers["MPC"] &
                    ((self.mpc_op == MPC.ZQC_LATCH) | (self.mpc_op == MPC.ZQC_START))),
                     self.log.error(prefix+"Expected ZQC-LATCH"),
@@ -408,7 +452,9 @@ class CommandsSim(Module, AutoCSR):
         ca_training.act("IDLE",
             ca_direct_control.eq(0),
             ca_direct_value.eq(0),
-            If(self.ca_training_start & self.handle_2_tick_cmd,
+            If(~self.ca_training_start & \
+               self.ca_training_start_delay & \
+               ~self.decode.handle_1_tick_cmd,
                 NextState("SAMPLE"),
                 NextValue(ca_training_counter, 0),
                 NextValue(ca_last_sampled_value, 0),
@@ -443,7 +489,7 @@ class CommandsSim(Module, AutoCSR):
                 NextValue(ca_training_counter, ca_training_counter+1),
             )
         )
-        ca_training.finalize()
+        self.sync += self.ca_training_start_delay.eq(self.ca_training_start)
 
         # CS training
         self.submodules.cs_training = cs_training = ResetInserter()(FSM())
@@ -479,8 +525,10 @@ class CommandsSim(Module, AutoCSR):
                 NextState("IDLE"),
             ),
         )
-        cs_training.finalize()
 
+        self.comb += decoder_enable.eq(cmds_enabled & ca_training.ongoing("IDLE"))
+
+        # Per device addressing
         self.submodules.pda = pda = ResetInserter()(FSM())
         pda_counter = Signal(5)
         pda.act("IDLE",
@@ -497,7 +545,7 @@ class CommandsSim(Module, AutoCSR):
             ),
         )
         pda.act("SAMPLE",
-            If(getattr(pads, prefix+'dq')[dq_dqs_ratio*module_num],
+            If(reduce(or_, getattr(pads, prefix+'dq')[dq_dqs_ratio*module_num]),
                 NextState("IDLE"),
             ),
             If(pda_counter == 7,
@@ -591,20 +639,20 @@ class CommandsSim(Module, AutoCSR):
         op  = Signal(8)
         select = Signal()
         return self.cmd_one_step("MRW",
-            cond = self.cs_n_low[:5] == 0b00101,
+            cond = self.decode.cs_n_low[:5] == 0b00101,
             comb = [
                 select.eq((
                     (self.mode_regs[1][0:4] == self.mode_regs[1][4:]) | \
                     (self.mode_regs[1][4:] == 0xf)) & \
-                    ~self.cs_n_high[10]
+                    ~self.decode.cs_n_high[10]
                 ),
                 If(select,
                     self.log.info(prefix+"MRW: MR[%d] = 0x%02x", ma, op),
-                    op.eq(self.cs_n_high[:8]),
-                    ma.eq(self.cs_n_low[5:13]),
+                    op.eq(self.decode.cs_n_high[:8]),
+                    ma.eq(self.decode.cs_n_low[5:13]),
                 ),
             ],
-            handle_cmd = self.handle_2_tick_cmd,
+            handle_cmd = self.decode.handle_2_tick_cmd,
             sync = [
                 If(select,
                     If(ma == 1,
@@ -636,9 +684,9 @@ class CommandsSim(Module, AutoCSR):
         ma  = Signal(8)
         op  = Signal(8)
         return self.cmd_one_step("MRR",
-            cond = (self.cs_n_low[:5] == 0b10101) & ~self.cs_n_high[10],
+            cond = (self.decode.cs_n_low[:5] == 0b10101) & ~self.decode.cs_n_high[10],
             comb = [
-                ma.eq(self.cs_n_low[5:13]),
+                ma.eq(self.decode.cs_n_low[5:13]),
                 If(ma != 31,
                     op.eq(self.mode_regs[ma]),
                     self.log.info(prefix+"MRR: MR[%d] = 0x%02x", ma, op),
@@ -679,46 +727,46 @@ class CommandsSim(Module, AutoCSR):
                     self.log.error(prefix+"Simulator data FIFO overflow"),
                 ),
             ],
-            handle_cmd = self.handle_2_tick_cmd,
+            handle_cmd = self.decode.handle_2_tick_cmd,
         )
 
     def nop_handler(self, prefix):
         ma  = Signal(8)
         op  = Signal(8)
         return self.cmd_one_step("NOP",
-            cond = self.cs_n_low[:5] == 0b11111,
+            cond = self.decode.cs_n_low[:5] == 0b11111,
             comb = [
                 self.log.debug(prefix+"NOP"),
             ],
-            handle_cmd = self.handle_1_tick_cmd | self.handle_2_tick_cmd,
+            handle_cmd = self.decode.handle_1_tick_cmd,
         )
 
     def refresh_handler(self, prefix):
         bank = Signal(2)
         return self.cmd_one_step("REFRESH",
-            cond = self.cs_n_low[:5] == 0b10011,
+            cond = self.decode.cs_n_low[:5] == 0b10011,
             comb = [
-                If(~self.cs_n_low[10],
+                If(~self.decode.cs_n_low[10],
                     self.log.info(prefix+"REF: all banks"),
                     If(reduce(or_, self.active_banks),
                         self.log.error(prefix+"Not all banks precharged during REFRESH"),
                     )
                 ).Else(
                     self.log.info(prefix+"REF: bank = %d", bank),
-                    bank.eq(self.cs_n_low[6:8]),
+                    bank.eq(self.decode.cs_n_low[6:8]),
                 )
             ],
-            handle_cmd = self.handle_2_tick_cmd,
+            handle_cmd = self.decode.handle_1_tick_cmd,
         )
 
     def activate_handler(self, prefix):
         bank = Signal(5)
         row  = Signal(18)
         return self.cmd_one_step("ACTIVATE",
-            cond = self.cs_n_low[:2] == 0b00,
+            cond = self.decode.cs_n_low[:2] == 0b00,
             comb = [
-                bank.eq(self.cs_n_low[6:11]),
-                row.eq(Cat(self.cs_n_low[2:6], self.cs_n_high)),
+                bank.eq(self.decode.cs_n_low[6:11]),
+                row.eq(Cat(self.decode.cs_n_low[2:6], self.decode.cs_n_high)),
                 self.log.info(prefix+"ACT: bank=%d row=%d", bank, row),
                 If(self.active_banks[bank],
                     self.log.error(prefix+"ACT on already active bank: bank=%d row=%d", bank, row),
@@ -728,23 +776,23 @@ class CommandsSim(Module, AutoCSR):
                 self.active_banks[bank].eq(1),
                 self.active_rows[bank].eq(row),
             ],
-            handle_cmd = self.handle_2_tick_cmd,
+            handle_cmd = self.decode.handle_2_tick_cmd,
         )
 
     def precharge_handler(self, prefix):
         bank = Signal(2)
         return self.cmd_one_step("PRECHARGE",
-            cond = self.cs_n_low[:5] == 0b01011,
+            cond = self.decode.cs_n_low[:5] == 0b01011,
             comb = [
-                If(~self.cs_n_low[10],
+                If(~self.decode.cs_n_low[10],
                     self.log.info(prefix+"PRE: all banks"),
                 ).Else(
                     self.log.info(prefix+"PRE: bank = %d", bank),
-                    bank.eq(self.cs_n_low[6:8]),
+                    bank.eq(self.decode.cs_n_low[6:8]),
                 ),
             ],
             sync = [
-                If(~self.cs_n_low[10],
+                If(~self.decode.cs_n_low[10],
                     *[self.active_banks[b].eq(0) for b in range(self.number_of_banks)]
                 ).Else(
                     self.active_banks[bank].eq(0),
@@ -753,24 +801,24 @@ class CommandsSim(Module, AutoCSR):
                     ),
                 ),
             ],
-            handle_cmd = self.handle_2_tick_cmd,
+            handle_cmd = self.decode.handle_1_tick_cmd,
         )
 
     def vref_handler(self, prefix):
         vref_val = Signal(7)
         return self.cmd_one_step("VREF",
-            cond = self.cs_n_low[:5] == 0b00011,
+            cond = self.decode.cs_n_low[:5] == 0b00011,
             comb = [
-                vref_val.eq(self.cs_n_low[5:12]),
-                If(self.cs_n_low[12],
+                vref_val.eq(self.decode.cs_n_low[5:12]),
+                If(self.decode.cs_n_low[12],
                     self.log.info(prefix+"VREF CS:%X", vref_val),
                 ).Else(
                     self.log.info(prefix+"VREF CA:%X", vref_val),
                 )
             ],
-            handle_cmd = self.handle_2_tick_cmd | self.handle_1_tick_cmd,
+            handle_cmd = self.decode.handle_1_tick_cmd,
             sync = [
-                If(self.cs_n_low[12],
+                If(self.decode.cs_n_low[12],
                     self.shadowVCS.eq(vref_val),
                 ).Else(
                     self.shadowVCA.eq(vref_val),
@@ -827,12 +875,12 @@ class CommandsSim(Module, AutoCSR):
 
         cases["default"] = [self.log.error(prefix+"Invalid MPC op=0b%08b", self.mpc_op)]
         return self.cmd_one_step("MPC",
-            cond = self.cs_n_low[:5] == 0b01111,
+            cond = self.decode.cs_n_low[:5] == 0b01111,
             comb = [
-                self.mpc_op.eq(self.cs_n_low[5:13]),
+                self.mpc_op.eq(self.decode.cs_n_low[5:13]),
                 Case(self.mpc_op, cases)
             ],
-            handle_cmd = self.handle_2_tick_cmd | self.handle_1_tick_cmd,
+            handle_cmd = self.decode.handle_1_tick_cmd,
             sync = [
                 If(self.mpc_op[1:] == 0b0000100,
                     self.mode_regs[2][2].eq(self.mpc_op[0]),
@@ -869,9 +917,9 @@ class CommandsSim(Module, AutoCSR):
         auto_precharge = Signal()
 
         return self.cmd_one_step("READ",
-            cond = self.cs_n_low[:5] == 0b11101,
+            cond = self.decode.cs_n_low[:5] == 0b11101,
             comb = [
-                If(~self.cs_n_low[5],
+                If(~self.decode.cs_n_low[5],
                    Case(self.mode_regs[0][:2], {
                         0:  bl_width.eq(8),
                         1:  bl_width.eq(8),
@@ -883,10 +931,10 @@ class CommandsSim(Module, AutoCSR):
                 ).Else(
                     bl_width.eq(16),
                 ),
-                bank.eq(self.cs_n_low[6:11]),
+                bank.eq(self.decode.cs_n_low[6:11]),
                 row.eq(self.active_rows[bank]),
-                col.eq(Cat(Replicate(0, 2), self.cs_n_high[:9])),
-                auto_precharge.eq(~self.cs_n_high[10]),
+                col.eq(Cat(Replicate(0, 2), self.decode.cs_n_high[:9])),
+                auto_precharge.eq(~self.decode.cs_n_high[10]),
                 self.log.debug(prefix+"READ: bank=%d row=%d, col=%d", bank, row, col),
 
                 If(self.active_banks[bank],
@@ -913,7 +961,7 @@ class CommandsSim(Module, AutoCSR):
                     self.active_banks[bank].eq(0),
                 ),
             ],
-            handle_cmd = self.handle_2_tick_cmd,
+            handle_cmd = self.decode.handle_2_tick_cmd,
         )
 
     def write_handler(self, prefix):
@@ -924,9 +972,9 @@ class CommandsSim(Module, AutoCSR):
         auto_precharge = Signal()
 
         return self.cmd_one_step("WRITE",
-            cond = self.cs_n_low[:5] == 0b01101,
+            cond = self.decode.cs_n_low[:5] == 0b01101,
             comb = [
-                If(~self.cs_n_low[5],
+                If(~self.decode.cs_n_low[5],
                    Case(self.mode_regs[0][:2], {
                         0:  bl_width.eq(8),
                         1:  bl_width.eq(8),
@@ -938,10 +986,10 @@ class CommandsSim(Module, AutoCSR):
                 ).Else(
                     bl_width.eq(16),
                 ),
-                bank.eq(self.cs_n_low[6:11]),
+                bank.eq(self.decode.cs_n_low[6:11]),
                 row.eq(self.active_rows[bank]),
-                col.eq(Cat(Replicate(0, 3), self.cs_n_high[1:9])),
-                auto_precharge.eq(~self.cs_n_high[10]),
+                col.eq(Cat(Replicate(0, 3), self.decode.cs_n_high[1:9])),
+                auto_precharge.eq(~self.decode.cs_n_high[10]),
                 self.log.debug(prefix+"WRITE: bank=%d row=%d, col=%d", bank, row, col),
 
                 If(self.mode_regs[2][1], # WL mode
@@ -952,7 +1000,7 @@ class CommandsSim(Module, AutoCSR):
                         self.data_en.input.eq(1),
                         self.data.sink.valid.eq(1),
                         self.data.sink.we.eq(1),
-                        self.data.sink.masked.eq(~self.cs_n_high[11]),
+                        self.data.sink.masked.eq(~self.decode.cs_n_high[11]),
                         self.data.sink.bank.eq(bank),
                         self.data.sink.row.eq(row),
                         self.data.sink.col.eq(col),
@@ -971,7 +1019,7 @@ class CommandsSim(Module, AutoCSR):
                     self.active_banks[bank].eq(0),
                 ),
             ],
-            handle_cmd = self.handle_2_tick_cmd,
+            handle_cmd = self.decode.handle_2_tick_cmd,
         )
 # Data ---------------------------------------------------------------------------------------------
 
