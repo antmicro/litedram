@@ -161,7 +161,12 @@ class DDR5Tests(unittest.TestCase):
             **kwargs,
         )
 
-    def run_test(self, dfi_sequence, pad_checkers: Mapping[str, Mapping[str, str]], pad_generators=None, **kwargs):
+    @staticmethod
+    def rdimm_mode(dut, _rdimm_mode):
+        yield dut._rdimm_mode.storage.eq(_rdimm_mode)
+        yield
+
+    def run_test(self, dfi_sequence, pad_checkers: Mapping[str, Mapping[str, str]], pad_generators=None, rdimm_mode=0, **kwargs):
         # pad_checkers: {clock: {sig: values}}
         dut = self.phy
         dfi = DFISequencer([{}, {}] + dfi_sequence)
@@ -169,6 +174,7 @@ class DDR5Tests(unittest.TestCase):
         generators = defaultdict(list)
         generators["sys"].append(dfi.generator(dut.dfi))
         generators["sys"].append(dfi.reader(dut.dfi))
+        generators["sys"].append(DDR5Tests.rdimm_mode(dut, rdimm_mode))
         for clock, checker in checkers.items():
             generators[clock].append(checker.run())
         pad_generators = pad_generators or {}
@@ -445,6 +451,75 @@ class DDR5Tests(unittest.TestCase):
             }},
             vcd_name="ddr5_ca_addressing_2N_mode.vcd"
         )
+
+    def test_ddr5_ca_addressing_1N_mode_rdimm(self):
+        self.run_test(
+            dfi_sequence = [
+                {0: self.read_0, 1: self.read_1},
+                {0: self.write_0, 1: self.write_1},
+                {0: self.activate_0, 1: self.activate_1},
+                {0: self.refresh_ab},
+                {0: self.precharge_ab},
+                {0: self.mrw_0, 1: self.mrw_1},
+                {0: self.zqc_start},
+                {0: self.zqc_latch},
+                {0: self.mrr_0, 1: self.mrr_1},
+            ],
+            pad_checkers = {
+                "sys4x_180": { # In order to use N1 Mode CS and CA must be trained (odelays)
+                    #                            rd          wr           act         ref           pre          mrw          zqcs         zqcl         mrr
+                    'cs_n': self.cs_n_latency + '0111'     + '0111'     + '0111'    + '0111'      + '0111'     + '0111'     + '0111'     + '0111'     + '0111'     + '1111',
+                },
+                "sys4x_90_ddr": {
+                    'ca0': self.ca_latency*2 + '10010000' + '11x00000' + '01000000' + '1x000000' + '1x000000' + '10010000' + '11000000' + '11000000' + '110x0000' + '00000000',
+                    'ca1': self.ca_latency*2 + '01000000' + '01010000' + '00100000' + '1x000000' + '1x000000' + '001x0000' + '10000000' + '10000000' + '010x0000' + '00000000',
+                    'ca2': self.ca_latency*2 + '101x0000' + '100x0000' + '10110000' + '0x000000' + '0x000000' + '110x0000' + '10000000' + '10000000' + '10xx0000' + '00000000',
+                    'ca3': self.ca_latency*2 + '10110000' + '10010000' + '00110000' + '00000000' + '10000000' + '011x0000' + '10000000' + '10000000' + '01xx0000' + '00000000',
+                    'ca4': self.ca_latency*2 + '1x0x0000' + '0x010000' + '0x110000' + '1x000000' + '0x000000' + '000x0000' + '00000000' + '00000000' + '10xx0000' + '00000000',
+                    'ca5': self.ca_latency*2 + '0x0x0000' + '0x0x0000' + '0x010000' + 'xx000000' + 'xx000000' + '101x0000' + '10000000' + '00000000' + '10xx0000' + '00000000',
+                    'ca6': self.ca_latency*2 + '1x1x0000' + '1x0x0000' + '0x000000' + 'xx000000' + 'xx000000' + '1x0x0000' + '0x000000' + '0x000000' + '0xxx0000' + '00000000',
+                }},
+            rdimm_mode = 1,
+            vcd_name="ddr5_ca_addressing_1N_mode_rdimm.vcd"
+        )
+
+    def test_ddr5_ca_addressing_2N_mode_rdimm(self):
+
+        dfi_sequence = [
+            {0: self.read_0, 1: self.read_1},
+            {0: self.write_0, 1: self.write_1},
+            {0: self.activate_0, 1: self.activate_1},
+            {0: self.refresh_ab},
+            {0: self.precharge_ab},
+            {0: self.mrw_0, 1: self.mrw_1},
+            {0: self.zqc_start},
+            {0: self.zqc_latch},
+            {0: self.mrr_0, 1: self.mrr_1},
+        ]
+
+        self.run_test(
+            dfi_sequence = self.to_2N_mode(dfi_sequence),
+            pad_checkers =
+                {"sys4x": {
+                # Command in 2N mode takes twice as much time as in 1N mode,
+                # second part of 2 a cycle command must be valid 2 clocks after cs_n is low.
+                # This allows for CA to setup correct values
+                #                                    rd        wr       act      ref      pre      mrw      zqcs     zqcl     mrr
+                    'cs_n': 'x' + self.cs_n_latency + '0x1x' + '0x1x' + '0x1x' + '0x11' + '0x11' + '0x1x' + '0x11' + '0x11' + '0x1x'+'1111',
+                },
+                "sys4x" : {
+                    'ca0':  'x' + self.ca_latency   + '1001' + '11x0' + '0100' + '1x00' + '1x00' + '1001' + '1100' + '1100' + '110x'+'0000',
+                    'ca1':  'x' + self.ca_latency   + '0100' + '0101' + '0010' + '1x00' + '1x00' + '001x' + '1000' + '1000' + '010x'+'0000',
+                    'ca2':  'x' + self.ca_latency   + '101x' + '100x' + '1011' + '0x00' + '0x00' + '110x' + '1000' + '1000' + '10xx'+'0000',
+                    'ca3':  'x' + self.ca_latency   + '1011' + '1001' + '0011' + '0000' + '1000' + '011x' + '1000' + '1000' + '01xx'+'0000',
+                    'ca4':  'x' + self.ca_latency   + '1x0x' + '0x01' + '0x11' + '1x00' + '0x00' + '000x' + '0000' + '0000' + '10xx'+'0000',
+                    'ca5':  'x' + self.ca_latency   + '0x0x' + '0x0x' + '0x01' + 'xx00' + 'xx00' + '101x' + '1000' + '0000' + '10xx'+'0000',
+                    'ca6':  'x' + self.ca_latency   + '1x1x' + '1x0x' + '0x00' + 'xx00' + 'xx00' + '1x0x' + '0x00' + '0x00' + '0xxx'+'0000',
+            }},
+            rdimm_mode = 1,
+            vcd_name="ddr5_ca_addressing_2N_mode_rdimm.vcd"
+        )
+
 
     def test_ddr5_dq_out(self):
         # Test serialization of dfi wrdata to DQ pads
