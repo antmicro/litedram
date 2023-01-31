@@ -25,7 +25,7 @@ from litedram.core.controller import ControllerSettings
 from litedram.phy.model import DFITimingsChecker, _speedgrade_timings, _technology_timings
 
 from litedram.phy.ddr5.simphy import DDR5SimPHY
-from litedram.phy.ddr5.sim import DDR5Sim
+from litedram.phy.ddr5.sdram_simulation_model import DDR5SDRAMSimulationModel as DDR5Sim
 
 from litedram.phy.sim_utils import Clocks, CRG, Platform
 

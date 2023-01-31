@@ -22,7 +22,7 @@ from litedram.phy.ddr5.commands import MPC
 from litedram import modules
 
 
-class DDR5Sim(Module, AutoCSR):
+class DDR5SDRAMSimulationModel(Module, AutoCSR):
     """DDR5 DRAM simulator
 
     This module simulates an DDR5 DRAM chip to aid DDR5 PHY development/testing.
