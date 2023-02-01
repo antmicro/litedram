@@ -4,7 +4,6 @@
 #include <hw/common.h>
 #include <generated/csr.h>
 
-#define MEMORY_TYPE_DDR4
 #define DFII_CONTROL_SEL 0x01
 #define DFII_CONTROL_CKE 0x02
 #define DFII_CONTROL_ODT 0x04
