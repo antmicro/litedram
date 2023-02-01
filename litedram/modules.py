@@ -580,8 +580,6 @@ class SDRAMModule:
             speedgrade        = spd.speedgrade,
             fine_refresh_mode = fine_refresh_mode)
 
-class SDRAMRegisteredModule(): registered = True
-
 # SDR ----------------------------------------------------------------------------------------------
 
 class SDRModule(SDRAMModule):
@@ -601,8 +599,8 @@ class SDRModule(SDRAMModule):
         tRAS    = (None, 45),
         tZQCS   = None,
     )
-class SDRRegisteredModule(SDRModule, SDRAMRegisteredModule):
-    pass
+
+class SDRRegisteredModule(SDRModule): registered = True
 
 class IS42S16160(SDRModule):
     # geometry
@@ -730,8 +728,8 @@ class DDRModule(SDRAMModule):
         tRAS    = (None, 50),
         tZQCS   = None,
     )
-class DDRRegisteredModule(DDRModule, SDRAMRegisteredModule):
-    pass
+
+class DDRRegisteredModule(DDRModule): registered = True
 
 class MT46V32M16(DDRModule):
     # geometry
@@ -759,8 +757,8 @@ class LPDDRModule(SDRAMModule):
         tFAW    = None,
         tRAS    = (None, 42),
     )
-class LPDDRRegisteredModule(LPDDRModule, SDRAMRegisteredModule):
-    pass
+
+class LPDDRRegisteredModule(LPDDRModule): registered = True
 
 class MT46H32M16(LPDDRModule):
     # geometry
@@ -809,8 +807,7 @@ class DDR2Module(SDRAMModule):
         tZQCS   = None,
     )
 
-class DDR2RegisteredModule(DDR2Module, SDRAMRegisteredModule):
-    pass
+class DDR2RegisteredModule(DDR2Module): registered = True
 
 class MT47H128M8(DDR2Module):
     # geometry
@@ -867,8 +864,7 @@ class DDR3Module(SDRAMModule):
         tZQCS   = (512, 640),
     )
 
-class DDR3RegisteredModule(DDR3Module, SDRAMRegisteredModule):
-    pass
+class DDR3RegisteredModule(DDR3Module): registered = True
 
 class AS4C128M16(DDR3Module):
     # geometry
@@ -1193,8 +1189,7 @@ class DDR4Module(SDRAMModule):
         tZQCS   = (512, None),
     )
 
-class DDR4RegisteredModule(DDR4Module, SDRAMRegisteredModule):
-    pass
+class DDR4RegisteredModule(DDR4Module): registered = True
 
 class EDY4016A(DDR4Module):
     # geometry
@@ -1451,8 +1446,7 @@ class DDR5Module(SDRAMModule):
         tZQCS   = None,
     )
 
-class DDR5RegisteredModule(DDR5Module, SDRAMRegisteredModule):
-    pass
+class DDR5RegisteredModule(DDR5Module): registered = True
 
 class MT60B2G8HB48B(DDR5Module):
     #geometry
