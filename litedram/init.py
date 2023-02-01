@@ -1125,8 +1125,6 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
     r.include("<generated/csr.h>")
     r.newline()
 
-    r.define(f"MEMORY_TYPE_{phy_settings.memtype.upper()}")
-
     r.define("DFII_CONTROL_SEL",     "0x01")
     r.define("DFII_CONTROL_CKE",     "0x02")
     r.define("DFII_CONTROL_ODT",     "0x04")
