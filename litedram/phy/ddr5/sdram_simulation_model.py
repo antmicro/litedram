@@ -12,7 +12,7 @@ from random import randrange
 
 from migen import *
 
-from litex.soc.interconnect.stream import AsyncFIFO
+from litex.soc.interconnect.stream import SyncFIFO
 
 from litedram.common import TappedDelayLine
 from litedram.phy.utils import delayed, edge
@@ -50,23 +50,17 @@ class DDR5SDRAMSimulationModel(Module):
     """
     def __init__(self, pads, *, sys_clk_freq, cl, cwl, log_level, geom_settings, prefix="",
                  module_num=0, dq_dqs_ratio=8, ca_inversion=False, skip_fsm_to_stage=None,
-                 n1_mode_select=0, alert_n_on_CA_err=False):
+                 n1_mode_select=0, alert_n_on_CA_err=False,
+                 cd_positive="sys4x_p_dimm", cd_negative="sys4x_n_dimm"):
         log_level = log_level_getter(log_level)
 
         bl_max    = 16 # We only support BL8 and BL16, there is no support for BL32
-        cd_cmd    = "sys4x_p_dimm"
-        cd_dq_wr  = "sys4x_p_dimm"
-        cd_dqs_wr = "sys4x_p_dimm"
-        cd_dq_rd  = "sys4x_p_dimm"
-        cd_dqs_rd = "sys4x_p_dimm"
 
         # Alert_n output signal
         self.alert_n = Signal(reset=1)
 
-        self.submodules.data_cdc = ClockDomainsRenamer(
-            {"write": cd_cmd,"read": cd_dq_wr}
-        )(
-            AsyncFIFO(
+        self.submodules.data_fifo = ClockDomainsRenamer(cd_positive)(
+            SyncFIFO(
                 [("we", 1),
                  ("masked", 1),
                  ("bank", geom_settings.bankbits),
@@ -79,11 +73,12 @@ class DDR5SDRAMSimulationModel(Module):
                  ("mrr_inv",   16),
                  ("mrr_sel",   16),
                 ],
-                depth=64)
+                depth=64,
+            )
         )
 
         cmd = CommandsSim(pads,
-            data_cdc          = self.data_cdc,
+            data_cdc          = self.data_fifo,
             clk_freq          = 4*sys_clk_freq,
             log_level         = log_level("cmd"),
             geom_settings     = geom_settings,
@@ -95,18 +90,18 @@ class DDR5SDRAMSimulationModel(Module):
             skip_fsm_to_stage = skip_fsm_to_stage,
             n1_mode_select    = n1_mode_select,
         )
-        self.submodules.cmd = ClockDomainsRenamer(cd_cmd)(cmd)
+        self.submodules.cmd = ClockDomainsRenamer(cd_positive)(cmd)
         if alert_n_on_CA_err:
             self.comb += self.alert_n.eq(~cmd.decode.cmd_err)
 
-        data = DataSim(pads, self.cmd,
+        data = DataSim(
+            pads,
+            self.cmd,
             direct_dq_control = cmd.direct_dq_control,
             dq_value          = cmd.dq_value,
             read_pre_training = cmd.read_pre_training,
-            cd_dq_wr      = cd_dq_wr,
-            cd_dqs_wr     = cd_dqs_wr,
-            cd_dq_rd      = cd_dq_rd,
-            cd_dqs_rd     = cd_dqs_rd,
+            cd_positive   = cd_positive,
+            cd_negative   = cd_negative,
             clk_freq      = 2*4*sys_clk_freq,
             cl            = cl,
             cwl           = cwl,
@@ -117,7 +112,7 @@ class DDR5SDRAMSimulationModel(Module):
             module_num    = module_num,
             dq_dqs_ratio  = dq_dqs_ratio,
         )
-        self.submodules.data = ClockDomainsRenamer(cd_dq_wr)(data)
+        self.submodules.data = ClockDomainsRenamer(cd_positive)(data)
 
 # Commands -----------------------------------------------------------------------------------------
 
@@ -1070,10 +1065,11 @@ class DataSim(Module):
 
     This module runs with DDR clocks (simulation clocks with double the frequency of `pads.clk_p`).
     """
-    def __init__(self, pads, cmds_sim, direct_dq_control, dq_value, read_pre_training, *, cd_dq_wr, cd_dq_rd, cd_dqs_wr,
-                 cd_dqs_rd, cl, cwl, clk_freq, log_level, geom_settings, bl_max, prefix, module_num=0, dq_dqs_ratio=8):
+    def __init__(self, pads, cmds_sim, direct_dq_control, dq_value, read_pre_training, *,
+                 cd_positive, cd_negative, cl, cwl, clk_freq, log_level, geom_settings,
+                 bl_max, prefix, module_num=0, dq_dqs_ratio=8):
         self.submodules.log   = log   = SimLogger(log_level=log_level, clk_freq=clk_freq)
-        self.submodules.log_n = log_n = SimLogger(log_level=log_level, clk_freq=clk_freq, clk_freq_cd="sys4x_n_dimm")
+        self.submodules.log_n = log_n = SimLogger(log_level=log_level, clk_freq=clk_freq, clk_freq_cd=cd_negative)
         self.log.add_csrs()
 
         nbanks = 2 ** geom_settings.bankbits
@@ -1082,7 +1078,7 @@ class DataSim(Module):
         ncols = 2 ** geom_settings.colbits
         mems = [Memory(dq_dqs_ratio, depth=(nrows * ncols)) for _ in range(nbanks)]
         ports = [(mem.get_port(write_capable=True, we_granularity=8, async_read=True),
-                  mem.get_port(write_capable=True, we_granularity=8, async_read=True, clock_domain="sys4x_n_dimm")) for mem in mems]
+                  mem.get_port(write_capable=True, we_granularity=8, async_read=True, clock_domain=cd_negative)) for mem in mems]
         self.specials += mems + ports
         ports = Array(Array([ports[i][0], ports[i][1]]) for i in range(len(ports)))
 
@@ -1102,43 +1098,44 @@ class DataSim(Module):
         mrr_inv       = Array(Signal() for _ in range(16))
         mrr_sel       = Array(Signal() for _ in range(16))
 
-        self.submodules.dq_wr = ClockDomainsRenamer(cd_dq_wr)(
-            DQWrite(dq=getattr(pads, prefix+'dq')[dq_dqs_ratio*module_num:dq_dqs_ratio*(module_num+1)],
-                    dmi=getattr(pads, prefix+'dm_n')[module_num:module_num+1],
-                    bl_width=bl_width,
-                    ports=ports,
-                    negedge_domain="sys4x_n_dimm",
-                    **dq_kwargs)
+        self.submodules.dq_wr = DQWrite(
+            dq=getattr(pads, prefix+'dq')[dq_dqs_ratio*module_num:dq_dqs_ratio*(module_num+1)],
+            dmi=getattr(pads, prefix+'dm_n')[module_num:module_num+1],
+            bl_width=bl_width,
+            ports=ports,
+            negedge_domain=cd_negative,
+            **dq_kwargs,
         )
-        self.submodules.dq_rd = ClockDomainsRenamer(cd_dq_rd)(
-            DQRead(dq=getattr(pads, prefix+'dq_i')[dq_dqs_ratio*module_num:dq_dqs_ratio*(module_num+1)],
-                   bl_width=bl_width,
-                   ports=ports,
-                   negedge_domain="sys4x_n_dimm",
-                   mrr=mrr,
-                   mrr_data0=mrr_data0,
-                   mrr_data1=mrr_data1,
-                   mrr_inv=mrr_inv,
-                   mrr_sel=mrr_sel,
-                   direct_dq_control=direct_dq_control,
-                   dq_value=dq_value,
-                   **dq_kwargs)
-        ) # Acording to JEDEC DQS and DQ for reads are edge alligned
-        self.submodules.dqs_wr = ClockDomainsRenamer(cd_dqs_wr)(
-            DQSWrite(dqs=getattr(pads, prefix+'dqs_t')[module_num:module_num+1],
-                     dqs_oe=getattr(pads, prefix+'dqs_t_oe')[module_num:module_num+1],
-                     bl_width=bl_width,
-                     negedge_domain="sys4x_n_dimm",
-                     **dqs_kwargs)
+        self.submodules.dq_rd = DQRead(
+            dq=getattr(pads, prefix+'dq_i')[dq_dqs_ratio*module_num:dq_dqs_ratio*(module_num+1)],
+            bl_width=bl_width,
+            ports=ports,
+            negedge_domain=cd_negative,
+            mrr=mrr,
+            mrr_data0=mrr_data0,
+            mrr_data1=mrr_data1,
+            mrr_inv=mrr_inv,
+            mrr_sel=mrr_sel,
+            direct_dq_control=direct_dq_control,
+            dq_value=dq_value,
+            **dq_kwargs,
         )
-        self.submodules.dqs_rd = ClockDomainsRenamer(cd_dqs_rd)(
-            DQSRead(dqs_t=getattr(pads, prefix+'dqs_t_i')[module_num:module_num+1],
-                    dqs_c=getattr(pads, prefix+'dqs_c_i')[module_num:module_num+1],
-                    read_pre_training=read_pre_training,
-                    bl_width=bl_width,
-                    posedge_domain=cd_dqs_rd,
-                    negedge_domain="sys4x_n_dimm",
-                    **dqs_kwargs)
+        # Acording to JEDEC DQS and DQ for reads are edge alligned
+        self.submodules.dqs_wr = DQSWrite(
+            dqs=getattr(pads, prefix+'dqs_t')[module_num:module_num+1],
+            dqs_oe=getattr(pads, prefix+'dqs_t_oe')[module_num:module_num+1],
+            bl_width=bl_width,
+            negedge_domain=cd_negative,
+            **dqs_kwargs,
+        )
+        self.submodules.dqs_rd = DQSRead(
+            dqs_t=getattr(pads, prefix+'dqs_t_i')[module_num:module_num+1],
+            dqs_c=getattr(pads, prefix+'dqs_c_i')[module_num:module_num+1],
+            read_pre_training=read_pre_training,
+            bl_width=bl_width,
+            posedge_domain=cd_positive,
+            negedge_domain=cd_negative,
+            **dqs_kwargs,
         )
 
         write        = Signal()
@@ -1163,9 +1160,9 @@ class DataSim(Module):
         rd_preamble_trigger = Signal()
         rd_preamble_width   = Signal(max=9)
 
-        self.submodules.write_delay    = ClockDomainsRenamer(cd_dq_wr)(TappedDelayLine(write, ntaps=1))
-        self.submodules.masked_delay   = ClockDomainsRenamer(cd_dq_wr)(TappedDelayLine(masked, ntaps=1))
-        self.submodules.read_delay     = ClockDomainsRenamer(cd_dq_rd)(TappedDelayLine(read, ntaps=1))
+        self.submodules.write_delay    = TappedDelayLine(write, ntaps=1)
+        self.submodules.masked_delay   = TappedDelayLine(masked, ntaps=1)
+        self.submodules.read_delay     = TappedDelayLine(read, ntaps=1)
 
         self.comb += [
             rd_pre_sel.eq(cmds_sim.mode_regs[8][:3]),
