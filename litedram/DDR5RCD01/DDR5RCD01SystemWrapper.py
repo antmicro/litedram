@@ -6,12 +6,15 @@
 
 # migen
 from migen import *
+# LiteDRAM : MODULE PADS
+from litedram.phy.ddr5.simphy import DDR5SimulationPads
 # LiteDRAM : RCD
 from litedram.DDR5RCD01.DDR5RCD01CommonIngressSimulationPads import DDR5RCD01CommonIngressSimulationPads
 from litedram.DDR5RCD01.DDR5RCD01ChannelIngressSimulationPads import DDR5RCD01ChannelIngressSimulationPads
 from litedram.DDR5RCD01.DDR5RCD01DataBufferSimulationPads import DDR5RCD01DataBufferSimulationPads
 
 from litedram.DDR5RCD01.DDR5GlueRCD import DDR5GlueRCDCommon, DDR5GlueRCDChannel, DDR5GlueRCDDataBuffer
+from litedram.DDR5RCD01.RCDGlueDDR5 import RCDGlueDDR5Channel, RCDGlueDDR5DataBuffer
 
 from litedram.DDR5RCD01.DDR5RCD01System import DDR5RCD01System
 from litedram.DDR5RCD01.DDR5RCD01SidebandSimulationPads import DDR5RCD01SidebandSimulationPads
@@ -50,20 +53,25 @@ class DDR5RCD01SystemWrapper(Module):
         )
         self.submodules += DDR5GlueRCDChannel(phy_pads, pads_B, "B_")
 
+        len_dq_A  = len(phy_pads.A_dq)
+        len_cb_A  = len(phy_pads.A_cb) if hasattr(phy_pads, 'A_cb') else 0
+        len_dqs_A = len(phy_pads.A_dqs_t)
         data_pads_A = DDR5RCD01DataBufferSimulationPads(
-            dq_w    = len(phy_pads.A_dq),
-            cb_w    = 0,
-            dqs_w   = len(phy_pads.A_dqs_t),
+            dq_w  = len_dq_A,
+            cb_w  = len_cb_A,
+            dqs_w = len_dqs_A,
         )
         self.submodules += DDR5GlueRCDDataBuffer(phy_pads, data_pads_A, "A_")
 
+        len_dq_B  = len(phy_pads.B_dq)
+        len_cb_B  = len(phy_pads.B_cb) if hasattr(phy_pads, 'B_cb') else 0
+        len_dqs_B = len(phy_pads.B_dqs_t)
         data_pads_B = DDR5RCD01DataBufferSimulationPads(
-            dq_w    = len(phy_pads.B_dq),
-            cb_w    = 0,
-            dqs_w   = len(phy_pads.B_dqs_t),
+            dq_w  = len_dq_B,
+            cb_w  = len_cb_B,
+            dqs_w = len_dqs_B,
         )
         self.submodules += DDR5GlueRCDDataBuffer(phy_pads, data_pads_B, "B_")
-
 
         xRCDSystem = DDR5RCD01System(
             pads_ingress_dq_A   = data_pads_A,
@@ -75,7 +83,34 @@ class DDR5RCD01SystemWrapper(Module):
             sideband_type   = sideband_type,
             rcd_passthrough = rcd_passthrough,
         )
-        self.submodules += xRCDSystem
+        self.submodules.xRCDSystem = xRCDSystem
 
-        self.A_DRAM_pads = xRCDSystem.pads_egress_dq_A
-        self.B_DRAM_pads = xRCDSystem.pads_egress_dq_B
+        quarters = {
+            "A": "front_top",
+            "B": "front_bottom",
+            "C": "back_top",
+            "D": "back_bottom",
+        }
+
+        dq_dqs_ratio_A = (len_dq_A + len_cb_A)//len_dqs_A
+        dq_dqs_ratio_B = (len_dq_B + len_cb_B)//len_dqs_B
+        constans = {
+            "A_": (len_dq_A, dq_dqs_ratio_A, xRCDSystem.pads_egress_A, xRCDSystem.pads_egress_dq_A),
+            "B_": (len_dq_B, dq_dqs_ratio_B, xRCDSystem.pads_egress_B, xRCDSystem.pads_egress_dq_B),
+        }
+
+        for prefix in ["A_", "B_"]:
+            dq, dq_dqs_ratio, egress, egress_dq = constans[prefix]
+            pads = []
+            for val in quarters.values():
+                setattr(self, prefix+val,
+                    DDR5SimulationPads(
+                        databits=dq,
+                        dq_dqs_ratio=dq_dqs_ratio,
+                    )
+                )
+                pads.append(getattr(self, prefix+val))
+            for i, (quarter, name) in enumerate(quarters.items()):
+                self.submodules += RCDGlueDDR5Channel(egress, pads[i], quarter)
+                self.submodules += RCDGlueDDR5DataBuffer(egress_dq, pads[i])
+            self.comb += egress.derror_in_n.eq(reduce(or_, [pad.alert_n for pad in pads]))

@@ -197,7 +197,7 @@ class SimSoCRCD(SoCCore):
     def __init__(self, clocks, log_level,
             auto_precharge=False, with_refresh=True, trace_reset=0,
             masked_write=False, with_rcd=False, finish_after_memtest=False,
-            dq_dqs_ratio=8, modules_in_rank=1, **kwargs):
+            dq_dqs_ratio=8, modules_in_rank=1, pass_through=False, **kwargs):
 
         io_type = f"sub{dq_dqs_ratio}"
         io_type = io_type if modules_in_rank == 1 else io_type+f"x{modules_in_rank}"
@@ -268,44 +268,59 @@ class SimSoCRCD(SoCCore):
         xRCDSystem = DDR5RCD01SystemWrapper(
             phy_pads        = self.ddrphy.pads,
             pads_sideband   = None,
-            rcd_passthrough = True,
+            rcd_passthrough = pass_through,
             sideband_type   = None,
         )
         xRCDSystem = ClockDomainsRenamer("sys4x_ddr")(xRCDSystem)
-        self.submodules += xRCDSystem
+        self.submodules.xRCDSystem = xRCDSystem
+
+        RCD_outpads = {
+            ('A_', 0, 1): "A_front_top",
+            ('A_', 0, 0): "A_front_bottom",
+            ('A_', 1, 1): "A_back_top",
+            ('A_', 1, 0): "A_back_bottom",
+            ('B_', 0, 1): "B_front_top",
+            ('B_', 0, 0): "B_front_bottom",
+            ('B_', 1, 1): "B_back_top",
+            ('B_', 1, 0): "B_back_bottom",
+        }
 
 
-        # CLK for sdram module, originates from phy
-        setattr(self.clock_domains, "cd_sys4x_p_dimm",
-            ClockDomain("sys4x_p_dimm"))
-        setattr(self.clock_domains, "cd_sys4x_n_dimm",
-            ClockDomain("sys4x_n_dimm"))
-        self.comb += [
-            ClockSignal("sys4x_p_dimm").eq(self.ddrphy.pads.ck_t),
-            ResetSignal("sys4x_p_dimm").eq(~self.ddrphy.pads.reset_n),
-            ClockSignal("sys4x_n_dimm").eq(self.ddrphy.pads.ck_c),
-            ResetSignal("sys4x_n_dimm").eq(~self.ddrphy.pads.reset_n),
-        ]
+        for domain in RCD_outpads.values():
+            pads = getattr(xRCDSystem, domain)
+            setattr(self.clock_domains, f"cd_{domain}_t",
+                ClockDomain(domain+"_t"))
+            setattr(self.clock_domains, f"cd_{domain}_c",
+                ClockDomain(domain+"_c"))
+            self.comb += [
+                ClockSignal(domain+"_t").eq(pads.ck_t),
+                ClockSignal(domain+"_c").eq(pads.ck_c),
+                ResetSignal(domain+"_t").eq(~pads.reset_n),
+                ResetSignal(domain+"_c").eq(~pads.reset_n),
+            ]
 
         # DDR5 Module ------------------------------------------------------------------------------
         prefixes = ["A_", "B_"]
-        alerts = {}
         for prefix in prefixes:
-            for i in range(modules_in_rank):
-                module = DDR5SDRAMSimulationModel(
-                    pads          = self.ddrphy.pads,
-                    cl            = self.sdram.controller.settings.phy.cl,
-                    cwl           = self.sdram.controller.settings.phy.cwl,
-                    sys_clk_freq  = sys_clk_freq,
-                    log_level     = log_level,
-                    geom_settings = sdram_module.geom_settings,
-                    prefix        = prefix,
-                    module_num    = i,
-                    dq_dqs_ratio  = dq_dqs_ratio,
-                )
-                setattr(self.submodules, prefix+'ddr5sim', module)
-                alerts[prefix+f"alert_{i}"] = module.alert_n
-        self.comb += self.ddrphy.pads.alert_n.eq(reduce(and_, alerts.values()))
+            for rank in range(1):
+                for i in range(modules_in_rank):
+                    place = i%2
+                    domain = RCD_outpads[(prefix, rank, place)]
+                    pads = getattr(xRCDSystem, domain)
+                    module = DDR5SDRAMSimulationModel(
+                        pads          = pads,
+                        cl            = self.sdram.controller.settings.phy.cl,
+                        cwl           = self.sdram.controller.settings.phy.cwl,
+                        sys_clk_freq  = sys_clk_freq,
+                        log_level     = log_level,
+                        geom_settings = sdram_module.geom_settings,
+                        module_num    = i,
+                        dq_dqs_ratio  = dq_dqs_ratio,
+                        cd_positive=domain+"_t",
+                        cd_negative=domain+"_c",
+                    )
+                    self.comb += pads.alert_n.eq(module.alert_n)
+                    setattr(self.submodules, prefix+'ddr5sim', module)
 
         self.add_constant("CONFIG_SIM_DISABLE_BIOS_PROMPT")
         if finish_after_memtest:
@@ -444,6 +459,7 @@ def main():
     group.add_argument("--disable-delay",        action="store_true",     help="Disable CPU delays")
     group.add_argument("--gtkw-savefile",        action="store_true",     help="Generate GTKWave savefile")
     group.add_argument("--no-masked-write",      action="store_true",     help="Use unmasked variant of WRITE command")
+    group.add_argument("--rcd-pass-through",     action="store_true",     help="Use pass throught RCD")
     group.add_argument("--no-run",               action="store_true",     help="Don't run the simulation, just generate files")
     group.add_argument("--finish-after-memtest", action="store_true",     help="Stop simulation after DRAM memory test")
     group.add_argument("--dq-dqs-ratio",         default=8,               help="Set DQ:DQS ratio", type=int, choices={4, 8})
@@ -473,6 +489,7 @@ def main():
         trace_reset     = int(args.trace_reset),
         log_level       = args.log_level,
         masked_write    = not args.no_masked_write,
+        pass_through    = args.rcd_pass_through,
         finish_after_memtest = args.finish_after_memtest,
         dq_dqs_ratio    = args.dq_dqs_ratio,
         modules_in_rank = args.modules_in_rank,

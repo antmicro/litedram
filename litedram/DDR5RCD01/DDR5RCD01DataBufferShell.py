@@ -4,6 +4,8 @@
 # Copyright (c) 2023 Antmicro <www.antmicro.com>
 # SPDX-License-Identifier: BSD-2-Clause
 
+#python
+from collections import defaultdict
 # migen
 from migen import *
 # LiteDRAM : RCD
@@ -16,15 +18,21 @@ class DDR5RCD01DataBufferShell(Module):
     """
 
     def __init__(self, pads_ingress, **kwargs):
-        # self.submodules.pads_ingress = pads_ingress
-
-        self.pads_egress = DDR5RCD01DataBufferSimulationPads()
-        # self.submodules.pads_egress = pads_egress
-
-        self.comb += self.pads_egress.dq.eq(pads_ingress.dq)
-        self.comb += self.pads_egress.cb.eq(pads_ingress.cb)
-        self.comb += self.pads_egress.dqs_t.eq(pads_ingress.dqs_t)
-        self.comb += self.pads_egress.dqs_c.eq(pads_ingress.dqs_c)
+        has_cb = hasattr(pads_ingress, 'cb')
+        self.pads_egress = DDR5RCD01DataBufferSimulationPads(
+            dq_w  = len(pads_ingress.dq),
+            cb_w  = len(pads_ingress.cb) if has_cb else 0,
+            dqs_w = len(pads_ingress.dqs_t),
+        )
+        direction = defaultdict(lambda: (pads_ingress, self.pads_egress))
+        direction["_i"] = (self.pads_egress, pads_ingress)
+        signal_names = [signal.name for signal in self.pads_egress.layout() if hasattr(pads_ingress, signal.name)]
+        for signal in signal_names:
+            for sufix in ["", "_o", "_oe", "_i"]:
+                src, dst = direction[sufix]
+                src_sig = getattr(src, signal+sufix)
+                dst_sig = getattr(dst, signal+sufix)
+                self.comb += dst_sig.eq(src_sig)
 
 
 if __name__ == "__main__":
