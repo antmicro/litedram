@@ -26,11 +26,11 @@ class DDR5RCD01CoreWrapper(Module):
     DDR5 RCD01 Core Wrapper
     -----------------------
     The Core Wrapper connects the Simulations Pads to the Core's interfaces.
-    
+
     TODO BCOM is unconnected
-    
+
     TODO Sideband is unconnected
-    
+
     Module
     ------
         - A
@@ -101,15 +101,15 @@ class DDR5RCD01CoreWrapper(Module):
 
         self.comb += self.pads_egress_A.dlbd.eq(if_sdram_A.dlbd_a)
         self.comb += self.pads_egress_A.dlbs.eq(if_sdram_A.dlbs_a)
-        
+
         self.comb += self.pads_egress_A.qrst_n.eq(if_sdram_A.qrst_a_n)
         self.comb += self.pads_egress_A.derror_in_n.eq(if_sdram_A.derror_a_in_n)
-        self.comb += self.pads_egress_A.qacs_a_n.eq(if_obuf_A.qacs_a_n)
-        self.comb += self.pads_egress_A.qaca_a.eq(if_obuf_A.qaca_a)
-        
-        self.comb += self.pads_egress_A.qacs_b_n.eq(if_obuf_A.qacs_b_n)
-        self.comb += self.pads_egress_A.qaca_b.eq(if_obuf_A.qaca_b)
-        
+        self.comb += self.pads_egress_A.qacs_n.eq(if_obuf_A.qacs_a_n)
+        self.comb += self.pads_egress_A.qaca.eq(if_obuf_A.qaca_a)
+
+        self.comb += self.pads_egress_A.qbcs_n.eq(if_obuf_A.qacs_b_n)
+        self.comb += self.pads_egress_A.qbca.eq(if_obuf_A.qaca_b)
+
         self.comb += self.pads_egress_A.qack_t.eq(if_obuf_A.qack_t)
         self.comb += self.pads_egress_A.qack_c.eq(if_obuf_A.qack_c)
         self.comb += self.pads_egress_A.qbck_t.eq(if_obuf_A.qbck_t)
@@ -127,10 +127,10 @@ class DDR5RCD01CoreWrapper(Module):
             self.comb += self.pads_egress_B.dlbs.eq(if_sdram_B.dlbs_a)
             self.comb += self.pads_egress_B.qrst_n.eq(if_sdram_B.qrst_a_n)
             self.comb += self.pads_egress_B.derror_in_n.eq(if_sdram_B.derror_a_in_n)
-            self.comb += self.pads_egress_B.qacs_a_n.eq(if_obuf_B.qacs_a_n)
-            self.comb += self.pads_egress_B.qaca_a.eq(if_obuf_B.qaca_a)
-            self.comb += self.pads_egress_B.qacs_b_n.eq(if_obuf_B.qacs_b_n)
-            self.comb += self.pads_egress_B.qaca_b.eq(if_obuf_B.qaca_b)
+            self.comb += self.pads_egress_B.qacs_n.eq(if_obuf_B.qacs_a_n)
+            self.comb += self.pads_egress_B.qaca.eq(if_obuf_B.qaca_a)
+            self.comb += self.pads_egress_B.qbcs_n.eq(if_obuf_B.qacs_b_n)
+            self.comb += self.pads_egress_B.qbca.eq(if_obuf_B.qaca_b)
             self.comb += self.pads_egress_B.qack_t.eq(if_obuf_B.qack_t)
             self.comb += self.pads_egress_B.qack_c.eq(if_obuf_B.qack_c)
             self.comb += self.pads_egress_B.qbck_t.eq(if_obuf_B.qbck_t)
@@ -139,7 +139,7 @@ class DDR5RCD01CoreWrapper(Module):
             self.comb += self.pads_egress_B.qcck_c.eq(if_obuf_B.qcck_c)
             self.comb += self.pads_egress_B.qdck_t.eq(if_obuf_B.qdck_t)
             self.comb += self.pads_egress_B.qdck_c.eq(if_obuf_B.qdck_c)
-        
+
 
 
 

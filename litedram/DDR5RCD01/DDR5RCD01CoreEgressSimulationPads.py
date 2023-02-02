@@ -29,11 +29,11 @@ class DDR5RCD01CoreEgressSimulationPads(SimulationPads):
             SimPad('qrst_n', 1, False),
             # Adress, Chip Select
             # Top Row
-            SimPad('qacs_a_n', dcs_n_w, False),
-            SimPad('qaca_a', dca_w, False),
+            SimPad('qacs_n', dcs_n_w, False),
+            SimPad('qaca', dca_w, False),
             # Bottom Row
-            SimPad('qacs_b_n', dcs_n_w, False),
-            SimPad('qaca_b', dca_w, False),
+            SimPad('qbcs_n', dcs_n_w, False),
+            SimPad('qbca', dca_w, False),
             # Clock outputs
             # Rank 0, Row Top
             SimPad('qack_t', 1, False),
