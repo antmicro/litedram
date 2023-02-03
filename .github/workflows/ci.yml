@@ -167,3 +167,78 @@ jobs:
         run: |
           export PATH=/usr/local/riscv/bin:$PATH
           pytest test/test_ddr5.py -k ${{ format('test_ddr5_sim_dq_dqs_ratio_{1}_with_sub_channels_{0}_modules_per_rank_{2}', matrix.with_sub_channels, matrix.dq_dqs_ratio, matrix.module_in_rank) }} --verbose
+
+  test_ddr5_rdimm_verilator:
+    runs-on: ubuntu-22.04
+    name: "DDR5 Verilator tests"
+    strategy:
+      fail-fast: false
+      matrix:
+        dq_dqs_ratio:
+          - "4"
+          - "8"
+        module_in_rank:
+          - "1"
+          - "2"
+    steps:
+      # Checkout Repository
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Setup CCache
+        uses: hendrikmuhs/ccache-action@v1
+
+      # Install Tools
+      - name: Install Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install wget build-essential python3 ninja-build -y
+          sudo apt-get install libevent-dev libjson-c-dev flex bison git -y
+          sudo apt-get install libfl-dev libfl2 zlib1g-dev python3-pip autoconf -y
+          pip3 install setuptools
+          pip3 install requests
+          pip3 install pexpect
+          pip3 install meson==0.62.0
+          pip3 install pytest==7.1.0
+
+      # Install (n)Migen / LiteX / Cores
+      - name: Install LiteX
+        run: |
+          wget https://raw.githubusercontent.com/enjoy-digital/litex/master/litex_setup.py
+          python3 litex_setup.py init install --user
+          # temporary hack until merged to master
+          git -C ../litex remote add antmicro https://github.com/antmicro/litex.git
+          git -C ../litex fetch antmicro
+          git -C ../litex checkout $LITEX_BRANCH
+          git -C ../litex-boards checkout 6c05ddae1ba4d2b363e80001919e4682745cc3cf
+
+      # Install RISC-V GCC
+      - name: Install RISC-V GCC
+        run: |
+          wget https://raw.githubusercontent.com/enjoy-digital/litex/master/litex_setup.py
+          # python3 litex_setup.py gcc
+          curl -L https://static.dev.sifive.com/dev-tools/freedom-tools/v2020.08/riscv64-unknown-elf-gcc-10.1.0-2020.08.2-x86_64-linux-ubuntu14.tar.gz | tar -xzf -
+          mv riscv64-unknown-elf-gcc-10.1.0-2020.08.2-x86_64-linux-ubuntu14 ../riscv64-unknown-elf-gcc
+          sudo mkdir /usr/local/riscv
+          sudo cp -r $PWD/../riscv64-*/* /usr/local/riscv
+
+      - name: Build Verilator
+        run: |
+          sudo apt install help2man
+          export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
+          git clone https://github.com/verilator/verilator
+          cd verilator
+          autoconf
+          ./configure
+          make -j$(nproc)
+          sudo make install
+
+      # Install Project
+      - name: Install Project
+        run: python3 setup.py develop --user
+
+      # Test
+      - name: Run Tests
+        run: |
+          export PATH=/usr/local/riscv/bin:$PATH
+          pytest test/test_ddr5_rdimm_regression.py -k ${{ format('test_ddr5_rcd_sim_dq_dqs_ratio_{0}_modules_per_rank_{1}', matrix.dq_dqs_ratio, matrix.module_in_rank) }} --verbose
