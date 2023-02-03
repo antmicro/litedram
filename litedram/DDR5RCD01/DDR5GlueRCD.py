@@ -4,6 +4,8 @@
 # Copyright (c) 2023 Antmicro <www.antmicro.com>
 # SPDX-License-Identifier: BSD-2-Clause
 
+# python
+import logging
 # migen
 from migen import *
 # RCD
@@ -15,117 +17,115 @@ from litedram.DDR5RCD01.RCD_definitions import *
 from litedram.DDR5RCD01.RCD_interfaces import *
 from litedram.DDR5RCD01.RCD_interfaces_external import *
 
-class DDR5GlueRCD(Module):
-    """ 
-    DDR5 Glue RCD
+
+class DDR5GlueRCDCommon(Module):
+    """
+    DDR5GlueRCDCommon
     -------------
-    This module provides glue logic between DDR5 Simulation Pads 
-    and RCD Simulation Pads. This is required only to translate names
-    between blocks, which used different naming conventions.
+    This module provides glue logic for channel A and B common signals
+    between DDR5 Simulation Pads and RCD Simulation Pads.
+    This is required only to translate names between blocks,
+    which used different naming conventions(UDIMM from host, RDIMM in RCD).
 
     Module
     ------
-        - pads
 
     Parameters
     ----------
-    with_sub_channels controls (...)
-
-        Expected values:
-            True or False
-
+        - pads_ddr5
+        - pads_RCD
     """
-
-    def __init__(self, pads_ddr5, with_sub_channels=False, **kwargs):
-
+    def __init__(self, pads_ddr5, pads_RCD):
         # Connect simPHY to RCD
-        self.pi = DDR5RCD01CoreIngressSimulationPads()
-
-        connection_matrix_sc = {
-            'dck_t': ['ck_t', 'Forward'],
-            'dck_c': ['ck_c', 'Forward'],
-            'drst_n': ['reset_n', 'Forward'],
-            'alert_n': ['alert_n', 'Reverse'],
-        }
-        for key in connection_matrix_sc:
-            sig_eg = key
-            sig_in = connection_matrix_sc[key][0]
-            # Get attr in egress
-            atr_eg = getattr(self.pi, sig_eg)
-            # Get attr in ingress
-            atr_in = getattr(pads_ddr5, sig_in)
-            # Determine correct direction
-            direction = connection_matrix_sc[key][1]
-            if direction == 'Forward':
-                print('Connect : ' + sig_in + ' to ' + sig_eg)
-                self.comb += atr_eg.eq(atr_in)
-                pass
-            elif direction == 'Reverse':
-                print('Connect : ' + sig_eg + ' to ' + sig_in)
-                self.comb += atr_in.eq(atr_eg)
-                pass
-            else:
-                raise (
-                    'Unsupported option defined in connection matrix. Supported: Forward, Reverse')
-
-        prefixes = [""] if not with_sub_channels else ["A_", "B_"]
-        connection_matrix_dc = {
-            'dcs_n': ['cs_n', 'Forward'],
-            'dca': ['ca', 'Forward'],
-            'dpar': ['par', 'Forward'],
+        connection_matrix_sc = [
+            ('ck_t', "dck_t", 'Forward'),
+            ('ck_c', "dck_c", 'Forward'),
+            ('reset_n', "drst_n", 'Forward'),
+            ('alert_n', "alert_n", 'Reverse'),
+        ]
+        direction_to_buses = {
+            'Forward': (pads_ddr5, pads_RCD),
+            'Reverse': (pads_RCD, pads_ddr5),
         }
 
-        for prefix in prefixes:
-            for key in connection_matrix_dc:
-                sig_eg = prefix+key
-                sig_in = prefix+connection_matrix_dc[key][0]
-                # Get attr in egress
-                atr_eg = getattr(self.pi, sig_eg)
-                # Get attr in ingress
-                atr_in = getattr(pads_ddr5, sig_in)
-                # Determine correct direction
-                direction = connection_matrix_dc[key][1]
-                if direction == 'Forward':
-                    print('Connect : ' + sig_in + ' to ' + sig_eg)
-                    self.comb += atr_eg.eq(atr_in)
-                    pass
-                elif direction == 'Reverse':
-                    print('Connect : ' + sig_eg + ' to ' + sig_in)
-                    self.comb += atr_in.eq(atr_eg)
-                    pass
+        for src_name, dst_name, direction in connection_matrix_sc:
+            src, dst = direction_to_buses[direction]
+            logging.info(f'Connect : {src_name} to {dst_name}')
+            self.comb += getattr(dst, dst_name).eq(getattr(src, src_name))
+
+
+class DDR5GlueRCDChannel(Module):
+    """
+    DDR5GlueRCDChannel
+    -------------
+    This module provides glue logic for channels CA signals
+    between DDR5 Simulation Pads and RCD Simulation Pads.
+    This is required only to translate names between blocks,
+    which used different naming conventions(UDIMM from host, RDIMM in RCD).
+
+    Module
+    ------
+
+    Parameters
+    ----------
+        - pads_ddr5
+        - pads_RCD
+        - prefix (default "")
+    """
+    def __init__(self, pads_ddr5, pads_RCD, prefix=""):
+        # Connect simPHY to RCD
+        connection_matrix_sc = [
+            (f'{prefix}cs_n', 'dcs_n', 'Forward'),
+            (f'{prefix}ca',   'dca',   'Forward'),
+            (f'{prefix}par',  'dpar',  'Forward'),
+        ]
+        direction_to_buses = {
+            'Forward': (pads_ddr5, pads_RCD),
+            'Reverse': (pads_RCD, pads_ddr5),
+        }
+
+        for src_name, dst_name, direction in connection_matrix_sc:
+            src, dst = direction_to_buses[direction]
+            logging.info(f'Connect : {src_name} to {dst_name}')
+            self.comb += getattr(dst, dst_name).eq(getattr(src, src_name))
+
+
+class DDR5GlueRCDDataBuffer(Module):
+    """
+    DDR5GlueRCDDataBuffer
+    -------------
+    This module provides glue logic for channels data signals
+    between DDR5 Simulation Pads and RCD Simulation Pads.
+    This is required only to translate names between blocks,
+    which used different naming conventions(UDIMM from host, RDIMM in RCD).
+
+    Module
+    ------
+    Parameters
+    ----------
+        - pads_ddr5
+        - pads_RCD
+        - prefix (default "")
+    """
+    def __init__(self, pads_ddr5, pads_RCD, prefix=""):
+        # Connect simPHY to RCD
+        connection_matrix_sc = [
+            (f'{prefix}dq', 'dq'),
+            # ECC not yet supported
+            # ('cb', 'cb', 'Forward'),
+            (f'{prefix}dqs_t', 'dqs_t'),
+            (f'{prefix}dqs_c', 'dqs_c'),
+        ]
+
+        src, dst = pads_ddr5, pads_RCD
+
+        for src_name, dst_name in connection_matrix_sc:
+            logging.info(f'Connect : {src_name} to {dst_name}')
+            for suffix in ["", "_o", "_oe", "_i"]:
+                if suffix != "_i":
+                    self.comb += getattr(dst, dst_name+suffix).eq(getattr(src, src_name+suffix))
                 else:
-                    raise (
-                        'Unsupported option defined in connection matrix. Supported: Forward, Reverse')
-
-        # TODO confirm that dm_n and cb are the same signal
-        self.pdi = DDR5RCD01DataBufferSimulationPads()
-        connection_matrix_db = {
-            'dq': ['dq', 'Forward'],
-            'cb': ['dm_n', 'Forward'],
-            'dqs_t': ['dqs_t', 'Forward'],
-            'dqs_c': ['dqs_c', 'Forward'],
-        }
-        for prefix in prefixes:
-            for key in connection_matrix_db:
-                sig_eg = prefix+key
-                sig_in = prefix+connection_matrix_db[key][0]
-                # Get attr in egress
-                atr_eg = getattr(self.pdi, sig_eg)
-                # Get attr in ingress
-                atr_in = getattr(pads_ddr5, sig_in)
-                # Determine correct direction
-                direction = connection_matrix_db[key][1]
-                if direction == 'Forward':
-                    print('Connect : ' + sig_in + ' to ' + sig_eg)
-                    self.comb += atr_eg.eq(atr_in)
-                    pass
-                elif direction == 'Reverse':
-                    print('Connect : ' + sig_eg + ' to ' + sig_in)
-                    self.comb += atr_in.eq(atr_eg)
-                    pass
-                else:
-                    raise (
-                        'Unsupported option defined in connection matrix. Supported: Forward, Reverse')
+                    self.comb += getattr(src, src_name+suffix).eq(getattr(dst, dst_name+suffix))
 
 
 if __name__ == "__main__":
