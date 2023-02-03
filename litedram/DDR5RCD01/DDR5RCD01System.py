@@ -20,10 +20,7 @@ from litedram.DDR5RCD01.DDR5RCD01DataBufferSimulationPads import DDR5RCD01DataBu
 from litedram.DDR5RCD01.DDR5RCD01Shell import DDR5RCD01Shell
 
 from litedram.DDR5RCD01.RCD_definitions import *
-from litedram.DDR5RCD01.RCD_utils import *
-from litedram.DDR5RCD01.RCD_interfaces import *
-from litedram.DDR5RCD01.RCD_interfaces_external import *
-
+from litedram.DDR5RCD01.RCD_utils import EngTest, UnderConstruction, NotSupportedException
 
 class DDR5RCD01System(Module):
     """

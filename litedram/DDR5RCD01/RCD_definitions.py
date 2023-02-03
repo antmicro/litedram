@@ -7,7 +7,9 @@
 from enum import Enum
 import enum
 from migen import *
-from litedram.DDR5RCD01.RCD_utils import *
+
+from litedram.DDR5RCD01.RCD_utils import NotSupportedException
+
 #
 TIE_LOW = 0
 TIE_HIGH = 1
