@@ -25,7 +25,7 @@ from litedram.core.controller import ControllerSettings
 from litedram.phy.model import DFITimingsChecker, _speedgrade_timings, _technology_timings
 
 from litedram.phy.ddr5.simphy import DDR5SimPHY
-from litedram.phy.ddr5.sdram_simulation_model import DDR5SDRAMSimulationModel as DDR5Sim
+from litedram.phy.ddr5.sdram_simulation_model import DDR5SDRAMSimulationModel
 
 from litedram.phy.sim_utils import Clocks, CRG, Platform
 
@@ -345,24 +345,24 @@ class SimSoC(SoCCore):
         self.add_constant("MEMTEST_ADDR_SIZE", 8*1024)
         self.add_constant("DDR5_TRAINING_SIM", 1)
 
-        # DDR5 Sim -------------------------------------------------------------------------------
+        # DDR5 Module ------------------------------------------------------------------------------
         prefixes = [""] if not with_sub_channels else ["A_", "B_"]
         alerts = {}
         for prefix in prefixes:
             for i in range(modules_in_rank):
-                alerts[prefix+f"alert_{i}"] = Signal()
-                setattr(self.submodules, prefix+'ddr5sim', DDR5Sim(
-                        pads          = self.ddrphy.pads,
-                        cl            = self.sdram.controller.settings.phy.cl,
-                        cwl           = self.sdram.controller.settings.phy.cwl,
-                        sys_clk_freq  = sys_clk_freq,
-                        log_level     = log_level,
-                        geom_settings = sdram_module.geom_settings,
-                        prefix        = prefix,
-                        module_num    = i,
-                        dq_dqs_ratio  = dq_dqs_ratio,
-                ))
-                self.add_csr(prefix+f"ddr5sim_{i}")
+                module = DDR5SDRAMSimulationModel(
+                    pads          = self.ddrphy.pads,
+                    cl            = self.sdram.controller.settings.phy.cl,
+                    cwl           = self.sdram.controller.settings.phy.cwl,
+                    sys_clk_freq  = sys_clk_freq,
+                    log_level     = log_level,
+                    geom_settings = sdram_module.geom_settings,
+                    prefix        = prefix,
+                    module_num    = i,
+                    dq_dqs_ratio  = dq_dqs_ratio,
+                )
+                setattr(self.submodules, prefix+'ddr5sim', module)
+                alerts[prefix+f"alert_{i}"] = module.alert_n
         self.comb += self.ddrphy.pads.alert_n.eq(reduce(and_, alerts.values()))
 
         self.add_constant("CONFIG_SIM_DISABLE_BIOS_PROMPT")
