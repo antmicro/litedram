@@ -90,19 +90,19 @@ class TestBed(Module):
 
         Note, the Data Bus is routed through the RCD System to create
         a unified environment for both RDIMM and LRDIMM solutions;
-        however, in the RDIMM use case the signals should appear 
+        however, in the RDIMM use case the signals should appear
         unchanged on the egress.
 
         DDR5 Command Sequencer
         ----------------------
 
-        This device can theoretically be derived from a full host model, 
+        This device can theoretically be derived from a full host model,
         a memory controller model or a PHY model. In this implementation,
         the DFISequencer connected to a SimPHY was selected to create
         a simple and fast test environment.
 
-        DFISequence -> DFISerializer -> SimPHY -- to RCD -> 
-                                            -- to RAM -> 
+        DFISequence -> DFISerializer -> SimPHY -- to RCD ->
+                                            -- to RAM ->
 
 
         DDR5 RCD 01 System
@@ -119,7 +119,7 @@ class TestBed(Module):
 
         A simulation view which is capable of receiving DDR5 commands and
         interacting with the ADR/CMD and DATA bus is neccessary to validate
-        the RCD model.            
+        the RCD model.
     """
 
     def __init__(self):
@@ -137,7 +137,8 @@ class TestBed(Module):
             aligned_reset_zero=True,
             masked_write=False,
             dq_dqs_ratio=self.DQ_DQS_RATIO,
-            with_sub_channels=False
+            with_sub_channels=False,
+            direct_control=False,
         )
         self.submodules += self.xPHY
 
@@ -177,7 +178,7 @@ class TestBed(Module):
         """
             SDRAM
         """
-        
+
 
 
         xDRAM = DDR5Sim()
@@ -226,7 +227,7 @@ class TestBed(Module):
 
 
 class DDR5RDIMMIntegrationTests(unittest.TestCase):
-    """ 
+    """
     DDR5RDIMMIntegrationTests
     -------------------------
     """
