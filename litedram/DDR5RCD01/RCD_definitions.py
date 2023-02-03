@@ -6,6 +6,8 @@
 
 from enum import Enum
 import enum
+from collections import namedtuple
+
 from migen import *
 
 from litedram.DDR5RCD01.RCD_utils import NotSupportedException
@@ -373,6 +375,8 @@ class dimm_type(Enum):
     LRDIMM = 3
     LPDIMM = 4
     SODIMM = 5
+
+Payload = namedtuple('payload', ['mra', 'op', 'cw'])
 
 if __name__ == "__main__":
     raise NotSupportedException

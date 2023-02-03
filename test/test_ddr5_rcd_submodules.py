@@ -10,6 +10,7 @@ import os
 import pytest
 # migen
 from migen import *
+from litedram.DDR5RCD01.RCD_utils import UnderConstruction,NotSupportedException
 
 RCDSubmodulesDirectory = os.path.dirname(os.path.dirname(__file__))+"/litedram/DDR5RCD01"
 

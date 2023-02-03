@@ -64,6 +64,18 @@ class BusCSCAInactive(BusCSCACommand):
         self.cmd["padding_len"] = 1
 
 
+class BusCSCAGeneric1Multi(BusCSCACommand):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.cmd["cs_signalling"] = "normal"
+        self.cmd["opcode"] = 0b11111
+        self.cmd["payload"] = Payload(0x00, 0x00, 0x0)
+        self.cmd["randomize_payload"] = True
+        self.cmd["datarate"] = "DDR"
+        self.cmd["ui"] = 1
+        self.cmd["is_padded"] = False
+
+
 class BusCSCAGeneric1(BusCSCACommand):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -92,6 +104,18 @@ class BusCSCAGeneric1AB(BusCSCAGeneric1):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.cmd["destination_rank"] = "AB"
+
+
+class BusCSCAGeneric2Multi(BusCSCACommand):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.cmd["cs_signalling"] = "normal"
+        self.cmd["opcode"] = 0b11101
+        self.cmd["payload"] = Payload(0x00, 0x00, 0x0)
+        self.cmd["randomize_payload"] = True
+        self.cmd["datarate"] = "DDR"
+        self.cmd["ui"] = 2
+        self.cmd["is_padded"] = False
 
 
 class BusCSCAGeneric2(BusCSCACommand):

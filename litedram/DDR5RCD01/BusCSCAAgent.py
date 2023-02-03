@@ -19,7 +19,7 @@ from litedram.DDR5RCD01.RCD_interfaces_external import *
 from litedram.DDR5RCD01.RCD_utils import *
 from litedram.DDR5RCD01.BusCSCASequencer import BusCSCASequencer
 
-Payload = namedtuple('payload', ['mra', 'op', 'cw'])
+# Payload = namedtuple('payload', ['mra', 'op', 'cw'])
 
 
 class BusCSCAAgent(Module):

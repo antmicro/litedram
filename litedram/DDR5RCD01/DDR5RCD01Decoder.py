@@ -4,9 +4,6 @@
 # Copyright (c) 2023 Antmicro <www.antmicro.com>
 # SPDX-License-Identifier: BSD-2-Clause
 
-# Python
-import logging
-from operator import xor
 # migen
 from migen import *
 from migen.fhdl import verilog
@@ -15,68 +12,77 @@ from litedram.DDR5RCD01.RCD_definitions import *
 from litedram.DDR5RCD01.RCD_interfaces import *
 from litedram.DDR5RCD01.RCD_interfaces_external import *
 from litedram.DDR5RCD01.RCD_utils import *
-from litedram.DDR5RCD01.SimCSCADriver import SimCSCADriver
 
 
 class DDR5RCD01Decoder(Module):
     """
-        DDR5 RCD01 Decoder implements XOR logic to
-        detect positive and negative edges on dcs_n signals.
-        If a negative edge is detected, then a command is present on
-        the CSCA bus. It is assumed that the incoming messages are
-        DDR and may take up to 4 UIs (max_ui_num=4). 4 UIs, starting
-        with the one, when negedge occured, are captured in arrays:
-        
-        (Array) commands_cs_n = [CS_1UI, CS_2UI, CS_3UI, CS_4 UI]
-        
-        Similarly for CA and DPAR
-        
-        An internal counter (ui_counter) is used to count the 4 UIs.
-        Counter states max_ui_num=4, ..., 2 are used to capture the last 3 UIs.
-        Once the counter reaches state 1, the full message is captured
-        into the qcommands and a valid signal is asserted for one clock cycle.
-        The output is valid only in this one cycle.
+        DDR5 RCD01 Decoder
+        ------------------
 
-        There is a delay from assertion of dcs_n to qvalid, which may be too
-        long for scenarios, in which the RCD should react quickly (c.f. parity error
-        blocking).
+        DDR5 RCD01 Decoder implements XOR logic to detect positive and negative edges on dcs_n signals.
+
+        1. If a negative edge is detected, then either:
+             a single command is present on the CSCA bus
+             a sequence of commands started
+
+        Single command behavior
+        -----------------------
+        If bit CA[1] is high, then the command is 1UI, else a 2UI command.
+
+            Single UI
+            ---------
+            qvalid will be set for the next 2 clock cycles.
+            is_this_ui_odd will toggle once (0,1)
+            is_cmd_beginning will produce a single pulse
+
+            Double UI
+            ---------
+            qvalid will be set for the next 4 clock cycles.
+            is_this_ui_odd will toggle twice (0,1,0,1)
+            is_cmd_beginning will produce a single pulse
+
+        Sequence of commands behavior
+        -----------------------------
+            qvalid will be set for z clock cycles:
+                z=2k+4j,
+                where k is the number of 1UI commands,
+                where j is the number of 2UI commands,
+            is_this_ui_odd will toggle as long as qvalid is asserted
+            is_cmd_beginning will produce a single pulses. Their
+            total number will be equal to the number of input commands (k+j)
 
         Module
         ------
-
+        if_ibuf - The input CSCA bus interface. {CS_n[1:0], CA[6:0], DPAR} signals.
+        qvalid - If this signal is asserted, then a valid UI is present on the qcs_n, qca ports.
+        qca, qcs_n - CSCA bus
+        is_this_ui_odd - This signal is asserted, every time an odd UI is present on the outputs.
+        is_cmd_beginning - This signal is asserted every time a begining of a command is detected.
 
         Parameters
         ------
-        max_ui_num
-
-        cs_n_w
-
-        ca_w
+        N/A
 
     """
 
     def __init__(self,
                  if_ibuf,
+                 qca,
+                 qcs_n,
                  qvalid,
-                 qcommands_cs_n,
-                 qcommands_ca,
-                 qcommands_par,
-                 max_ui_num=4,
-                 cs_n_w=2,
-                 ca_w=7
+                 is_this_ui_odd,
+                 is_cmd_beginning,
+                 CS_BIT_SELECT=0
                  ):
-        MAX_UI_NUM = max_ui_num
-        commands_cs_n = Array(Signal(cs_n_w) for y in range(MAX_UI_NUM))
-        commands_ca = Array(Signal(ca_w) for y in range(MAX_UI_NUM))
-        commands_par = Array(Signal() for y in range(MAX_UI_NUM))
-
-        UI_counter = Signal(2)
+        CA_IS_1UI_BIT = 1
+        cs_n_w = len(if_ibuf.dcs_n[CS_BIT_SELECT])
+        ca_w = len(if_ibuf.dca)
 
         """
             XOR edge detection
         """
-        del_dcs_n = Signal(cs_n_w)
-        self.sync += del_dcs_n.eq(if_ibuf.dcs_n)
+        del_dcs_n = Signal(cs_n_w, reset=~0)
+        self.sync += del_dcs_n.eq(if_ibuf.dcs_n[CS_BIT_SELECT])
 
         del_dca = Signal(ca_w)
         self.sync += del_dca.eq(if_ibuf.dca)
@@ -92,112 +98,79 @@ class DDR5RCD01Decoder(Module):
 
         det_negedge = Signal(2)
         self.comb += det_negedge.eq(det_edge & ~if_ibuf.dcs_n)
+
+        """
         
         """
-            UI counter
-        """
-        ui_counter = Signal(8)
+        is_cmd_active = Signal()
+
+        is_1_ui_command = Signal()
+        self.comb += is_1_ui_command.eq(if_ibuf.dca[CA_IS_1UI_BIT])
+
+        force_active_high = Signal(2)
+
+        del_is_1_ui_command = Signal()
+        self.sync += del_is_1_ui_command.eq(is_1_ui_command)
+
         self.sync += If(
-            det_negedge != 0b00,
-            ui_counter.eq(MAX_UI_NUM)
+            is_cmd_active & (is_this_ui_odd == 0) & (del_is_1_ui_command == 0),
+            force_active_high.eq(3),
         ).Else(
-            If(ui_counter == 0,
-               ui_counter.eq(ui_counter)
-               ).Else(
-                ui_counter.eq(ui_counter-1)
-            )
-        )
-        
-        self.sync += If(
-            det_negedge != 0b00,
-            commands_cs_n[0].eq(if_ibuf.dcs_n),
-            commands_ca[0].eq(if_ibuf.dca),
-            commands_par[0].eq(if_ibuf.dpar),
-        )
-
-        for i in [MAX_UI_NUM, MAX_UI_NUM-1, MAX_UI_NUM-2]:
-            self.sync += If(
-                ui_counter == i,
-                commands_cs_n[MAX_UI_NUM+1-i].eq(if_ibuf.dcs_n),
-                commands_ca[MAX_UI_NUM+1-i].eq(if_ibuf.dca),
-                commands_par[MAX_UI_NUM+1-i].eq(if_ibuf.dpar),
-            ).Elif(
-                ui_counter == 0,
-                commands_cs_n[MAX_UI_NUM+1-i].eq(0),
-                commands_ca[MAX_UI_NUM+1-i].eq(0),
-                commands_par[MAX_UI_NUM+1-i].eq(0),
-            )
-        
-        """
-            Capture output
-        """
-        # self.qvalid = Signal()
-        # self.qcommands_cs_n = Array(Signal(cs_n_w) for y in range(MAX_UI_NUM))
-        # self.qcommands_ca = Array(Signal(ca_w) for y in range(MAX_UI_NUM))
-        # self.qcommands_par = Array(Signal() for y in range(MAX_UI_NUM))
-
-        for i in range(MAX_UI_NUM):
-            self.sync += If(
-                ui_counter == 1,
-                qcommands_cs_n[i].eq(commands_cs_n[i]),
-                qcommands_ca[i].eq(commands_ca[i]),
-                qcommands_par[i].eq(commands_par[i]),
-                qvalid.eq(1),
+            If(
+                force_active_high,
+                force_active_high.eq(force_active_high-1),
             ).Else(
-                qcommands_cs_n[i].eq(0),
-                qcommands_ca[i].eq(0),
-                qcommands_par[i].eq(0),
-                qvalid.eq(0),
+                force_active_high.eq(0),
             )
 
+        )
+        is_force_non_zero = Signal()
+        self.comb += is_force_non_zero.eq(force_active_high > 0)
 
-
-class mem(Module):
-    def __init__(self):
-
-        pass
-
-
-class TestBed(Module):
-    def __init__(self):
-        max_ui_num = 4
-        cs_n_w = 2
-        ca_w = 7
-        if_ibuf = If_ibuf()
-        qvalid = Signal()
-        qcommands_cs_n = Array(Signal(cs_n_w) for y in range(max_ui_num))
-        qcommands_ca = Array(Signal(ca_w) for y in range(max_ui_num))
-        qcommands_par = Array(Signal() for y in range(max_ui_num))
-
-        self.submodules.driver = SimCSCADriver(
-            if_ibuf_o=if_ibuf,
+        self.sync += If(
+            det_negedge != 0,
+            is_cmd_active.eq(1),
+        ).Else(
+            If(
+                det_posedge,
+                is_cmd_active.eq(0),
+            )
         )
 
-        self.submodules.dut = DDR5RCD01Decoder(
-            if_ibuf=if_ibuf,
-            qvalid=qvalid,
-            qcommands_cs_n=qcommands_cs_n,
-            qcommands_ca=qcommands_ca,
-            qcommands_par=qcommands_par,
-            max_ui_num=max_ui_num,
-            cs_n_w=cs_n_w,
-            ca_w=ca_w,
+        pseudo_clock = Signal()
+        pseudo_clock_en = Signal()
+        self.sync += If(
+            det_negedge | is_cmd_active,
+            pseudo_clock_en.eq(1),
+        ).Else(
+            pseudo_clock_en.eq(0),
         )
 
+        self.sync += If(
+            det_negedge,
+            pseudo_clock.eq(0)
+        ).Else(
+            If(
+                pseudo_clock_en,
+                pseudo_clock.eq(~pseudo_clock)
+            ).Else(
+                pseudo_clock.eq(0)
+            )
+        )
+        """
+            if posedge came, but in previous cycle is_1_ui_command was low, then 
+            delay deassertion of cmd_active
+        """
 
-def run_test(tb):
-    logging.debug('Write test')
-    yield from tb.driver.seq_cmds()
-    for i in range(1):
-        yield
-    logging.debug('Yield from write test.')
+        self.comb += is_this_ui_odd.eq(pseudo_clock)
+        self.comb += qvalid.eq(is_cmd_active | is_force_non_zero)
+
+        self.comb += is_cmd_beginning.eq(qvalid &
+                                         (~is_this_ui_odd) & (is_force_non_zero == 0))
+
+        self.comb += qcs_n.eq(del_dcs_n)
+        self.comb += qca.eq(del_dca)
 
 
 if __name__ == "__main__":
-    eT = EngTest()
-    logging.info("<- Module called")
-    tb = TestBed()
-    logging.info("<- Module ready")
-    run_simulation(tb, run_test(tb), vcd_name=eT.wave_file_name)
-    logging.info("<- Simulation done")
-    logging.info(str(eT))
+    NotSupportedException

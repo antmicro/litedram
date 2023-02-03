@@ -19,6 +19,7 @@ from litedram.DDR5RCD01.RCD_interfaces_external import *
 from litedram.DDR5RCD01.RCD_utils import *
 from litedram.DDR5RCD01.BusCSCAAgent import BusCSCAAgent
 from litedram.DDR5RCD01.BusCSCACommand import *
+# from test.CRG import CRG
 
 
 Payload = namedtuple('payload', ['mra', 'op', 'cw'])
@@ -29,6 +30,8 @@ class EnvironmentScenarios(enum.IntEnum):
     NONE = 0
     TEST_CW_WR_RD = 1
     SIMPLE_GENERIC = 2
+    DECODER_UT = 3
+    DECODER_MCA = 4
 
 
 class BusCSCAEnvironment(Module):
@@ -62,6 +65,10 @@ class BusCSCAEnvironment(Module):
         self.submodules.agent = xBusCSCAAgent
         self.scenarios = []
 
+    def run_from_test(self, queue):
+        self.queue = queue
+        yield from self.agent.run_agent(self.queue)
+
     def run_env(self, scenario_select=EnvironmentScenarios.NONE):
         self.build_scenario(scenario_select=scenario_select)
         yield from self.agent.run_agent(self.queue)
@@ -83,8 +90,42 @@ class BusCSCAEnvironment(Module):
                 inactive_post_len=1,
                 pattern_len=4
             )
+        elif scenario_select == EnvironmentScenarios.DECODER_UT:
+            self.queue = self.simple_generic(
+                inactive_pre_len=2,
+                inactive_inter_len=3,
+                inactive_post_len=1,
+                pattern_len=4
+            )
+        elif scenario_select == EnvironmentScenarios.DECODER_MCA:
+            self.queue = self.decoder_mca(
+                inactive_pre_len=1,
+                inactive_inter_len=0,
+                inactive_post_len=1,
+                pattern_len=2
+            )
         else:
             self.queue = []
+
+    def decoder_mca(self,
+                    inactive_pre_len=5,
+                    inactive_inter_len=0,
+                    inactive_post_len=1,
+                    pattern_len=4
+                    ):
+        scenario = []
+        for i in range(inactive_pre_len):
+            scenario += [BusCSCAInactive().cmd]
+
+        for i in range(pattern_len):
+            scenario += self.mca_mix()
+            for j in range(inactive_inter_len):
+                scenario += [BusCSCAInactive().cmd]
+
+        for i in range(inactive_post_len):
+            scenario += [BusCSCAInactive().cmd]
+
+        return scenario
 
     def simple_generic(self,
                        inactive_pre_len=5,
@@ -128,6 +169,32 @@ class BusCSCAEnvironment(Module):
 
         return scenario
 
+    def multi_cmd(self):
+        flow = []
+        for _ in range(3):
+            flow += [
+                BusCSCAGeneric1Multi().cmd,
+            ]
+        flow += [
+            BusCSCAGeneric2Multi().cmd,
+        ]
+
+        return flow
+
+    def generic_cmd(self):
+        flow = []
+        flow += [
+            BusCSCAGeneric1().cmd,
+            BusCSCAGeneric2().cmd,
+        ]
+        return flow
+
+    def mca_mix(self):
+        flow = []
+        flow += self.generic_cmd()
+        flow += self.multi_cmd()
+        return flow
+
     def generic_mix(self):
         flow = []
         flow += [
@@ -159,6 +226,18 @@ class BusCSCAEnvironment(Module):
 
 class TestBed(Module):
     def __init__(self):
+        RESET_TIME = 1
+        self.clocks = {
+            "sys":      (128, 63),
+            "sysx2":    (64, 31),
+            "sys_rst":  (128, 63+4),
+        }
+        self.submodules.xcrg = CRG(
+            clocks=self.clocks,
+            reset_cnt=RESET_TIME
+        )
+        self.generators = {}
+
         if_ibuf_o = If_ibuf()
         self.submodules.dut = BusCSCAEnvironment(
             if_ibuf_o=if_ibuf_o,
