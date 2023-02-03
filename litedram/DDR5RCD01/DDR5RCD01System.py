@@ -38,7 +38,7 @@ class DDR5RCD01System(Module):
         - RCD Shell or RCD Chip
         - Data Buffer Shell or Data Buffer Chip
 
-    The "shell" is a view, which only implementes pass-through function. The "chip" 
+    The "shell" is a view, which only implementes pass-through function. The "chip"
     is a view, which implements the physical function.
 
     TODO enable BCOM support
@@ -48,8 +48,8 @@ class DDR5RCD01System(Module):
     Dual-channel support
     --------------------
     According to the specification the RCD system is always dual-channel, however,
-    to enable quicker simulations, a single-channel mode is implemented. 
-    The convention is to pass 'None' object to the ingress of the B channel. 
+    to enable quicker simulations, a single-channel mode is implemented.
+    The convention is to pass 'None' object to the ingress of the B channel.
     This causes the RCD Core not to build the B channel.
 
     Module
@@ -70,7 +70,7 @@ class DDR5RCD01System(Module):
     Parameters
     ----------
     rcd_passthrough
-        This parameter controls selection between the RCD Shell (false) 
+        This parameter controls selection between the RCD Shell (false)
         and RCD Chip (true).
 
         Expected values:
@@ -87,59 +87,55 @@ class DDR5RCD01System(Module):
     """
 
     def __init__(self,
-                 pads_ingress_dq,
+                 pads_ingress_dq_A,
+                 pads_ingress_dq_B,
                  pads_ingress_A,
                  pads_ingress_B,
                  pads_ingress_common,
                  pads_sideband,
                  rcd_passthrough=True,
                  sideband_type=sideband_type.I2C,
+                 dimm_type=dimm_type.RDIMM,
                  ):
 
         if rcd_passthrough == True:
-            if pads_ingress_B is not None:
-                xRCD = DDR5RCD01Shell(
-                    pads_ingress_A=pads_ingress_A,
-                    pads_ingress_B=pads_ingress_B,
-                    pads_ingress_common=pads_ingress_common,
-                    pads_sideband=pads_sideband,
-                )
-            else:
-                xRCD = DDR5RCD01Shell(
-                    pads_ingress_A=pads_ingress_A,
-                    pads_ingress_B=None,
-                    pads_ingress_common=pads_ingress_common,
-                    pads_sideband=pads_sideband,
-                )
+            RCD_cls = DDR5RCD01Shell
         else:
-            if pads_ingress_B is not None:
-                xRCD = DDR5RCD01Chip(
-                    pads_ingress_A=pads_ingress_A,
-                    pads_ingress_B=pads_ingress_B,
-                    pads_ingress_common=pads_ingress_common,
-                    pads_sideband=pads_sideband,
-                )
-            else:
-                xRCD = DDR5RCD01Chip(
-                    pads_ingress_A=pads_ingress_A,
-                    pads_ingress_B=None,
-                    pads_ingress_common=pads_ingress_common,
-                    pads_sideband=pads_sideband,
-                )
+            RCD_cls = DDR5RCD01Chip
+
+        xRCD = RCD_cls(
+            pads_ingress_A      = pads_ingress_A,
+            pads_ingress_B      = pads_ingress_B,
+            pads_ingress_common = pads_ingress_common,
+            pads_sideband       = pads_sideband,
+            dimm_type           = dimm_type,
+        )
         self.submodules += xRCD
+
         self.pads_egress_A = xRCD.pads_egress_A
-        if pads_ingress_B is not None:
-            self.pads_egress_B = xRCD.pads_egress_B
-        self.pads_bcom_A = xRCD.pads_bcom_A
-        self.pads_bcom_B = xRCD.pads_bcom_B
+
+        if dimm_type == dimm_type.LRDIMM:
+            self.pads_bcom_A   = xRCD.pads_bcom_A
+            if pads_ingress_B is not None:
+                self.pads_bcom_B   = xRCD.pads_bcom_B
 
         # Data Buffer
-        xDB = DDR5RCD01DataBuffer(
-            pads_ingress=pads_ingress_dq,
-            dimm_type=dimm_type.RDIMM
+        xDB_A = DDR5RCD01DataBuffer(
+            pads_ingress = pads_ingress_dq_A,
+            dimm_type    = dimm_type,
         )
-        self.submodules += xDB
-        self.pads_egress_dq = xDB.pads_egress
+        self.submodules += xDB_A
+        self.pads_egress_dq_A = xDB_A.pads_egress
+
+        if pads_ingress_B is not None:
+            self.pads_egress_B = xRCD.pads_egress_B
+            # Data Buffer
+            xDB_B = DDR5RCD01DataBuffer(
+                pads_ingress = pads_ingress_dq_B,
+                dimm_typei   = dimm_type,
+            )
+            self.submodules += xDB_B
+            self.pads_egress_dq_B = xDB_B.pads_egress
 
 
 # if __name__ == "__main__":
@@ -191,14 +187,16 @@ class DDR5RCD01System(Module):
 
 class TestBed(Module):
     def __init__(self):
-        self.pads_ingress_dq = DDR5RCD01DataBufferSimulationPads()
+        self.pads_ingress_dq_A = DDR5RCD01DataBufferSimulationPads()
+        self.pads_ingress_dq_B = DDR5RCD01DataBufferSimulationPads()
         self.pads_ingress_A = DDR5RCD01ChannelIngressSimulationPads()
         self.pads_ingress_B = DDR5RCD01ChannelIngressSimulationPads()
         self.pads_ingress_common = DDR5RCD01CommonIngressSimulationPads()
         self.pads_sideband = DDR5RCD01SidebandSimulationPads()
 
         xSystem_dc = DDR5RCD01System(
-            pads_ingress_dq=self.pads_ingress_dq,
+            pads_ingress_dq_A=self.pads_ingress_dq_A,
+            pads_ingress_dq_B=self.pads_ingress_dq_B,
             pads_ingress_A=self.pads_ingress_A,
             pads_ingress_B=self.pads_ingress_B,
             pads_ingress_common=self.pads_ingress_common,

@@ -68,21 +68,12 @@ class DDR5RCD01Chip(Module):
             Core Wrapper
         """
         if dimm_type == dimm_type.RDIMM:
-            if pads_ingress_B is not None:
-                xCore = DDR5RCD01CoreWrapper(
-                    pads_ingress_A=pads_ingress_A,
-                    pads_ingress_B=pads_ingress_B,
-                    pads_ingress_common=pads_ingress_common,
-                    pads_sideband=pads_sideband,
-                )
-            else:
-                xCore = DDR5RCD01CoreWrapper(
-                    pads_ingress_A=pads_ingress_A,
-                    pads_ingress_B=None,
-                    pads_ingress_common=pads_ingress_common,
-                    pads_sideband=pads_sideband,
-                )
-
+            xCore = DDR5RCD01CoreWrapper(
+                pads_ingress_A=pads_ingress_A,
+                pads_ingress_B=pads_ingress_B,
+                pads_ingress_common=pads_ingress_common,
+                pads_sideband=pads_sideband,
+            )
         elif dimm_type == dimm_type.LRDIMM:
             raise NotImplementedError("LRDIMM is not supported")
 
