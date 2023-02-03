@@ -80,7 +80,7 @@ class RCDGlueDDR5DataBuffer(Module):
         - pads_RCD
         - pads_SDRAM
     """
-    def __init__(self, pads_RCD, pads_SDRAM, prefix=""):
+    def __init__(self, pads_RCD, pads_SDRAM, interleave=False, offset=0):
         # Connect simPHY to RCD
         connection_matrix_sc = [
             ('dq', 'dq'),
@@ -89,15 +89,44 @@ class RCDGlueDDR5DataBuffer(Module):
             ('dqs_t', 'dqs_t'),
             ('dqs_c', 'dqs_c'),
         ]
-        src, dst = pads_RCD, pads_SDRAM
+        dq_dqs_ratio = len(pads_SDRAM.dq)//len(pads_SDRAM.dqs_t)
+        dq_start  = 0
+        dq_step   = dq_dqs_ratio
+        dqs_start = 0
+        dqs_step  = 1
+        if interleave:
+            dq_start  = offset * dq_dqs_ratio
+            dq_step   = 2 * dq_dqs_ratio
+            dqs_start = offset
+            dqs_step  = 2
 
+        src, dst = pads_RCD, pads_SDRAM
         for src_name, dst_name in connection_matrix_sc:
+            start_idx = dq_start
+            step      = dq_step
+            width     = dq_dqs_ratio
+            if "dqs" in dst_name:
+                start_idx = dqs_start
+                step      = dqs_step
+                wodth     = 1
+
             for suffix in ["", "_o", "_oe", "_i"]:
-                logging.info(f'Connect : {src_name+suffix} to {dst_name+suffix}')
-                if suffix != "_i":
-                    self.comb += getattr(dst, dst_name+suffix).eq(getattr(src, src_name+suffix))
-                else:
-                    self.comb += getattr(src, src_name+suffix).eq(getattr(dst, dst_name+suffix) | getattr(src, src_name+suffix))
+                src_sig = getattr(src, src_name+suffix)
+                dst_sig = getattr(dst, dst_name+suffix)
+                for dst_cnt, src_offset in enumerate(range(start_idx, len(src_sig), step)):
+                    logging.info(
+                        f'Connect : {src_name+suffix}'
+                        f'[{src_offset}:{src_offset+width}] to {dst_name+suffix}'
+                        f'[{dst_cnt*width}:{(dst_cnt+1)*width}]'
+                    )
+                    if suffix != "_i":
+                        self.comb += dst_sig[dst_cnt*width:(dst_cnt+1)*width].eq(
+                            src_sig[src_offset:src_offset+width])
+                    else:
+                        self.comb += src_sig[src_offset:src_offset+width].eq(
+                            dst_sig[dst_cnt*width:(dst_cnt+1)*width] |
+                            src_sig[src_offset:src_offset+width]
+                        )
 
 
 if __name__ == "__main__":

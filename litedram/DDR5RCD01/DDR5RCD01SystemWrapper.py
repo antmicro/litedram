@@ -91,6 +91,12 @@ class DDR5RCD01SystemWrapper(Module):
             "C": "back_top",
             "D": "back_bottom",
         }
+        quarter_to_offset = {
+            "A": 1,
+            "B": 0,
+            "C": 1,
+            "D": 0,
+        }
 
         dq_dqs_ratio_A = (len_dq_A + len_cb_A)//len_dqs_A
         dq_dqs_ratio_B = (len_dq_B + len_cb_B)//len_dqs_B
@@ -101,16 +107,34 @@ class DDR5RCD01SystemWrapper(Module):
 
         for prefix in ["A_", "B_"]:
             dq, dq_dqs_ratio, egress, egress_dq = constans[prefix]
+            top = False
+            if (dq//dq_dqs_ratio) % 2 == 0:
+                dq /= 2
+                top = True
             pads = []
-            for val in quarters.values():
-                setattr(self, prefix+val,
-                    DDR5SimulationPads(
-                        databits=dq,
-                        dq_dqs_ratio=dq_dqs_ratio,
+            for quarter, val in quarters.items():
+                if "top" in val and top:
+                    setattr(self, prefix+val,
+                        DDR5SimulationPads(
+                            databits=dq,
+                            dq_dqs_ratio=dq_dqs_ratio,
+                        )
                     )
+                    pads.append(getattr(self, prefix+val))
+                else:
+                    setattr(self, prefix+val,
+                        DDR5SimulationPads(
+                            databits=dq,
+                            dq_dqs_ratio=dq_dqs_ratio,
+                        )
+                    )
+                    pads.append((quarter, getattr(self, prefix+val)))
+            for quarter, pad in pads:
+                self.submodules += RCDGlueDDR5Channel(egress, pad, quarter)
+                self.submodules += RCDGlueDDR5DataBuffer(
+                    egress_dq,
+                    pad,
+                    interleave=top,
+                    offset=quarter_to_offset[quarter]
                 )
-                pads.append(getattr(self, prefix+val))
-            for i, (quarter, name) in enumerate(quarters.items()):
-                self.submodules += RCDGlueDDR5Channel(egress, pads[i], quarter)
-                self.submodules += RCDGlueDDR5DataBuffer(egress_dq, pads[i])
-            self.comb += egress.derror_in_n.eq(reduce(or_, [pad.alert_n for pad in pads]))
+            self.comb += egress.derror_in_n.eq(reduce(or_, [pad[1].alert_n for pad in pads]))
