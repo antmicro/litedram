@@ -54,6 +54,8 @@ class SimulationPads(Module):
 
     def __init__(self, **kwargs):
         for pad  in self.layout(**kwargs):
+            if pad.width == 0:
+                continue
             if pad.io:
                 o, i, oe = (f"{pad.name}_{suffix}" for suffix in ["o", "i", "oe"])
                 setattr(self, pad.name, Signal(pad.width))
