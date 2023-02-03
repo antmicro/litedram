@@ -11,7 +11,9 @@ import pytest
 # migen
 from migen import *
 
-pytestmark = pytest.mark.parametrize("file", [file for file in os.listdir(os.path.dirname(os.path.dirname(__file__))) if file.endswith('.py')])
+RCDSubmodulesDirectory = os.path.dirname(os.path.dirname(__file__))+"/litedram/DDR5RCD01"
+
+pytestmark = pytest.mark.parametrize("file", [file for file in os.listdir(RCDSubmodulesDirectory) if file.endswith('.py')])
 
 class Test_DDR5RCD01System:
     class TestBed(Module):
@@ -19,10 +21,9 @@ class Test_DDR5RCD01System:
             pass
 
         def scenario(self, py):
-            _dir = os.path.dirname(os.path.dirname(__file__))+"/"
             try:
                 subprocess.check_output(
-                    "python "+_dir+py, shell=True, stderr=subprocess.STDOUT)
+                    "python "+RCDSubmodulesDirectory+"/"+py, shell=True, stderr=subprocess.STDOUT)
             except subprocess.CalledProcessError as e:
                 if "UnderConstruction" in str(e.output):
                     raise UnderConstruction
