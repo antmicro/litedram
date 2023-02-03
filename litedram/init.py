@@ -990,7 +990,7 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
 
     def ck(sec):
         # FIXME: use sys_clk_freq (should be added e.g. to TimingSettings), using arbitrary value for now
-        fmax = 250e6 # as we perform active waiting we can assume multiple singlecycle operations
+        fmax = 50e6 # as we perform active waiting we can assume multiple singlecycle operations
         return int(math.ceil(sec * fmax))
 
     reset_sequence = [
