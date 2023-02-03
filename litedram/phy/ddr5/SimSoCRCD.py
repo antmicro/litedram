@@ -314,13 +314,13 @@ class SimSoCRCD(SoCCore):
                         sys_clk_freq  = sys_clk_freq,
                         log_level     = log_level,
                         geom_settings = sdram_module.geom_settings,
-                        module_num    = i,
+                        module_num    = i//2,
                         dq_dqs_ratio  = dq_dqs_ratio,
                         cd_positive=domain+"_t",
                         cd_negative=domain+"_c",
                     )
                     self.comb += pads.alert_n.eq(module.alert_n)
-                    setattr(self.submodules, prefix+'ddr5sim', module)
+                    setattr(self.submodules, prefix+f'ddr5sim_{i}', module)
 
         self.add_constant("CONFIG_SIM_DISABLE_BIOS_PROMPT")
         if finish_after_memtest:
