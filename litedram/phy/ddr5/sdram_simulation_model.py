@@ -34,6 +34,7 @@ class DDR5SDRAMSimulationModel(Module):
     after CL/CWL and a data burst is handled, updating memory state.
 
     It uses sys4x_p_dimm and sys4x_n_dimm clock domains
+    as well as sys8x_ddr to sample dqs_t during Writeleveing
 
     Parameters
     ----------
@@ -593,15 +594,8 @@ class CommandsSim(Module):
         pda.finalize()
 
         # Write leveling
-        dqs_dom = f"dqs_t_dimm_{module_num}"
-        setattr(self.clock_domains, "cd"+dqs_dom,
-            ClockDomain(dqs_dom))
-        self.comb += [
-            ClockSignal(dqs_dom).eq(getattr(pads, prefix+"dqs_t")[module_num:module_num+1]),
-            ResetSignal(dqs_dom).eq(ResetSignal()),
-        ]
-
-        wl_sig = Signal()
+        wl_sig     = Signal()
+        wl_delayed = Signal()
 
         _wl_cl_cases = {}
         for i in range(23):
@@ -624,26 +618,38 @@ class CommandsSim(Module):
 
         self.comb += Case(self.mode_regs[8][3:5], _wl_pre_cases)
 
-        self.submodules.wl = wl = ClockDomainsRenamer(dqs_dom)(ResetInserter()(FSM()))
+        self.submodules.wl = wl = ClockDomainsRenamer("sys8x_ddr")(ResetInserter()(FSM()))
         wl_direct_control      = Signal()
         wl_direct_value        = Signal()
         wl_count               = Signal(max=2)
+        dqs_delayed            = Signal()
+        pos_edge               = Signal()
+        dqs_sig                = getattr(pads, prefix+"dqs_t")[module_num:module_num+1]
+
+        self.sync.sys8x_ddr += dqs_delayed.eq(dqs_sig)
+        self.sync.sys8x_ddr += wl_delayed.eq(wl_sig)
+        self.comb += pos_edge.eq(dqs_sig & ~dqs_delayed)
 
         wl.act("IDLE",
-            NextValue(wl_count, 0),
             If(self.mode_regs[2][1],
                 wl_direct_control.eq(1),
-                NextValue(wl_count, wl_count+1),
-                If(wl_count == wl_count_pre,
-                    NextState("SAMPLE"),
+                If(pos_edge,
+                    NextValue(wl_count, wl_count+1),
+                    If(wl_count == wl_count_pre,
+                        NextState("SAMPLE"),
+                    ),
                 ),
+            ).Else(
+                NextValue(wl_count, 0),
             ),
         )
         wl.act("SAMPLE",
-            wl_direct_control.eq(1),
-            NextValue(wl_count, 0),
-            NextValue(wl_direct_value, wl_sig),
-            NextState("IDLE"),
+            If(pos_edge,
+                wl_direct_control.eq(1),
+                NextValue(wl_count, 0),
+                NextValue(wl_direct_value, wl_delayed),
+                NextState("IDLE"),
+            ),
         )
         wl.finalize()
 
