@@ -21,7 +21,7 @@ from litedram.DDR5RCD01.BusCSCAEnvironment import BusCSCAEnvironment
 from litedram.DDR5RCD01.BusCSCAEnvironment import EnvironmentScenarios
 from litedram.DDR5RCD01.BusCSCAScoreboard import BusCSCAScoreboard
 from litedram.DDR5RCD01.monitor_definitions import *
-from litedram.DDR5RCD01.unittests.CRG import CRG
+from test.CRG import CRG
 
 
 class BusCSCAMonitor(Module):

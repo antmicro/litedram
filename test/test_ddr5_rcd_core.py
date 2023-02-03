@@ -20,7 +20,7 @@ from litedram.DDR5RCD01.DDR5RCD01Core import DDR5RCD01Core
 from litedram.DDR5RCD01.BusCSCAEnvironment import BusCSCAEnvironment
 from litedram.DDR5RCD01.BusCSCAEnvironment import EnvironmentScenarios
 from litedram.DDR5RCD01.BusCSCAMonitor import BusCSCAMonitor
-from litedram.DDR5RCD01.unittests.CRG import CRG
+from test.CRG import CRG
 
 
 class TestBed(Module):
