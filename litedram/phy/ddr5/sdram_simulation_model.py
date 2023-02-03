@@ -13,7 +13,6 @@ from random import randrange
 from migen import *
 
 from litex.soc.interconnect.stream import AsyncFIFO
-from litex.soc.interconnect.csr import AutoCSR
 
 from litedram.common import TappedDelayLine
 from litedram.phy.utils import delayed, edge
@@ -22,7 +21,7 @@ from litedram.phy.ddr5.commands import MPC
 from litedram import modules
 
 
-class DDR5SDRAMSimulationModel(Module, AutoCSR):
+class DDR5SDRAMSimulationModel(Module):
     """DDR5 DRAM simulator
 
     This module simulates an DDR5 DRAM chip to aid DDR5 PHY development/testing.
@@ -50,7 +49,8 @@ class DDR5SDRAMSimulationModel(Module, AutoCSR):
         SimLogger initial logging level (formatted for parsing with `log_level_getter`).
     """
     def __init__(self, pads, *, sys_clk_freq, cl, cwl, log_level, geom_settings, prefix="",
-                 module_num=0, dq_dqs_ratio=8, ca_inversion=False):
+                 module_num=0, dq_dqs_ratio=8, ca_inversion=False, skip_fsm_to_stage=None,
+                 n1_mode_select=0, alert_n_on_CA_err=False):
         log_level = log_level_getter(log_level)
 
         bl_max    = 16 # We only support BL8 and BL16, there is no support for BL32
@@ -59,6 +59,9 @@ class DDR5SDRAMSimulationModel(Module, AutoCSR):
         cd_dqs_wr = "sys4x_p_dimm"
         cd_dq_rd  = "sys4x_p_dimm"
         cd_dqs_rd = "sys4x_p_dimm"
+
+        # Alert_n output signal
+        self.alert_n = Signal(reset=1)
 
         self.submodules.data_cdc = ClockDomainsRenamer(
             {"write": cd_cmd,"read": cd_dq_wr}
@@ -89,8 +92,12 @@ class DDR5SDRAMSimulationModel(Module, AutoCSR):
             module_num        = module_num,
             dq_dqs_ratio      = dq_dqs_ratio,
             ca_inversion      = ca_inversion,
+            skip_fsm_to_stage = skip_fsm_to_stage,
+            n1_mode_select    = n1_mode_select,
         )
         self.submodules.cmd = ClockDomainsRenamer(cd_cmd)(cmd)
+        if alert_n_on_CA_err:
+            self.comb += self.alert_n.eq(~cmd.decode.cmd_err)
 
         data = DataSim(pads, self.cmd,
             direct_dq_control = cmd.direct_dq_control,
@@ -124,6 +131,7 @@ class CommandDecoder(Module):
         self.handle       = Signal()
         self.handled      = Signal()
         self.handling_2UI = Signal()
+        self.cmd_err      = Signal()
 
         # CS_n/CA shift registers
         ca_pads = Signal.like(getattr(pads, prefix+'ca'))
@@ -162,9 +170,11 @@ class CommandDecoder(Module):
                 self.decode_2UI_cmd(),
             ),
             If(self.handle_2_tick_cmd & ~self.handled,
+                self.cmd_err.eq(1),
                 log.error(prefix+"Unexpected command: cs_n_low=0b%14b cs_n_high=0b%14b", self.cs_n_low, self.cs_n_high),
             ),
             If(self.handle_1_tick_cmd & ~self.handled,
+                self.cmd_err.eq(1),
                 log.error(prefix+"Unexpected command: cs_n_low=0b%14b", self.cs_n_low),
             ),
         ]
@@ -195,7 +205,7 @@ class CommandDecoder(Module):
             )
 
 
-class CommandsSim(Module, AutoCSR):
+class CommandsSim(Module):
     """Command simulation
 
     This module interprets DDR5 commands found on the CS_n/CA pads. It keeps track of currently
@@ -206,11 +216,19 @@ class CommandsSim(Module, AutoCSR):
     Command simulator should work in the clock domain of `pads.clk_p` (SDR).
     """
     def __init__(self, pads, data_cdc, *,
-                 clk_freq, log_level, geom_settings, bl_max, prefix, module_num=0, dq_dqs_ratio=8, ca_inversion=False):
+                 clk_freq, log_level, geom_settings, bl_max, prefix, module_num=0,
+                 dq_dqs_ratio=8, ca_inversion=False, skip_fsm_to_stage=None,
+                 n1_mode_select=1):
         self.submodules.log = log = SimLogger(log_level=log_level, clk_freq=clk_freq, clk_freq_cd="sys4x")
         self.log.add_csrs()
 
         serial = [0x6C, 0x6F, 0x08, 0x35, randrange(0,  255)]
+
+        assert skip_fsm_to_stage is None or isinstance(skip_fsm_to_stage, int), \
+        "skip_fsm_to_stage must be None or an int that corresponds to fsm stage"
+
+        if skip_fsm_to_stage is None:
+            n1_mode_select = 0
 
         # Mode Registers storage
         registers = []
@@ -218,7 +236,7 @@ class CommandsSim(Module, AutoCSR):
             if i == 1:
                 registers.append(Signal(8, reset=0xFF))
             elif i == 2:
-                registers.append(Signal(8, reset=0))
+                registers.append(Signal(8, reset=n1_mode_select<<2))
             elif i == 8:
                 registers.append(Signal(8, reset=8))
             elif i == 15:
@@ -336,6 +354,20 @@ class CommandsSim(Module, AutoCSR):
             ),
         ]
 
+        if skip_fsm_to_stage is None:
+            skip_fsm_to_stage = 1
+
+        next_state_from_rst = {
+            0: "Reset",
+            1: "Initialization",
+            2: "CMOS_Registration",
+            3: "EXIT-PD",
+            4: "MRW",
+            5: "DLL_RESET",
+            6: "ZQC",
+            7: "NORMAL",
+        }[skip_fsm_to_stage]
+
         self.submodules.fsm = fsm = ResetInserter()(FSM())
         self.comb += [
             If(self.tpw_reset.ready_p,
@@ -346,7 +378,7 @@ class CommandsSim(Module, AutoCSR):
         fsm.act("Reset",
             self.tinit3.trigger.eq(~pads.reset_n),
             If(pads.reset_n,
-                NextState("Initialization"),
+                NextState(next_state_from_rst),
             )
         )
         fsm.act("Initialization",
@@ -1029,7 +1061,7 @@ class CommandsSim(Module, AutoCSR):
         )
 # Data ---------------------------------------------------------------------------------------------
 
-class DataSim(Module, AutoCSR):
+class DataSim(Module):
     """Data simulator
 
     This module is responsible for handling read/write bursts. It's operation has to be triggered
@@ -1248,7 +1280,7 @@ class DataSim(Module, AutoCSR):
             ),
         ]
 
-class DataBurst(Module, AutoCSR):
+class DataBurst(Module):
     def __init__(self, *, bl_width, bl_max, log_level, clk_freq, negedge_domain):
         self.submodules.log = log = SimLoggerComb(log_level=log_level, use_time=True)
         self.log.add_csrs()
