@@ -4,6 +4,9 @@
 # Copyright (c) 2023 Antmicro <www.antmicro.com>
 # SPDX-License-Identifier: BSD-2-Clause
 
+# python
+import argparse
+import logging
 # migen
 from migen import *
 # LiteDRAM : RCD
@@ -138,52 +141,82 @@ class DDR5RCD01System(Module):
             self.pads_egress_dq_B = xDB_B.pads_egress
 
 
-# if __name__ == "__main__":
-    # pads_ingress_dq = DDR5RCD01DataBufferSimulationPads()
-    # pads_ingress_A = DDR5RCD01ChannelIngressSimulationPads()
-    # pads_ingress_B = DDR5RCD01ChannelIngressSimulationPads()
-    # pads_ingress_common = DDR5RCD01CommonIngressSimulationPads()
-    # pads_sideband = DDR5RCD01SidebandSimulationPads()
+    @classmethod
+    def run_constructors(cls):
+        # Nice to have something similar in all classes
+        pads_ingress_dq_A = DDR5RCD01DataBufferSimulationPads()
+        pads_ingress_dq_B = DDR5RCD01DataBufferSimulationPads()
+        pads_ingress_A = DDR5RCD01ChannelIngressSimulationPads()
+        pads_ingress_B = DDR5RCD01ChannelIngressSimulationPads()
+        pads_ingress_common = DDR5RCD01CommonIngressSimulationPads()
+        pads_sideband = DDR5RCD01SidebandSimulationPads()
 
-    # xSystem_dc = DDR5RCD01System(
-    #     pads_ingress_dq=pads_ingress_dq,
-    #     pads_ingress_A=pads_ingress_A,
-    #     pads_ingress_B=pads_ingress_B,
-    #     pads_ingress_common=pads_ingress_common,
-    #     pads_sideband=pads_sideband,
-    #     rcd_passthrough=True,
-    #     sideband_type=sideband_type.I2C,
-    # )
+        xSystem_dc = cls(
+            pads_ingress_dq_A=pads_ingress_dq_A,
+            pads_ingress_dq_B=pads_ingress_dq_B,
+            pads_ingress_A=pads_ingress_A,
+            pads_ingress_B=pads_ingress_B,
+            pads_ingress_common=pads_ingress_common,
+            pads_sideband=pads_sideband,
+            rcd_passthrough=True,
+            sideband_type=sideband_type.I2C,
+        )
 
-    # xSystem_sc = DDR5RCD01System(
-    #     pads_ingress_dq=pads_ingress_dq,
-    #     pads_ingress_A=pads_ingress_A,
-    #     pads_ingress_B=None,
-    #     pads_ingress_common=pads_ingress_common,
-    #     pads_sideband=pads_sideband,
-    #     rcd_passthrough=True,
-    #     sideband_type=sideband_type.I2C,
-    # )
+        xSystem_sc = cls(
+            pads_ingress_dq_A=pads_ingress_dq_A,
+            pads_ingress_dq_B=None,
+            pads_ingress_A=pads_ingress_A,
+            pads_ingress_B=None,
+            pads_ingress_common=pads_ingress_common,
+            pads_sideband=pads_sideband,
+            rcd_passthrough=True,
+            sideband_type=sideband_type.I2C,
+        )
 
-    # xSystem_Core_dc = DDR5RCD01System(
-    #     pads_ingress_dq=pads_ingress_dq,
-    #     pads_ingress_A=pads_ingress_A,
-    #     pads_ingress_B=pads_ingress_B,
-    #     pads_ingress_common=pads_ingress_common,
-    #     pads_sideband=pads_sideband,
-    #     rcd_passthrough=False,
-    #     sideband_type=sideband_type.I2C,
-    # )
+        xSystem_dc = cls(
+            pads_ingress_dq_A=pads_ingress_dq_A,
+            pads_ingress_dq_B=pads_ingress_dq_B,
+            pads_ingress_A=pads_ingress_A,
+            pads_ingress_B=pads_ingress_B,
+            pads_ingress_common=pads_ingress_common,
+            pads_sideband=None,
+            rcd_passthrough=True,
+            sideband_type=None,
+        )
 
-    # xSystem_Core_sc = DDR5RCD01System(
-    #     pads_ingress_dq=pads_ingress_dq,
-    #     pads_ingress_A=pads_ingress_A,
-    #     pads_ingress_B=None,
-    #     pads_ingress_common=pads_ingress_common,
-    #     pads_sideband=pads_sideband,
-    #     rcd_passthrough=False,
-    #     sideband_type=sideband_type.I2C,
-    # )
+        xSystem_sc = cls(
+            pads_ingress_dq_A=pads_ingress_dq_A,
+            pads_ingress_dq_B=None,
+            pads_ingress_A=pads_ingress_A,
+            pads_ingress_B=None,
+            pads_ingress_common=pads_ingress_common,
+            pads_sideband=None,
+            rcd_passthrough=True,
+            sideband_type=None,
+        )
+
+        xSystem_Core_dc = cls(
+            pads_ingress_dq_A=pads_ingress_dq_A,
+            pads_ingress_dq_B=pads_ingress_dq_B,
+            pads_ingress_A=pads_ingress_A,
+            pads_ingress_B=pads_ingress_B,
+            pads_ingress_common=pads_ingress_common,
+            pads_sideband=pads_sideband,
+            rcd_passthrough=False,
+            sideband_type=sideband_type.I2C,
+        )
+
+        xSystem_Core_sc = cls(
+            pads_ingress_dq_A=pads_ingress_dq_A,
+            pads_ingress_dq_B=None,
+            pads_ingress_A=pads_ingress_A,
+            pads_ingress_B=None,
+            pads_ingress_common=pads_ingress_common,
+            pads_sideband=pads_sideband,
+            rcd_passthrough=False,
+            sideband_type=sideband_type.I2C,
+        )
+
 
 class TestBed(Module):
     def __init__(self):
@@ -260,17 +293,17 @@ def n_ui_dram_command(tb, nums, sel_cs="rank_AB", non_target_termination=False):
 
     for seq_cs, seq_ca in sequence:
         logging.debug(str(seq_cs) + " " + str(seq_ca))
-        yield from drive_cs_ca(seq_cs, seq_ca)
+        yield from drive_cs_ca(seq_cs, seq_ca, tb)
     for i in range(3):
         yield
 
 
 def drive_init(tb):
     yield tb.pads_ingress_common.drst_n.eq(1)
-    yield from drive_cs_ca(~0, 0)
+    yield from drive_cs_ca(~0, 0, tb)
 
 
-def drive_cs_ca(cs, ca):
+def drive_cs_ca(cs, ca, tb):
     yield tb.pads_ingress_A.dcs_n.eq(cs)
     yield tb.pads_ingress_A.dca.eq(ca)
     yield tb.pads_ingress_A.dpar.eq(1)
@@ -297,7 +330,7 @@ def run_test(tb):
     logging.debug('Yield from write test.')
 
 
-if __name__ == "__main__":
+def eng_test():
     eT = EngTest(level=logging.INFO)
     logging.info("<- Module called")
     tb = TestBed()
@@ -305,3 +338,13 @@ if __name__ == "__main__":
     run_simulation(tb, run_test(tb), vcd_name=eT.wave_file_name)
     logging.info("<- Simulation done")
     logging.info(str(eT))
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="DDR5RCD01System")
+    parser.add_argument("--run-example", action="store_true", help="Run class constructors")
+    args = parser.parse_args()
+    if args.run_example:
+        DDR5RCD01System.run_constructors()
+    else:
+        eng_test()
