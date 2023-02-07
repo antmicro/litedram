@@ -19,7 +19,7 @@ import test.phy_common
 from test.phy_common import DFISequencer, PadChecker
 
 
-class VerilatorDDR5RCDRegressionTests(unittest.TestCase):
+class VerilatorDDR5RCDTests(unittest.TestCase):
     ALLOWED = []
 
     def check_logs(self, logs):
@@ -48,7 +48,7 @@ class VerilatorDDR5RCDRegressionTests(unittest.TestCase):
 
         self.check_logs(p.before.decode())
 
-    def test_ddr5_rcd_reg_sim_dq_dqs_ratio_4_modules_per_rank_1(self):
+    def test_ddr5_rcd_sim_dq_dqs_ratio_4_modules_per_rank_1(self):
         # Test simulation with regular delays, intermediate serialization stage,
         # refresh and with L2 cache (masked write doesn't work for x4)
         self.run_test([
@@ -56,10 +56,9 @@ class VerilatorDDR5RCDRegressionTests(unittest.TestCase):
             "--output-dir", "build/test_ddr5_rcd_sim_dq_dqs_ratio_4",
             "--l2-size", "32",
             "--dq-dqs-ratio", "4",
-            "--rcd-pass-through",
         ])
 
-    def test_ddr5_rcd_reg_sim_dq_dqs_ratio_8_modules_per_rank_1(self):
+    def test_ddr5_rcd_sim_dq_dqs_ratio_8_modules_per_rank_1(self):
         # Test simulation with regular delays, intermediate serialization stage,
         # refresh and no L2 cache (masked write must work)
         self.run_test([
@@ -67,10 +66,9 @@ class VerilatorDDR5RCDRegressionTests(unittest.TestCase):
             "--output-dir", "build/test_ddr5_rcd_sim_dq_dqs_ratio_8",
             "--l2-size", "0",
             "--dq-dqs-ratio", "8",
-            "--rcd-pass-through",
         ])
 
-    def test_ddr5_rcd_reg_sim_dq_dqs_ratio_4_modules_per_rank_2(self):
+    def test_ddr5_rcd_sim_dq_dqs_ratio_4_modules_per_rank_2(self):
         # Test simulation with regular delays, intermediate serialization stage,
         # refresh and with L2 cache (masked write doesn't work for x4)
         self.run_test([
@@ -79,10 +77,9 @@ class VerilatorDDR5RCDRegressionTests(unittest.TestCase):
             "--l2-size", "32",
             "--dq-dqs-ratio", "4",
             "--modules-in-rank", "2",
-            "--rcd-pass-through",
         ])
 
-    def test_ddr5_rcd_reg_sim_dq_dqs_ratio_8_modules_per_rank_2(self):
+    def test_ddr5_rcd_sim_dq_dqs_ratio_8_modules_per_rank_2(self):
         # Test simulation with regular delays, intermediate serialization stage,
         # refresh and no L2 cache (masked write must work)
         self.run_test([
@@ -91,5 +88,4 @@ class VerilatorDDR5RCDRegressionTests(unittest.TestCase):
             "--l2-size", "0",
             "--dq-dqs-ratio", "8",
             "--modules-in-rank", "2",
-            "--rcd-pass-through",
         ])
