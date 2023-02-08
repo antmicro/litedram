@@ -112,39 +112,52 @@ class DDR5PHYAddress(Module):
         nphases = len(dfi.phases)
         assert nphases > 0 and (nphases & (nphases-1)) == 0
 
+        # Buffer DFI -------------------------------------------------------------------------------
+        cs_n_buf = [Signal(nranks) for _ in range(nphases)]
+        for i, phase in enumerate(dfi.phases):
+            self.sync += cs_n_buf[i].eq(getattr(phase, prefix).cs_n)
+
+        ca_buf = [Signal(14) for _ in range(nphases)]
+        for i, phase in enumerate(dfi.phases):
+            self.sync += ca_buf[i].eq(getattr(phase, prefix).address)
+
+        mode_2n_buf = [Signal() for _ in range(nphases)]
+        for i, phase in enumerate(dfi.phases):
+            self.sync += mode_2n_buf[i].eq(phase.mode_2n)
+
         # DDR5 CS ----------------------------------------------------------------------------------
         for rank in range(nranks):
             carry_cs_n = Signal(reset=1)
             self.sync += [
-                If(dfi.phases[-1].mode_2n,
-                    carry_cs_n.eq(getattr(dfi.phases[-1], prefix).cs_n[rank])
+                If(mode_2n_buf[-1],
+                    carry_cs_n.eq(cs_n_buf[-1][rank])
                 ).Else(
                     carry_cs_n.eq(1)
                 )
             ]
 
-            for j, phase in enumerate(dfi.phases):
+            for j in range(nphases):
                 self.comb += [
-                    If(~phase.mode_2n,
+                    If(~mode_2n_buf[j],
                         getattr(out, prefix + 'cs_n')[rank][2*j].eq(
-                            getattr(phase, prefix).cs_n[rank] & (carry_cs_n if j == 0 else 1)
+                            cs_n_buf[j][rank] & (carry_cs_n if j == 0 else 1)
                         ),
                         getattr(out, prefix + 'cs_n')[rank][2*j+1].eq(
-                            getattr(phase, prefix).cs_n[rank]
+                            cs_n_buf[j][rank]
                         ),
                     ).Else(
                         getattr(out, prefix + 'cs_n')[rank][2*j].eq(
-                            carry_cs_n if j == 0 else getattr(dfi.phases[j-1], prefix).cs_n[rank]
+                            carry_cs_n if j == 0 else cs_n_buf[j-1][rank]
                         ),
                         getattr(out, prefix + 'cs_n')[rank][2*j+1].eq(
-                            getattr(phase, prefix).cs_n[rank]
+                            cs_n_buf[j][rank]
                         ),
                     ),
                 ]
 
         # DDR5 PAR -------------------------------------------------------------------------------------
         self.comb += getattr(out, prefix + 'par').eq(
-            Cat([reduce(xor, getattr(phase, prefix).address[7*i:7+7*i])] for phase in dfi.phases for i in range(2)))
+            Cat([reduce(xor, ca_buf[phase][7*i:7+7*i]) for phase in range(nphases) for i in range(2)]))
 
         # DDR5 CA --------------------------------------------------------------------------------------
             # RDIMM 2N mode ----------------------------------------------------------------------------
@@ -155,13 +168,13 @@ class DDR5PHYAddress(Module):
         take_lower_bits_1 = Signal(nphases)
         take_lower_bits_2 = Signal(nphases)
         for i in range(1, len(take_lower_bits)):
-            self.comb += take_lower_bits_1[i].eq(~reduce(and_, getattr(dfi.phases[i-1], prefix).cs_n))
+            self.comb += take_lower_bits_1[i].eq(~reduce(and_, cs_n_buf[i-1]))
         for i in range(3, len(take_lower_bits)):
             self.comb += take_lower_bits_2[i].eq(
-                ~reduce(and_, getattr(dfi.phases[i-3], prefix).cs_n) & ~getattr(dfi.phases[i-3], prefix).address[1]
+                ~reduce(and_, cs_n_buf[i-3]) & ~ca_buf[i-3][1]
             )
 
-        self.comb += take_lower_bits_m.eq(Cat([phase.mode_2n for phase in dfi.phases]))
+        self.comb += take_lower_bits_m.eq(Cat(mode_2n_buf))
         for i in range(0, 3, nphases):
             for j in range(nphases):
                 if i+j >= 3:
@@ -170,11 +183,10 @@ class DDR5PHYAddress(Module):
                 if i+j+nphases < 3:
                     arr.append(mem[i+j+nphases])
                 if i + j < 1:
-                    phase = getattr(dfi.phases[nphases-1+i+j], prefix)
-                    arr.append(~reduce(and_, phase.cs_n))
+                    arr.append(~reduce(and_, cs_n_buf[nphases-1+i+j]))
                 if 0 <= nphases-3 + i+j:
-                    phase = getattr(dfi.phases[nphases-3+i+j], prefix)
-                    arr.append(~reduce(and_, phase.cs_n) & ~phase.address[1])
+                    idx = nphases-3+i+j
+                    arr.append(~reduce(and_, cs_n_buf[idx]) & ~ca_buf[idx][1])
                 self.sync += mem[i+j].eq(reduce(or_, arr))
 
         for i in range(nphases):
@@ -184,31 +196,30 @@ class DDR5PHYAddress(Module):
 
             # CA Slicer ----------------------------------------------------------------------------
         for bit in range(7):
-            for j, phase in enumerate(dfi.phases):
+            for j in range(nphases):
                 sig = getattr(out, prefix+'ca')[bit][j*2:j*2+2]
-                ca = getattr(phase, prefix).address
                 self.comb += [
                     If(rdimm_mode,
-                        If(phase.mode_2n,
+                        If(mode_2n_buf[j],
                             If(~take_lower_bits[j],
-                                sig.eq(Replicate(ca[bit], 2)),
+                                sig.eq(Replicate(ca_buf[j][bit], 2)),
                             ).Else(
-                                sig.eq(Replicate(ca[bit + 7], 2)),
+                                sig.eq(Replicate(ca_buf[j][bit + 7], 2)),
                             )
                         ).Else(
-                            sig.eq(Cat([ca[bit + 7*i] for i in range (2)])),
+                            sig.eq(Cat([ca_buf[j][bit + 7*i] for i in range (2)])),
                         ),
                     ).Else(
-                        sig.eq(Cat([ca[bit] for _ in range (2)])),
+                        sig.eq(Cat([ca_buf[j][bit] for _ in range (2)])),
                     ),
                 ]
 
         for bit in range(7, 14):
             _ca = getattr(out, prefix+'ca')[bit]
-            for j, phase in enumerate(dfi.phases):
+            for j in range(nphases):
                 self.comb += [
                     If(~rdimm_mode,
-                        _ca[j*2:j*2+2].eq(Replicate(getattr(phase, prefix).address[bit], 2)),
+                        _ca[j*2:j*2+2].eq(Replicate(ca_buf[j][bit], 2)),
                     ).Else(
                         _ca[j*2:j*2+2].eq(Replicate(0, 2)),
                     ),
@@ -301,6 +312,10 @@ class DDR5PHY(Module, AutoCSR):
         cl              = get_cl_cw(memtype, tck)
         cwl = cl - 2
 
+        # Address path delay before serialization
+        addr_pre_ser_delay = nphases
+        assert addr_pre_ser_delay == 4
+
         self.des_latency          = des_latency
         self.ser_latency          = ser_latency
         self.ca_cdc_min_max_delay = (rd_extra_delay, rd_extra_delay)
@@ -311,7 +326,8 @@ class DDR5PHY(Module, AutoCSR):
         # This value should be the worst case delay between sending a read cmd and
         # getting data back. There will be exact delay may vary based on the training result.
         self.min_read_latency  = min_read_latency = (
-            cmd_latency - 1 +      # CMD latency + extra clock cycle for 2N mode
+            cmd_latency - 1 +      # CMD latency
+            addr_pre_ser_delay +   # PHY address buffering
             ser_latency.sys4x +    # CMD serialization latency
             rd_extra_delay.sys4x + # Delays like CDCs
             2 +                    # Minimal Preamble
@@ -323,12 +339,9 @@ class DDR5PHY(Module, AutoCSR):
         # Set to 0, Training PHY will align DQS and DQ for write commands
         # See write leveling training in JESD79-5A
         # Max supported latency is 64 DRAM bus cycles
-        self.min_write_latency = min_write_latency = (
-            nphases +           # wrdata_en 0 tap delay
-            2 -                 # We need to look 2 cycles "into the future" to properly generate write preable
-            1                   # Reduce by 1 as cmd has 2 beats
-        )
-        self.max_write_latency = min_write_latency + 64
+        self.min_write_latency = min_write_latency = nphases + 2 - 1 - addr_pre_ser_delay
+        assert self.min_write_latency >= 0
+        self.max_write_latency = min_write_latency + nphases + 64
 
         # Registers --------------------------------------------------------------------------------
 
@@ -479,6 +492,7 @@ class DDR5PHY(Module, AutoCSR):
             with_idelay         = with_idelay,
             with_per_dq_idelay  = with_per_dq_idelay,
             direct_control      = direct_control,
+            t_ctrl_delay        = nphases,
         )
 
         # DFI Interface ----------------------------------------------------------------------------
@@ -804,11 +818,6 @@ class DDR5PHY(Module, AutoCSR):
                 for i in range(nphases):
                     if 1+i <= nphases: # only false for last i = nphases -1
                         wr_data_cases[i] = wr_data_window.eq(Cat(wrdata_en.taps[wr_data_index+1][nphases-(1+i):], wrdata_en.taps[wr_data_index][:nphases-i]))
-                #for i in range(nphases):
-                #    if i == 0:
-                #        wr_data_cases[i] = wr_data_window.eq(Cat(wrdata_en.taps[wr_data_index]))
-                #    else:
-                #        wr_data_cases[i] = wr_data_window.eq(Cat(wrdata_en.taps[wr_data_index+1][nphases-i:], wrdata_en.taps[wr_data_index][:nphases-i]))
 
                 self.comb += [
                     Case(wr_data_offset,
