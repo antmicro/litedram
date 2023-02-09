@@ -20,22 +20,38 @@ from litedram.phy.s7common import S7Common
 class S7DDR5PHY(DDR5PHY, S7Common):
     def __init__(self, pads, *, iodelay_clk_freq, with_odelay,
                  with_idelay=True, with_per_dq_idelay=False,
-                 with_sub_channels=False, **kwargs):
+                 with_sub_channels=False, pin_domains=None, pin_banks=None,
+                 **kwargs):
         self.iodelay_clk_freq = iodelay_clk_freq
 
-        def cdc(i):
-            o = Signal()
-            psync = PulseSynchronizer("sys", "sys2x_io")
-            self.submodules += psync
-            self.comb += [
-                psync.i.eq(i),
-                o.eq(psync.o),
-            ]
-            return o
+        if pin_domains is None:
+            def cdc(i):
+                o = Signal()
+                psync = PulseSynchronizer("sys", "sys2x_io")
+                self.submodules += psync
+                self.comb += [
+                    psync.i.eq(i),
+                    o.eq(psync.o),
+                ]
+                return o
 
-        def cdc_90(i):
+            def cdc_90(i):
+                o = Signal()
+                psync = PulseSynchronizer("sys", "sys2x_90_io")
+                self.submodules += psync
+                self.comb += [
+                    psync.i.eq(i),
+                    o.eq(psync.o),
+                ]
+                return o
+        else:
+            cdc = None
+            cdc_90 = None
+
+
+        def cdc_any(i, target):
             o = Signal()
-            psync = PulseSynchronizer("sys", "sys2x_90_io")
+            psync = PulseSynchronizer("sys", target)
             self.submodules += psync
             self.comb += [
                 psync.i.eq(i),
@@ -70,383 +86,593 @@ class S7DDR5PHY(DDR5PHY, S7Common):
         self.settings.read_leveling = True
 
         # Serialization ----------------------------------------------------------------------------
-
-        ddr     = dict(
-            clkdiv="sys2x_io",
-            clk="sys4x_io",
-            rst_sig=self._rst_cdc
-        )
-        cmd     = dict(
-            clkdiv="sys2x_io",
-            clk="sys4x_io",
-            rst_sig=self._rst_cdc
-        )
-        cs      = dict(
-            clkdiv="sys2x_io",
-            clk="sys4x_io",
-            rst_sig=self._rst_cdc
-        )
-        ddr_90  = dict(
-            clkdiv="sys2x_90_io",
-            clk="sys4x_90_io",
-            rst_sig=self._rst_cdc_90
-        )
-        # Clock
-        clk_dly = Signal()
-        clk_ser = Signal()
-
-        ck_t = self.out.ck_t
-        cdc_ck_t = Signal(len(ck_t)//2)
-        simple_cdc = SimpleCDC(
-            clkdiv="sys", clk="sys2x_io",
-            i_dw=len(ck_t), o_dw=len(cdc_ck_t),
-            i=ck_t, o=cdc_ck_t,
-            name=f"ck_t",
-            register=True,
-        )
-        self.submodules += simple_cdc
-
-        # Every other signal should be realligned to clock.
-        self.oserdese2_ddr(
-            din=cdc_ck_t,
-            **(dict(dout_fb=clk_ser) if with_odelay else dict(dout=clk_dly)),
-            **ddr,
-        )
-        if with_odelay:
-            self.odelaye2(
-                din=clk_ser,
-                dout=clk_dly,
-                rst=_l['ckdly_rst'],
-                inc=_l['ckdly_inc'],
-                clk="sys2x_io",
-            )
-        self.obufds(din=clk_dly, dout=self.pads.ck_t, dout_b=self.pads.ck_c)
-
-        for const in ["mir", "cai", "ca_odt"]:
-            if hasattr(self.pads, const):
-                self.comb += getattr(self.pads, const).eq(0)
-
-        reset_n = self.out.reset_n
-        cdc_reset_n = Signal(len(reset_n)//2, reset=~0)
-        simple_cdc = SimpleCDC(
-            clkdiv="sys", clk="sys2x_io",
-            i_dw=len(reset_n), o_dw=len(cdc_reset_n),
-            i=reset_n, o=cdc_reset_n,
-            name=f"reset_n",
-            register=True,
-        )
-        self.submodules += simple_cdc
-        reset_n_o = getattr(self.pads, 'reset_n')
-        self.oserdese2_ddr(din=cdc_reset_n, dout=reset_n_o, **ddr)
-
-        self.iserdese2_ddr(din=self.pads.alert_n, dout=self.out.alert_n, **ddr_90)
-
         prefixes = [""] if not with_sub_channels else ["A_", "B_"]
+        pin_csr_mapping = {
+            "ck_t":    ((_l["ckdly_inc"],      _l["ckdly_rst"]),      None),
+        }
         for prefix in prefixes:
-            # Commands
-            # CS_n --------------------------------------------------------------------------------
-            nranks = len(getattr(self.pads, prefix+"cs_n"))
-            cs_n_ser = Signal(nranks)
-            for it, (basephy_cs, pad) in enumerate(
-                zip(getattr(self.out, prefix+'cs_n'), getattr(self.pads, prefix+'cs_n'))):
-                cdc_out_cs = Signal(len(basephy_cs)//2)
-                simple_cdc = SimpleCDC(
-                    clkdiv="sys", clk="sys2x_io",
-                    i_dw=len(basephy_cs), o_dw=len(cdc_out_cs),
-                    i=basephy_cs, o=cdc_out_cs,
-                    name=f"{prefix}cs_n_{it}",
-                    register=True,
-                )
-                self.submodules += simple_cdc
-                cs_n_ser = Signal()
-                self.oserdese2_ddr(
-                    din=cdc_out_cs,
-                    **(dict(dout_fb=cs_n_ser) if with_odelay else dict(dout=pad)),
-                    **cs,
-                )
-                if with_odelay:
-                    self.odelaye2(
-                        din  = cs_n_ser,
-                        dout = pad,
-                        rst  = self.get_rst(it, _l[prefix+'csdly_rst'], prefix, "sys2x_io"),
-                        inc  = self.get_inc(it, _l[prefix+'csdly_inc'], prefix, "sys2x_io"),
-                        clk  = "sys2x_io",
-                    )
+            pin_csr_mapping |= {
+                f"{prefix}par":   ((_l[f"{prefix}pardly_inc"],   _l[f"{prefix}pardly_rst"]),   None),
+                f"{prefix}ca":    ((_l[f"{prefix}cadly_inc"],    _l[f"{prefix}cadly_rst"]),    None),
+                f"{prefix}cs_n":  ((_l[f"{prefix}csdly_inc"],    _l[f"{prefix}csdly_rst"]),    None),
+                f"{prefix}dq":    ((_l[f"{prefix}wdly_dq_inc"],  _l[f"{prefix}wdly_dq_rst"]),  (_l[f"{prefix}rdly_dq_inc"],  _l[f"{prefix}rdly_dq_rst"])),
+                f"{prefix}dqs_t": ((_l[f"{prefix}wdly_dqs_inc"], _l[f"{prefix}wdly_dqs_rst"]), (_l[f"{prefix}rdly_dqs_inc"], _l[f"{prefix}rdly_dqs_rst"])),
+            }
 
-            # CA ----------------------------------------------------------------------------------
-            for it, (basephy_ca, pad) in enumerate(
-                zip(getattr(self.out, prefix+'ca'), getattr(self.pads, prefix+'ca'))):
-                cdc_out_ca = Signal(len(basephy_ca)//2)
-                simple_cdc = SimpleCDC(
-                    clkdiv="sys", clk="sys2x_io",
-                    i_dw=len(basephy_ca), o_dw=len(cdc_out_ca),
-                    i=basephy_ca, o=cdc_out_ca,
-                    name=f"{prefix}ca_{it}",
-                    register=True,
-                )
-                self.submodules += simple_cdc
-                ca_ser = Signal()
-                self.oserdese2_ddr(
-                    din=cdc_out_ca,
-                    **(dict(dout_fb=ca_ser) if with_odelay else dict(dout=pad)),
-                    **cmd,
-                )
-                if with_odelay:
-                    cnt_out = Signal(5)
-                    self.odelaye2(
-                        din  = ca_ser,
-                        dout = pad,
-                        rst  = self.get_rst(it, _l[prefix+'cadly_rst'], prefix, "sys2x_io"),
-                        inc  = self.get_inc(it, _l[prefix+'cadly_inc'], prefix, "sys2x_io"),
-                        clk  = "sys2x_io",
-                        cnt_value_out = cnt_out,
-                    )
-                    self.comb += If(getattr(self, prefix+'dly_sel').storage[it],
-                        getattr(self, prefix+'cadly').status.eq(cnt_out)
-                    )
-
-            # PAR ---------------------------------------------------------------------------------
-            if hasattr(self.pads, prefix+'par'):
-                basephy_par = getattr(self.out, prefix+'par')
-                pad = getattr(self.pads, prefix+'par')
-
-                cdc_out_par = Signal(len(basephy_par)//2)
-                simple_cdc = SimpleCDC(
-                    clkdiv="sys", clk="sys2x_io",
-                    i_dw=len(basephy_par), o_dw=len(cdc_out_par),
-                    i=basephy_par, o=cdc_out_par,
-                    name=f"{prefix}par_{it}",
-                    register=True,
-                )
-                self.submodules += simple_cdc
-                par_ser = Signal()
-                self.oserdese2_ddr(
-                    din=cdc_out_par,
-                    **(dict(dout_fb=par_ser) if with_odelay else dict(dout=pad)),
-                    **cmd,
-                )
-                if with_odelay:
-                    self.odelaye2(
-                        din  = par_ser,
-                        dout = pad,
-                        rst  = _l[prefix+'pardly_rst'],
-                        inc  = _l[prefix+'pardly_inc'],
-                        clk  = "sys2x_io",
-                    )
-
-            # DQS ---------------------------------------------------------------------------------
-            strobes = len(pads.dqs_t) if hasattr(pads, "dqs_t") else len(pads.A_dqs_t)
-            for it in range(strobes):
-                dqs_t_o = getattr(self.out, prefix+'dqs_t_o')[it]
-                cdc_dqs_t_o = Signal(len(dqs_t_o)//2)
-                simple_cdc = SimpleCDC(
-                    clkdiv="sys", clk="sys2x_io",
-                    i_dw=len(dqs_t_o), o_dw=len(cdc_dqs_t_o),
-                    i=dqs_t_o, o=cdc_dqs_t_o,
-                    name=f"{prefix}dqs_t_o_{it}",
-                    register=True,
-                )
-                self.submodules += simple_cdc
-
-                out_dqs_oe = getattr(self.out, prefix+'dqs_oe')[it]
-                cdc_out_dqs_oe = Signal(len(out_dqs_oe)//2)
-                simple_cdc = SimpleCDC(
-                    clkdiv="sys", clk="sys2x_io",
-                    i_dw=len(out_dqs_oe), o_dw=len(cdc_out_dqs_oe),
-                    i=~out_dqs_oe, o=cdc_out_dqs_oe,
-                    name=f"{prefix}dqs_t_oe",
-                    register=True,
-                )
-                self.submodules += simple_cdc
-
-                dqs_ser   = Signal()
-                dqs_dly   = Signal()
-                dqs_i     = Signal()
-                dqs_i_dly = Signal()
-                dqs_t     = Signal()
-
-                self.oserdese2_ddr_with_tri(
-                    din     = cdc_dqs_t_o,
-                    **(dict(dout_fb = dqs_ser) if with_odelay else dict(dout = dqs_dly)),
-                    tin     = cdc_out_dqs_oe,
-                    tout    = dqs_t,
-                    **ddr,
-                )
-                if with_odelay:
-                    cnt_out = Signal(5)
-                    self.odelaye2(
-                        din  = dqs_ser,
-                        dout = dqs_dly,
-                        rst  = self.get_rst(it, _l[prefix+'wdly_dqs_rst'], prefix, "sys2x_io"),
-                        inc  = self.get_inc(it, _l[prefix+'wdly_dqs_inc'], prefix, "sys2x_io"),
-                        clk  = "sys2x_io",
-                        cnt_value_out = cnt_out,
-                    )
-                    self.comb += If(getattr(self, prefix+'dly_sel').storage[it],
-                        getattr(self, prefix+'wdly_dqs').status.eq(cnt_out)
-                    )
-
-                self.iobufds(
-                    din      = dqs_dly,
-                    dout     = dqs_i,
-                    tin      = dqs_t,
-                    dinout   = getattr(self.pads, prefix+"dqs_t")[it],
-                    dinout_b = getattr(self.pads, prefix+"dqs_c")[it],
-                )
-                cnt_out = Signal(5)
-                self.idelaye2(
-                    din  = dqs_i,
-                    dout = dqs_i_dly,
-                    rst  = self.get_rst(it, _l[prefix+'rdly_dqs_rst'], prefix, "sys2x_io"),
-                    inc  = self.get_inc(it, _l[prefix+'rdly_dqs_inc'], prefix, "sys2x_io"),
-                    init = max_delay_taps-1,
-                    clk  = "sys2x_io",
-                    cnt_value_out = cnt_out,
-                    dec  = True,
-                )
-                self.comb += If(getattr(self, prefix+'dly_sel').storage[it],
-                    getattr(self, prefix+'rdly_dqs').status.eq(cnt_out)
-                )
-
-                self.iserdese2_ddr(
-                    din    = dqs_i_dly,
-                    dout   = getattr(self.out, prefix+"dqs_t_i")[it],
-                    clk    = "sys4x_io",
-                    clkdiv = "sys_io"
-                )
-
-            # DQ ----------------------------------------------------------------------------------
+        if pin_domains is not None:
             dq_oe = {}
-            for it in range(self.databits):
-                basephy_dq = getattr(self.out, prefix+'dq_o')[it]
-                cdc_out_dq = Signal(len(basephy_dq)//2)
-                simple_cdc = SimpleCDC(
-                    clkdiv="sys", clk="sys2x_90_io",
-                    i_dw=len(basephy_dq), o_dw=len(cdc_out_dq),
-                    i=basephy_dq, o=cdc_out_dq,
-                    name=f"{prefix}dq_o_{it}",
-                    register=True,
-                )
-                self.submodules += simple_cdc
+            for pin, count in pads.layout:
+                assert pin in pin_domains, (pin, pin_domains)
+                assert pin not in pin_banks or count == len(pin_banks[pin]), (pin, count)
+                for i in range(count):
+                    if "_c" == pin[-2:] or ("cs_n" in pin and i > 0):
+                        continue
+                    (_out, _in) = pin_domains[pin]
+                    suffix = ""
+                    _pin = pin
+                    if "_t" in pin:
+                        complementary_pin = pin[:-2]+"_c"
 
-                if it//self.dq_dqs_ratio not in dq_oe:
-                    basephy_dq_oe = getattr(self.out, prefix+'dq_oe')[it//self.dq_dqs_ratio]
-                    cdc_out_dq_oe = Signal(len(basephy_dq_oe)//2)
+                    if _pin in pin_banks:
+                        suffix = f"_{pin_banks[_pin][i]}"
+                        if _out is not None:
+                            _out = (_out[0]+suffix, _out[1]+suffix)
+                        if _in is not None:
+                            _in = (_in[0]+suffix, _in[1]+suffix)
+
+                    _pin_oe = None
+                    if hasattr(self.out, _pin+"_oe"):
+                        _pin_oe = _pin + "_oe"
+                        _pin_o  = _pin + "_o"
+                        _pin_i  = _pin + "_i"
+                    elif _pin[-2:] == "_t" and hasattr(self.out, _pin[:-2]+"_oe"):
+                        _pin_oe = _pin[:-2] + "_oe"
+                        _pin_o  = _pin + "_o"
+                        _pin_i  = _pin + "_i"
+                    else:
+                        _pin_o = _pin
+                        _pin_i = _pin
+
+                    if _out is not None:
+                        if count > 1:
+                            out_sig = getattr(self.out, _pin_o)[i]
+                        else:
+                            out_sig = getattr(self.out, _pin_o)
+                        cdc_out_sig = Signal(len(out_sig)//2)
+                        simple_cdc = SimpleCDC(
+                            clkdiv="sys", clk=_out[0],
+                            i_dw=len(out_sig), o_dw=len(cdc_out_sig),
+                            i=out_sig, o=cdc_out_sig,
+                            name=_pin+f"_{i}",
+                            register=True,
+                        )
+                        self.submodules += simple_cdc
+                        if _pin_oe is not None:
+                            idx = i
+                            cdc_out_sig_oe = None
+                            if _pin_oe in ["A_dq_oe", "B_dq_oe"]:
+                                idx //= self.dq_dqs_ratio
+                                if idx in dq_oe:
+                                    cdc_out_sig_oe = dq_oe[idx]
+                            if cdc_out_sig_oe is None:
+                                if count > 1:
+                                    out_sig_oe = getattr(self.out, _pin_oe)[idx]
+                                else:
+                                    out_sig_oe = getattr(self.out, _pin_oe)
+
+                                cdc_out_sig_oe = Signal(len(out_sig_oe)//2)
+                                simple_cdc = SimpleCDC(
+                                    clkdiv="sys", clk=_out[0],
+                                    i_dw=len(out_sig_oe), o_dw=len(cdc_out_sig_oe),
+                                    i=out_sig_oe, o=cdc_out_sig_oe,
+                                    name=_pin_oe+f"_{i}",
+                                    register=True,
+                                )
+                                self.submodules += simple_cdc
+                            if _pin_oe in ["A_dq_oe", "B_dq_oe"]:
+                                dq_oe[idx] = cdc_out_sig_oe
+
+                        output    = Signal()
+                        delay     = Signal()
+                        tri_state = Signal()
+                        _with_odelay = with_odelay and pin in pin_csr_mapping
+                        if _pin_oe is not None:
+                            oserdes = self.oserdese2_ddr_with_tri(
+                                din     = cdc_out_sig,
+                                **(dict(dout_fb = delay) if _with_odelay else dict(dout = output)),
+                                tin     = cdc_out_sig_oe,
+                                tout    = tri_state,
+                                clkdiv=_out[0],
+                                clk=_out[1],
+                            )
+                        else:
+                            oserdes = self.oserdese2_ddr(
+                                din = cdc_out_sig,
+                                **(dict(dout_fb=delay) if _with_odelay else dict(dout = output)),
+                                clkdiv=_out[0],
+                                clk=_out[1],
+                            )
+                        if with_odelay and pin in pin_csr_mapping:
+                            dq = True if pin in ["A_dq", "B_dq"] else False
+                            inc = None
+                            rst = None
+                            if count > 1:
+                                inc = self.get_inc(i, cdc_any(pin_csr_mapping[pin][0][0], _out[0]), pin[:2], _out[0], dq=dq)
+                                rst = self.get_rst(i, cdc_any(pin_csr_mapping[pin][0][1], _out[0]), pin[:2], _out[0], dq=dq)
+                            else:
+                                rst  = cdc_any(pin_csr_mapping[pin][0][1], _out[0])
+                                inc  = cdc_any(pin_csr_mapping[pin][0][0], _out[0])
+
+                            self.odelaye2(
+                                din  = delay,
+                                dout = output,
+                                rst  = rst,
+                                inc  = inc,
+                                clk  = _out[0],
+                            )
+
+                    if _in is not None:
+                        _input = Signal()
+                        _delayed_input = Signal()
+                        if with_idelay and pin in pin_csr_mapping:
+                            dq = True if pin in ["A_dq", "B_dq"] else False
+                            inc = None
+                            rst = None
+                            cd = _in[0]
+                            if _out is not None:
+                                cd = _out[0]
+                            if count > 1:
+                                inc  = self.get_inc(i, cdc_any(pin_csr_mapping[pin][1][0], cd), pin[:2], cd, dq=dq)
+                                rst  = self.get_rst(i, cdc_any(pin_csr_mapping[pin][1][1], cd), pin[:2], cd, dq=dq)
+                            else:
+                                inc  = cdc_any(pin_csr_mapping[pin][1][0], cd)
+                                rst  = cdc_any(pin_csr_mapping[pin][1][1], cd)
+                            self.idelaye2(
+                                din  = _input,
+                                dout = _delayed_input,
+                                rst  = rst,
+                                inc  = inc,
+                                init = max_delay_taps-1,
+                                clk  = cd,
+                                dec  = True,
+                            )
+                        else:
+                            _delayed_input = _input
+
+                        to_phy = None
+                        if count > 1:
+                            to_phy = getattr(self.out, _pin_i)[i]
+                        else:
+                            to_phy = getattr(self.out, _pin_i)
+
+                        self.iserdese2_ddr(
+                            din    = _delayed_input,
+                            dout   = to_phy,
+                            clk    = _in[1],
+                            clkdiv = _in[0],
+                        )
+
+
+                    if "_t" in pin and _in is None:
+                        if count > 1:
+                            self.obufds(din=output, dout=getattr(self.pads, pin)[i], dout_b=getattr(self.pads, complementary_pin)[i])
+                        else:
+                            self.obufds(din=output, dout=getattr(self.pads, pin), dout_b=getattr(self.pads, complementary_pin))
+                    elif "_t" in pin:
+                        pad_t = None
+                        pad_c = None
+                        if count > 1:
+                            pad_t = getattr(self.pads, pin)[i]
+                            pad_c = getattr(self.pads, complementary_pin)[i]
+                        else:
+                            pad_t = getattr(self.pads, pin)
+                            pad_c = getattr(self.pads, complementary_pin)
+                        self.iobufds(
+                            din      = output,
+                            dout     = _input,
+                            tin      = tri_state,
+                            dinout   = pad_t,
+                            dinout_b = pad_c,
+                        )
+                    elif _in is None:
+                        if count > 1:
+                            self.comb += getattr(self.pads, pin)[i].eq(output)
+                        else:
+                            self.comb += getattr(self.pads, pin).eq(output)
+                    elif _in is not None and _out is not None:
+                        pad = None
+                        if count > 1:
+                            pad = getattr(self.pads, pin)[i]
+                        else:
+                            pad = getattr(self.pads, pin)
+                        self.iobuf(
+                            din    = output,
+                            dout   = _input,
+                            dinout = pad,
+                            tin    = tri_state,
+                        )
+                    elif _in is not None:
+                        if count > 1:
+                            self.comb += _input.eq(getattr(self.pads, pin)[i])
+                        else:
+                            self.comb += _input.eq(getattr(self.pads, pin))
+        else:
+            ddr     = dict(
+                clkdiv="sys2x_io",
+                clk="sys4x_io",
+                rst_sig=self._rst_cdc
+            )
+            cmd     = dict(
+                clkdiv="sys2x_io",
+                clk="sys4x_io",
+                rst_sig=self._rst_cdc
+            )
+            cs      = dict(
+                clkdiv="sys2x_io",
+                clk="sys4x_io",
+                rst_sig=self._rst_cdc
+            )
+            ddr_90  = dict(
+                clkdiv="sys2x_90_io",
+                clk="sys4x_90_io",
+                rst_sig=self._rst_cdc_90
+            )
+
+            # Clock
+            clk_dly = Signal()
+            clk_ser = Signal()
+            ck_t = self.out.ck_t
+            cdc_ck_t = Signal(len(ck_t)//2)
+            simple_cdc = SimpleCDC(
+                clkdiv="sys", clk="sys2x_io",
+                i_dw=len(ck_t), o_dw=len(cdc_ck_t),
+                i=ck_t, o=cdc_ck_t,
+                name=f"ck_t",
+                register=True,
+            )
+            self.submodules += simple_cdc
+
+            # Every other signal should be realligned to clock.
+            self.oserdese2_ddr(
+                din=cdc_ck_t,
+                **(dict(dout_fb=clk_ser) if with_odelay else dict(dout=clk_dly)),
+                **ddr,
+            )
+            if with_odelay:
+                self.odelaye2(
+                    din=clk_ser,
+                    dout=clk_dly,
+                    rst=_l['ckdly_rst'],
+                    inc=_l['ckdly_inc'],
+                    clk="sys2x_io",
+                )
+            self.obufds(din=clk_dly, dout=self.pads.ck_t, dout_b=self.pads.ck_c)
+
+            for const in ["mir", "cai", "ca_odt"]:
+                if hasattr(self.pads, const):
+                    self.comb += getattr(self.pads, const).eq(0)
+
+            reset_n = self.out.reset_n
+            cdc_reset_n = Signal(len(reset_n)//2, reset=~0)
+            simple_cdc = SimpleCDC(
+                clkdiv="sys", clk="sys2x_io",
+                i_dw=len(reset_n), o_dw=len(cdc_reset_n),
+                i=reset_n, o=cdc_reset_n,
+                name=f"reset_n",
+                register=True,
+            )
+            self.submodules += simple_cdc
+            reset_n_o = getattr(self.pads, 'reset_n')
+            self.oserdese2_ddr(din=cdc_reset_n, dout=reset_n_o, **ddr)
+
+            self.iserdese2_ddr(din=self.pads.alert_n, dout=self.out.alert_n, **ddr_90)
+
+            prefixes = [""] if not with_sub_channels else ["A_", "B_"]
+            for prefix in prefixes:
+                # Commands
+                # CS_n --------------------------------------------------------------------------------
+                nranks = len(getattr(self.pads, prefix+"cs_n"))
+                cs_n_ser = Signal(nranks)
+                for it, (basephy_cs, pad) in enumerate(
+                    zip(getattr(self.out, prefix+'cs_n'), getattr(self.pads, prefix+'cs_n'))):
+                    cdc_out_cs = Signal(len(basephy_cs)//2)
                     simple_cdc = SimpleCDC(
-                        clkdiv="sys", clk="sys2x_90_io",
-                        i_dw=len(basephy_dq_oe), o_dw=len(cdc_out_dq_oe),
-                        i=~basephy_dq_oe, o=cdc_out_dq_oe,
-                        name=f"{prefix}dq_oe{it//self.dq_dqs_ratio}",
+                        clkdiv="sys", clk="sys2x_io",
+                        i_dw=len(basephy_cs), o_dw=len(cdc_out_cs),
+                        i=basephy_cs, o=cdc_out_cs,
+                        name=f"{prefix}cs_n_{it}",
                         register=True,
                     )
                     self.submodules += simple_cdc
-                    dq_oe[it//self.dq_dqs_ratio] = cdc_out_dq_oe
+                    cs_n_ser = Signal()
+                    self.oserdese2_ddr(
+                        din=cdc_out_cs,
+                        **(dict(dout_fb=cs_n_ser) if with_odelay else dict(dout=pad)),
+                        **cs,
+                    )
+                    if with_odelay:
+                        self.odelaye2(
+                            din  = cs_n_ser,
+                            dout = pad,
+                            rst  = self.get_rst(it, _l[prefix+'csdly_rst'], prefix, "sys2x_io"),
+                            inc  = self.get_inc(it, _l[prefix+'csdly_inc'], prefix, "sys2x_io"),
+                            clk  = "sys2x_io",
+                        )
 
-                dq_t     = Signal()
-                dq_ser   = Signal()
-                dq_dly   = Signal()
-                dq_i     = Signal()
-                dq_i_dly = Signal()
+                # CA ----------------------------------------------------------------------------------
+                for it, (basephy_ca, pad) in enumerate(
+                    zip(getattr(self.out, prefix+'ca'), getattr(self.pads, prefix+'ca'))):
+                    cdc_out_ca = Signal(len(basephy_ca)//2)
+                    simple_cdc = SimpleCDC(
+                        clkdiv="sys", clk="sys2x_io",
+                        i_dw=len(basephy_ca), o_dw=len(cdc_out_ca),
+                        i=basephy_ca, o=cdc_out_ca,
+                        name=f"{prefix}ca_{it}",
+                        register=True,
+                    )
+                    self.submodules += simple_cdc
+                    ca_ser = Signal()
+                    self.oserdese2_ddr(
+                        din=cdc_out_ca,
+                        **(dict(dout_fb=ca_ser) if with_odelay else dict(dout=pad)),
+                        **cmd,
+                    )
+                    if with_odelay:
+                        cnt_out = Signal(5)
+                        self.odelaye2(
+                            din  = ca_ser,
+                            dout = pad,
+                            rst  = self.get_rst(it, _l[prefix+'cadly_rst'], prefix, "sys2x_io"),
+                            inc  = self.get_inc(it, _l[prefix+'cadly_inc'], prefix, "sys2x_io"),
+                            clk  = "sys2x_io",
+                            cnt_value_out = cnt_out,
+                        )
+                        self.sync += If(getattr(self, prefix+'dly_sel').storage[it],
+                            getattr(self, prefix+'cadly').status.eq(cnt_out)
+                        )
 
-                self.oserdese2_ddr_with_tri(
-                    din     = cdc_out_dq,
-                    **(dict(dout_fb=dq_ser) if with_odelay else dict(dout=dq_dly)),
-                    tin     = dq_oe[it//self.dq_dqs_ratio],
-                    tout    = dq_t,
-                    **ddr_90,
-                )
-                if with_odelay:
+                # PAR ---------------------------------------------------------------------------------
+                if hasattr(self.pads, prefix+'par'):
+                    basephy_par = getattr(self.out, prefix+'par')
+                    pad = getattr(self.pads, prefix+'par')
+
+                    cdc_out_par = Signal(len(basephy_par)//2)
+                    simple_cdc = SimpleCDC(
+                        clkdiv="sys", clk="sys2x_io",
+                        i_dw=len(basephy_par), o_dw=len(cdc_out_par),
+                        i=basephy_par, o=cdc_out_par,
+                        name=f"{prefix}par_{it}",
+                        register=True,
+                    )
+                    self.submodules += simple_cdc
+                    par_ser = Signal()
+                    self.oserdese2_ddr(
+                        din=cdc_out_par,
+                        **(dict(dout_fb=par_ser) if with_odelay else dict(dout=pad)),
+                        **cmd,
+                    )
+                    if with_odelay:
+                        self.odelaye2(
+                            din  = par_ser,
+                            dout = pad,
+                            rst  = _l[prefix+'pardly_rst'],
+                            inc  = _l[prefix+'pardly_inc'],
+                            clk  = "sys2x_io",
+                        )
+
+                # DQS ---------------------------------------------------------------------------------
+                strobes = len(pads.dqs_t) if hasattr(pads, "dqs_t") else len(pads.A_dqs_t)
+                for it in range(strobes):
+                    dqs_t_o = getattr(self.out, prefix+'dqs_t_o')[it]
+                    cdc_dqs_t_o = Signal(len(dqs_t_o)//2)
+                    simple_cdc = SimpleCDC(
+                        clkdiv="sys", clk="sys2x_io",
+                        i_dw=len(dqs_t_o), o_dw=len(cdc_dqs_t_o),
+                        i=dqs_t_o, o=cdc_dqs_t_o,
+                        name=f"{prefix}dqs_t_o_{it}",
+                        register=True,
+                    )
+                    self.submodules += simple_cdc
+
+                    out_dqs_oe = getattr(self.out, prefix+'dqs_oe')[it]
+                    cdc_out_dqs_oe = Signal(len(out_dqs_oe)//2)
+                    simple_cdc = SimpleCDC(
+                        clkdiv="sys", clk="sys2x_io",
+                        i_dw=len(out_dqs_oe), o_dw=len(cdc_out_dqs_oe),
+                        i=~out_dqs_oe, o=cdc_out_dqs_oe,
+                        name=f"{prefix}dqs_t_oe",
+                        register=True,
+                    )
+                    self.submodules += simple_cdc
+
+                    dqs_ser   = Signal()
+                    dqs_dly   = Signal()
+                    dqs_i     = Signal()
+                    dqs_i_dly = Signal()
+                    dqs_t     = Signal()
+
+                    self.oserdese2_ddr_with_tri(
+                        din     = cdc_dqs_t_o,
+                        **(dict(dout_fb = dqs_ser) if with_odelay else dict(dout = dqs_dly)),
+                        tin     = cdc_out_dqs_oe,
+                        tout    = dqs_t,
+                        **ddr,
+                    )
+                    if with_odelay:
+                        cnt_out = Signal(5)
+                        self.odelaye2(
+                            din  = dqs_ser,
+                            dout = dqs_dly,
+                            rst  = self.get_rst(it, _l[prefix+'wdly_dqs_rst'], prefix, "sys2x_io"),
+                            inc  = self.get_inc(it, _l[prefix+'wdly_dqs_inc'], prefix, "sys2x_io"),
+                            clk  = "sys2x_io",
+                            cnt_value_out = cnt_out,
+                        )
+                        self.sync += If(getattr(self, prefix+'dly_sel').storage[it],
+                            getattr(self, prefix+'wdly_dqs').status.eq(cnt_out)
+                        )
+
+                    self.iobufds(
+                        din      = dqs_dly,
+                        dout     = dqs_i,
+                        tin      = dqs_t,
+                        dinout   = getattr(self.pads, prefix+"dqs_t")[it],
+                        dinout_b = getattr(self.pads, prefix+"dqs_c")[it],
+                    )
                     cnt_out = Signal(5)
-                    self.odelaye2(
-                        din  = dq_ser,
-                        dout = dq_dly,
-                        rst  = self.get_rst(it, _l[prefix+'wdly_dq_rst'], prefix, "sys2x_io", dq=True),
-                        inc  = self.get_inc(it, _l[prefix+'wdly_dq_inc'], prefix, "sys2x_io", dq=True),
+                    self.idelaye2(
+                        din  = dqs_i,
+                        dout = dqs_i_dly,
+                        rst  = self.get_rst(it, _l[prefix+'rdly_dqs_rst'], prefix, "sys2x_io"),
+                        inc  = self.get_inc(it, _l[prefix+'rdly_dqs_inc'], prefix, "sys2x_io"),
+                        init = max_delay_taps-1,
                         clk  = "sys2x_io",
                         cnt_value_out = cnt_out,
+                        dec  = True,
                     )
-                    if it%self.dq_dqs_ratio == 0:
-                        self.comb += If(getattr(self, prefix+'dly_sel').storage[it//self.dq_dqs_ratio],
-                            getattr(self, prefix+'wdly_dq').status.eq(cnt_out)
-                        )
-                self.iobuf(
-                    din    = dq_dly,
-                    dout   = dq_i,
-                    dinout = getattr(self.pads, prefix+"dq")[it],
-                    tin    = dq_t
-                )
-
-                basephy_dq_i =  getattr(self.out, prefix+'dq_i')[it]
-                in_dq = Signal.like(basephy_dq_i)
-                delay_dq_i = Signal(2)
-
-                cnt_out = Signal(5)
-                self.idelaye2(
-                    din  = dq_i,
-                    dout = dq_i_dly,
-                    rst  = self.get_rst(it, _l[prefix+'rdly_dq_rst'], prefix, "sys2x_io", dq=True),
-                    inc  = self.get_inc(it, _l[prefix+'rdly_dq_inc'], prefix, "sys2x_io", dq=True),
-                    clk  = "sys2x_io",
-                    init = max_delay_taps-1,
-                    cnt_value_out = cnt_out,
-                    dec  = True,
-                )
-                if it%self.dq_dqs_ratio == 0:
-                    self.comb += If(getattr(self, prefix+'dly_sel').storage[it//self.dq_dqs_ratio],
-                        getattr(self, prefix+'rdly_dq').status.eq(cnt_out)
+                    self.sync += If(getattr(self, prefix+'dly_sel').storage[it],
+                        getattr(self, prefix+'rdly_dqs').status.eq(cnt_out)
                     )
-                self.iserdese2_ddr(
-                    din  = dq_i_dly,
-                    dout = in_dq,
-                    clk    = "sys4x_io",
-                    clkdiv = "sys_io"
-                )
-                self.sync += delay_dq_i.eq(in_dq[-2:])
-                self.comb += basephy_dq_i.eq(Cat(delay_dq_i, in_dq[:-2]))
 
-            # DM_n --------------------------------------------------------------------------------
-            if hasattr(pads, "dm_n"):
-                for it in range(strobes):
-                    basephy_dm = getattr(self.out, prefix+'dm_n_o')[it]
-                    cdc_out_dm = Signal(len(basephy_dm)//2)
+                    self.iserdese2_ddr(
+                        din    = dqs_i_dly,
+                        dout   = getattr(self.out, prefix+"dqs_t_i")[it],
+                        clk    = "sys4x_io",
+                        clkdiv = "sys_io"
+                    )
+
+                # DQ ----------------------------------------------------------------------------------
+                dq_oe = {}
+                for it in range(self.databits):
+                    basephy_dq = getattr(self.out, prefix+'dq_o')[it]
+                    cdc_out_dq = Signal(len(basephy_dq)//2)
                     simple_cdc = SimpleCDC(
                         clkdiv="sys", clk="sys2x_90_io",
-                        i_dw=len(basephy_dm), o_dw=len(cdc_out_dm),
-                        i=basephy_dm, o=cdc_out_dm,
-                        name=f"{prefix}dm_o_{it}",
+                        i_dw=len(basephy_dq), o_dw=len(cdc_out_dq),
+                        i=basephy_dq, o=cdc_out_dq,
+                        name=f"{prefix}dq_o_{it}",
                         register=True,
                     )
                     self.submodules += simple_cdc
 
-                    dm_t   = Signal()
-                    dm_ser = Signal()
-                    dm_dly = Signal()
+                    if it//self.dq_dqs_ratio not in dq_oe:
+                        basephy_dq_oe = getattr(self.out, prefix+'dq_oe')[it//self.dq_dqs_ratio]
+                        cdc_out_dq_oe = Signal(len(basephy_dq_oe)//2)
+                        simple_cdc = SimpleCDC(
+                            clkdiv="sys", clk="sys2x_90_io",
+                            i_dw=len(basephy_dq_oe), o_dw=len(cdc_out_dq_oe),
+                            i=~basephy_dq_oe, o=cdc_out_dq_oe,
+                            name=f"{prefix}dq_oe{it//self.dq_dqs_ratio}",
+                            register=True,
+                        )
+                        self.submodules += simple_cdc
+                        dq_oe[it//self.dq_dqs_ratio] = cdc_out_dq_oe
+
+                    dq_t     = Signal()
+                    dq_ser   = Signal()
+                    dq_dly   = Signal()
+                    dq_i     = Signal()
+                    dq_i_dly = Signal()
+
                     self.oserdese2_ddr_with_tri(
-                        din     = cdc_out_dm,
-                        **(dict(dout_fb=dm_ser) if with_odelay else dict(dout=dm_dly)),
-                        tin     = dq_oe[it],
-                        tout    = dm_t,
+                        din     = cdc_out_dq,
+                        **(dict(dout_fb=dq_ser) if with_odelay else dict(dout=dq_dly)),
+                        tin     = dq_oe[it//self.dq_dqs_ratio],
+                        tout    = dq_t,
                         **ddr_90,
                     )
                     if with_odelay:
                         cnt_out = Signal(5)
                         self.odelaye2(
-                            din  = dm_ser,
-                            dout = dm_dly,
-                            rst  = self.get_rst(it, _l[prefix+'wdly_dm_rst'], prefix, "sys2x_io"),
-                            inc  = self.get_inc(it, _l[prefix+'wdly_dm_inc'], prefix, "sys2x_io"),
+                            din  = dq_ser,
+                            dout = dq_dly,
+                            rst  = self.get_rst(it, _l[prefix+'wdly_dq_rst'], prefix, "sys2x_io", dq=True),
+                            inc  = self.get_inc(it, _l[prefix+'wdly_dq_inc'], prefix, "sys2x_io", dq=True),
                             clk  = "sys2x_io",
                             cnt_value_out = cnt_out,
                         )
-                        self.comb += If(getattr(self, prefix+'dly_sel').storage[it],
-                            getattr(self, prefix+'wdly_dm').status.eq(cnt_out)
-                        )
+                        if it%self.dq_dqs_ratio == 0:
+                            self.sync += If(getattr(self, prefix+'dly_sel').storage[it//self.dq_dqs_ratio],
+                                getattr(self, prefix+'wdly_dq').status.eq(cnt_out)
+                            )
                     self.iobuf(
-                        din    = dm_dly,
-                        dout   = Signal(),
-                        tin    = dm_t,
-                        dinout = getattr(self.pads, prefix+'dm_n')[it],
+                        din    = dq_dly,
+                        dout   = dq_i,
+                        dinout = getattr(self.pads, prefix+"dq")[it],
+                        tin    = dq_t
                     )
+
+                    basephy_dq_i =  getattr(self.out, prefix+'dq_i')[it]
+                    in_dq = Signal.like(basephy_dq_i)
+                    delay_dq_i = Signal(2)
+
+                    cnt_out = Signal(5)
+                    self.idelaye2(
+                        din  = dq_i,
+                        dout = dq_i_dly,
+                        rst  = self.get_rst(it, _l[prefix+'rdly_dq_rst'], prefix, "sys2x_io", dq=True),
+                        inc  = self.get_inc(it, _l[prefix+'rdly_dq_inc'], prefix, "sys2x_io", dq=True),
+                        clk  = "sys2x_io",
+                        init = max_delay_taps-1,
+                        cnt_value_out = cnt_out,
+                        dec  = True,
+                    )
+                    if it%self.dq_dqs_ratio == 0:
+                        self.sync += If(getattr(self, prefix+'dly_sel').storage[it//self.dq_dqs_ratio],
+                            getattr(self, prefix+'rdly_dq').status.eq(cnt_out)
+                        )
+                    self.iserdese2_ddr(
+                        din  = dq_i_dly,
+                        dout = in_dq,
+                        clk    = "sys4x_io",
+                        clkdiv = "sys_io"
+                    )
+                    self.sync += delay_dq_i.eq(in_dq[-2:])
+                    self.comb += basephy_dq_i.eq(Cat(delay_dq_i, in_dq[:-2]))
+
+                # DM_n --------------------------------------------------------------------------------
+                if hasattr(pads, "dm_n"):
+                    for it in range(strobes):
+                        basephy_dm = getattr(self.out, prefix+'dm_n_o')[it]
+                        cdc_out_dm = Signal(len(basephy_dm)//2)
+                        simple_cdc = SimpleCDC(
+                            clkdiv="sys", clk="sys2x_90_io",
+                            i_dw=len(basephy_dm), o_dw=len(cdc_out_dm),
+                            i=basephy_dm, o=cdc_out_dm,
+                            name=f"{prefix}dm_o_{it}",
+                            register=True,
+                        )
+                        self.submodules += simple_cdc
+
+                        dm_t   = Signal()
+                        dm_ser = Signal()
+                        dm_dly = Signal()
+                        self.oserdese2_ddr_with_tri(
+                            din     = cdc_out_dm,
+                            **(dict(dout_fb=dm_ser) if with_odelay else dict(dout=dm_dly)),
+                            tin     = dq_oe[it],
+                            tout    = dm_t,
+                            **ddr_90,
+                        )
+                        if with_odelay:
+                            cnt_out = Signal(5)
+                            self.odelaye2(
+                                din  = dm_ser,
+                                dout = dm_dly,
+                                rst  = self.get_rst(it, _l[prefix+'wdly_dm_rst'], prefix, "sys2x_io"),
+                                inc  = self.get_inc(it, _l[prefix+'wdly_dm_inc'], prefix, "sys2x_io"),
+                                clk  = "sys2x_io",
+                                cnt_value_out = cnt_out,
+                            )
+                            self.comb += If(getattr(self, prefix+'dly_sel').storage[it],
+                                getattr(self, prefix+'wdly_dm').status.eq(cnt_out)
+                            )
+                        self.iobuf(
+                            din    = dm_dly,
+                            dout   = Signal(),
+                            tin    = dm_t,
+                            dinout = getattr(self.pads, prefix+'dm_n')[it],
+                        )
 
 
 # PHY variants -------------------------------------------------------------------------------------
