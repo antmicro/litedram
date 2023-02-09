@@ -369,6 +369,9 @@ class DDR5PHY(Module, AutoCSR):
 
         self.dq_dqs_ratio = dq_dqs_ratio = databits // strobes
 
+        self.alert = CSRStatus(1)
+        self.alert_reduce = CSRStorage(1)
+
         if with_odelay or with_clock_odelay:
             setattr(self, 'ckdly_rst' , CSR(name='ckdly_rst'))
             setattr(self, 'ckdly_inc' , CSR(name='ckdly_inc'))
@@ -510,6 +513,16 @@ class DDR5PHY(Module, AutoCSR):
         # Simple commands --------------------------------------------------------------------------
         self.comb += self.out.reset_n.eq(Cat((phase.reset_n, phase.reset_n) for phase in dfi.phases))
         self.comb += [phase.alert_n.eq(self.out.alert_n[i*2] & self.out.alert_n[i*2+1]) for i, phase in enumerate(self.dfi.phases)]
+
+        _alert_reduce = Signal()
+        self.sync += [
+            If(self.alert_reduce.storage,
+                _alert_reduce.eq(reduce(and_, self.out.alert_n))
+            ).Else(
+                _alert_reduce.eq(reduce(or_, self.out.alert_n))
+            )
+        ]
+        self.comb += self.alert.status.eq(_alert_reduce)
 
         for prefix in prefixes:
             self.submodules += DDR5PHYAddress(self.out, dfi, self._rdimm_mode.storage, prefix)
