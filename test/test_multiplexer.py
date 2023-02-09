@@ -178,7 +178,6 @@ class TestMultiplexer(unittest.TestCase):
                     "WRITE": "w",
                 }.get(state, ">")
                 yield
-
             self.assertEqual(states, expected)
 
         dut = MultiplexerDUT()
@@ -194,12 +193,13 @@ class TestMultiplexer(unittest.TestCase):
             states   = ""
 
             # Simulate until we are in WRITE
-            yield from dut.bm_drivers[0].write()
-            while (yield from dut.fsm_state()) != "WRITE":
+            yield from dut.bm_drivers[1].write()
+            while (yield from dut.fsm_state()) != "WRITE" and not (yield from dut.bm_drivers[1].ready()):
                 yield
 
             # Set read_available=1
-            yield from dut.bm_drivers[0].read()
+            yield
+            yield from dut.bm_drivers[1].read()
             yield
 
             for _ in range(len(expected)):
@@ -579,6 +579,7 @@ class TestMultiplexer(unittest.TestCase):
                 cmd = bm_sequences[bank].pop(0)
 
                 # Check if the captured data is correct
+                print(phase_snap.cmd, cmd, phase_snap)
                 self.assertEqual(phase_snap.cmd, cmd)
                 if cmd in ["w", "r"]:
                     # Addresses are artificially forced to bank numbers in drivers

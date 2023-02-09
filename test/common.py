@@ -181,6 +181,9 @@ class CmdRequestRWDriver:
     def nop(self):
         yield from self._drive()
 
+    def ready(self):
+        return (yield self.req.ready)
+
     def _drive(self, **kwargs):
         signals = ["a", "ba", "cas", "ras", "we"]
         if self.rw_layout:
