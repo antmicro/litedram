@@ -50,7 +50,7 @@ class DDR5SDRAMSimulationModel(Module, AutoCSR):
         SimLogger initial logging level (formatted for parsing with `log_level_getter`).
     """
     def __init__(self, pads, *, sys_clk_freq, cl, cwl, log_level, geom_settings, prefix="",
-                 module_num=0, dq_dqs_ratio=8):
+                 module_num=0, dq_dqs_ratio=8, ca_inversion=False):
         log_level = log_level_getter(log_level)
 
         bl_max    = 16 # We only support BL8 and BL16, there is no support for BL32
@@ -88,6 +88,7 @@ class DDR5SDRAMSimulationModel(Module, AutoCSR):
             prefix            = prefix,
             module_num        = module_num,
             dq_dqs_ratio      = dq_dqs_ratio,
+            ca_inversion      = ca_inversion,
         )
         self.submodules.cmd = ClockDomainsRenamer(cd_cmd)(cmd)
 
@@ -114,7 +115,7 @@ class DDR5SDRAMSimulationModel(Module, AutoCSR):
 # Commands -----------------------------------------------------------------------------------------
 
 class CommandDecoder(Module):
-    def __init__(self, enable_decode, mode_2n, pads, prefix, log):
+    def __init__(self, enable_decode, mode_2n, pads, prefix, log, ca_inversion=False):
 
         self.cs_n_low   = Signal(14)
         self.cs_n_high  = Signal(14)
@@ -127,10 +128,15 @@ class CommandDecoder(Module):
         # CS_n/CA shift registers
         ca_pads = Signal.like(getattr(pads, prefix+'ca'))
         cs_pads = Signal.like(getattr(pads, prefix+'cs_n'))
+
         self.comb += [
             ca_pads.eq(getattr(pads, prefix+'ca')),
             cs_pads.eq(getattr(pads, prefix+'cs_n')),
         ]
+
+        if ca_inversion:
+           self.comb += ca_pads.eq(~ca_pads)
+
         self.cs_n = cs_n = TappedDelayLine(cs_pads, ntaps=3)
         self.ca   = ca   = TappedDelayLine(ca_pads, ntaps=3)
         self.submodules += cs_n, ca
@@ -200,7 +206,7 @@ class CommandsSim(Module, AutoCSR):
     Command simulator should work in the clock domain of `pads.clk_p` (SDR).
     """
     def __init__(self, pads, data_cdc, *,
-                 clk_freq, log_level, geom_settings, bl_max, prefix, module_num=0, dq_dqs_ratio=8):
+                 clk_freq, log_level, geom_settings, bl_max, prefix, module_num=0, dq_dqs_ratio=8, ca_inversion=False):
         self.submodules.log = log = SimLogger(log_level=log_level, clk_freq=clk_freq, clk_freq_cd="sys4x")
         self.log.add_csrs()
 
@@ -276,7 +282,7 @@ class CommandsSim(Module, AutoCSR):
         cmds_enabled = Signal()
         decoder_enable = Signal()
 
-        self.submodules.decode = CommandDecoder(decoder_enable, ~self.mode_regs[2][2], pads, prefix, log)
+        self.submodules.decode = CommandDecoder(decoder_enable, ~self.mode_regs[2][2], pads, prefix, log, ca_inversion)
 
         cmd_handlers = OrderedDict(
             MRW  = self.mrw_handler(prefix),
