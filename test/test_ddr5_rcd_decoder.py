@@ -19,7 +19,7 @@ from litedram.DDR5RCD01.RCD_interfaces_external import *
 from litedram.DDR5RCD01.DDR5RCD01Decoder import DDR5RCD01Decoder
 from litedram.DDR5RCD01.BusCSCAEnvironment import BusCSCAEnvironment
 from litedram.DDR5RCD01.BusCSCAEnvironment import EnvironmentScenarios
-from litedram.DDR5RCD01.unittests.CRG import CRG
+from litedram.DDR5RCD01.CRG import CRG
 
 
 class TestBed(Module):

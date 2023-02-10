@@ -24,8 +24,8 @@ from litedram.DDR5RCD01.BusCSCAMonitorDev import BusCSCAMonitorDev
 from litedram.DDR5RCD01.BusCSCAMonitorDefinitions import *
 from litedram.DDR5RCD01.BusCSCAScoreboard import BusCSCAScoreboard
 from litedram.DDR5RCD01.BusCSCAMonitorPostProcessor import BusCSCAMonitorPostProcessor
-
-from test.CRG import CRG
+from litedram.DDR5RCD01.CRG import CRG
+# from test.CRG import CRG
 
 
 class TestBed(Module):
