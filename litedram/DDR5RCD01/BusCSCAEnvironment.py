@@ -32,6 +32,8 @@ class EnvironmentScenarios(enum.IntEnum):
     SIMPLE_GENERIC = 2
     DECODER_UT = 3
     DECODER_MCA = 4
+    DOUBLE_ONLY = 5
+    TEST_ALL = 6
 
 
 class BusCSCAEnvironment(Module):
@@ -104,6 +106,20 @@ class BusCSCAEnvironment(Module):
                 inactive_post_len=1,
                 pattern_len=2
             )
+        elif scenario_select == EnvironmentScenarios.DOUBLE_ONLY:
+            self.queue = self.simple_double(
+                inactive_pre_len=100,
+                inactive_inter_len=0,
+                inactive_post_len=1,
+                pattern_len=2
+            )
+        elif scenario_select == EnvironmentScenarios.TEST_ALL:
+            self.queue = self.test_all(
+                inactive_pre_len=100,
+                inactive_inter_len=0,
+                inactive_post_len=1,
+                pattern_len=2
+            )
         else:
             self.queue = []
 
@@ -119,6 +135,46 @@ class BusCSCAEnvironment(Module):
 
         for i in range(pattern_len):
             scenario += self.mca_mix()
+            for j in range(inactive_inter_len):
+                scenario += [BusCSCAInactive().cmd]
+
+        for i in range(inactive_post_len):
+            scenario += [BusCSCAInactive().cmd]
+
+        return scenario
+
+    def test_all(self,
+                       inactive_pre_len=5,
+                       inactive_inter_len=1,
+                       inactive_post_len=1,
+                       pattern_len=2
+                       ):
+        scenario = []
+        for i in range(inactive_pre_len):
+            scenario += [BusCSCAInactive().cmd]
+
+        for i in range(pattern_len):
+            scenario += self.all_mix()
+            for j in range(inactive_inter_len):
+                scenario += [BusCSCAInactive().cmd]
+
+        for i in range(inactive_post_len):
+            scenario += [BusCSCAInactive().cmd]
+
+        return scenario
+
+    def simple_double(self,
+                       inactive_pre_len=5,
+                       inactive_inter_len=1,
+                       inactive_post_len=1,
+                       pattern_len=2
+                       ):
+        scenario = []
+        for i in range(inactive_pre_len):
+            scenario += [BusCSCAInactive().cmd]
+
+        for i in range(pattern_len):
+            scenario += self.double_mix()
             for j in range(inactive_inter_len):
                 scenario += [BusCSCAInactive().cmd]
 
@@ -185,8 +241,35 @@ class BusCSCAEnvironment(Module):
         flow = []
         flow += [
             BusCSCAGeneric1().cmd,
+            BusCSCAGeneric1A().cmd,
+            BusCSCAGeneric1B().cmd,
             BusCSCAGeneric2().cmd,
+            BusCSCAGeneric2A().cmd,
+            BusCSCAGeneric2B().cmd,
         ]
+        return flow
+
+    def all_mix(self):
+        flow = []
+
+        flow += [
+            BusCSCAGeneric2().cmd,
+            BusCSCAGeneric2A().cmd,
+            BusCSCAGeneric2B().cmd,
+        ]
+        flow += self.generic_cmd()
+        flow += self.multi_cmd()
+
+        return flow
+
+    def double_mix(self):
+        flow = []
+        flow += [
+            BusCSCAGeneric2().cmd,
+            BusCSCAGeneric2A().cmd,
+            BusCSCAGeneric2B().cmd,
+        ]
+        flow += self.multi_cmd()
         return flow
 
     def mca_mix(self):

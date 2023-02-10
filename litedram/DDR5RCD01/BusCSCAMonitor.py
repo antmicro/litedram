@@ -6,11 +6,11 @@
 
 # Python
 import logging
-from operator import xor
-from dataclasses import dataclass
+# from operator import xor
+# from dataclasses import dataclass
 # migen
 from migen import *
-from migen.fhdl import verilog
+# from migen.fhdl import verilog
 # Litex
 from litedram.DDR5RCD01.RCD_definitions import *
 from litedram.DDR5RCD01.RCD_interfaces import *
@@ -116,20 +116,6 @@ class BusCSCAMonitor(Module):
                 "Monitor received an interface, which is not supported. Expected=[If_ibuf, if_bus_csca_o]")
 
         """
-            Create the Array
-            Signals that come into the array are meant for post-processing
-
-        """
-        cmd_len = Signal(16)
-        cmd_len_w = len(cmd_len)
-
-        xarr_ptr = Signal(cmd_len_w)
-
-        counter_invalid = Signal(cmd_len_w)
-        counter_en = Signal()
-        counter_rst = Signal(reset=0)
-
-        """
             XOR edge detection
         """
         del_dcs_n = Signal(dcs_n_w, reset=~0)
@@ -151,6 +137,15 @@ class BusCSCAMonitor(Module):
         det_negedge = Signal(2)
         self.comb += det_negedge.eq(det_edge & ~dcs_n)
 
+        """
+            Detect if command is present on the bus
+        """
+        cmd_len = Signal(16)
+        cmd_len_w = len(cmd_len)
+
+        counter_invalid = Signal(cmd_len_w)
+        counter_en = Signal()
+        counter_rst = Signal(reset=0)
         cmd_active = Signal()
 
         is_1_ui_command = Signal()
@@ -215,31 +210,7 @@ class BusCSCAMonitor(Module):
             )
         )
 
-        """
-            Assemble the signals and write to Array
-        """
 
-        self.xarr_is_active = Array(Signal() for _ in range(monitor_arr_d))
-        self.xarr_is_follow_up = Array(Signal() for _ in range(monitor_arr_d))
-        self.xarr_cmd_len = Array(Signal(16) for _ in range(monitor_arr_d))
-        self.xarr_cmd_type = Array(Signal(4) for _ in range(monitor_arr_d))
-        self.xarr_dcs_n = Array(Signal(dcs_n_w) for _ in range(monitor_arr_d))
-        self.xarr_dca = Array(Signal(dca_w) for _ in range(monitor_arr_d))
-        if self.is_type == MonitorType.DDR:
-            self.xarr_dpar = Array(Signal() for _ in range(monitor_arr_d))
-
-        xarr_we = Signal()
-
-        if self.is_type == MonitorType.DDR:
-            self.comb += xarr_we.eq(
-                counter_save | cmd_active
-            )
-        elif self.is_type == MonitorType.ONE_N:
-            self.comb += xarr_we.eq(
-                counter_save |
-                (cmd_active & (ui_counter == 4)) |
-                (cmd_active & (ui_counter == 2))
-            )
 
         cmd_len = Signal(16)
         self.comb += If(
@@ -255,7 +226,6 @@ class BusCSCAMonitor(Module):
         self.comb += is_follow_up.eq(cmd_active & del_cmd_active)
 
         cmd_type = Signal(4)
-
         self.sync += If(
             det_negedge,
             If(
@@ -272,6 +242,32 @@ class BusCSCAMonitor(Module):
                 cmd_type.eq(MonitorCommandType.INACTIVE)
             )
         )
+
+        """
+            Save monitor data to an array
+        """
+        xarr_we = Signal()
+        if self.is_type == MonitorType.DDR:
+            self.comb += xarr_we.eq(
+                counter_save | cmd_active
+            )
+        elif self.is_type == MonitorType.ONE_N:
+            self.comb += xarr_we.eq(
+                counter_save |
+                (cmd_active & (ui_counter == 4)) |
+                (cmd_active & (ui_counter == 2))
+            )
+
+        xarr_ptr = Signal(cmd_len_w)
+        self.xarr_is_active = Array(Signal() for _ in range(monitor_arr_d))
+        self.xarr_is_follow_up = Array(Signal() for _ in range(monitor_arr_d))
+        self.xarr_cmd_len = Array(Signal(16) for _ in range(monitor_arr_d))
+        self.xarr_cmd_type = Array(Signal(4) for _ in range(monitor_arr_d))
+        self.xarr_dcs_n = Array(Signal(dcs_n_w) for _ in range(monitor_arr_d))
+        self.xarr_dca = Array(Signal(dca_w) for _ in range(monitor_arr_d))
+        if self.is_type == MonitorType.DDR:
+            self.xarr_dpar = Array(Signal() for _ in range(monitor_arr_d))
+
         if self.is_type == MonitorType.DDR:
             self.sync += If(
                 xarr_we,
@@ -330,6 +326,7 @@ class BusCSCAMonitor(Module):
         self.squash_follow_ups(xarr=xarr_monitor_ctrls)
         # breakpoint()
         self.monitor_q.filter_inactive()
+        self.monitor_q.report()
 
     def squash_follow_ups(self, xarr):
         bus_cs_ca_cmd = []
