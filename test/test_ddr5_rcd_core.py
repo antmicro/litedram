@@ -20,6 +20,11 @@ from litedram.DDR5RCD01.DDR5RCD01Core import DDR5RCD01Core
 from litedram.DDR5RCD01.BusCSCAEnvironment import BusCSCAEnvironment
 from litedram.DDR5RCD01.BusCSCAEnvironment import EnvironmentScenarios
 from litedram.DDR5RCD01.BusCSCAMonitor import BusCSCAMonitor
+from litedram.DDR5RCD01.BusCSCAMonitorDev import BusCSCAMonitorDev
+from litedram.DDR5RCD01.BusCSCAMonitorDefinitions import *
+from litedram.DDR5RCD01.BusCSCAScoreboard import BusCSCAScoreboard
+from litedram.DDR5RCD01.BusCSCAMonitorPostProcessor import BusCSCAMonitorPostProcessor
+
 from test.CRG import CRG
 
 
@@ -60,10 +65,19 @@ class TestBed(Module):
             )
         )
 
+        self.config_monitor_ingress = {
+            "monitor_type": MonitorType.DDR,
+            "ingress": True,
+            "channel": "A",
+            "rank": None,
+            "row": None
+        }
+
         self.submodules.xmonitor_ingress = ClockDomainsRenamer("sys")(
-            BusCSCAMonitor(
+            BusCSCAMonitorDev(
                 if_ibuf_i=self.if_ibuf_A,
-                is_sim_finished=self.xenvironment.agent.sequencer.is_sim_finished
+                is_sim_finished=self.xenvironment.agent.sequencer.is_sim_finished,
+                config=self.config_monitor_ingress
             )
         )
 
@@ -84,21 +98,28 @@ class TestBed(Module):
                 is_dual_channel=self.is_dual_channel,
             )
         )
-
+        """
+            Monitor Channel A Rank A Row A
+        """
         self.if_bus_csca_o = If_bus_csca_o()
         self.comb += self.if_bus_csca_o.qcs_n.eq(self.if_obuf_A.qacs_a_n)
         self.comb += self.if_bus_csca_o.qca.eq(self.if_obuf_A.qaca_a)
 
+        self.config_monitor_egress = {
+            "monitor_type": MonitorType.ONE_N,
+            "ingress": False,
+            "channel": "A",
+            "rank": "A",
+            "row": "A"
+        }
+
         self.submodules.xmonitor_egress = ClockDomainsRenamer("sys")(
-            BusCSCAMonitor(
+            BusCSCAMonitorDev(
                 if_ibuf_i=self.if_bus_csca_o,
-                is_sim_finished=self.xenvironment.agent.sequencer.is_sim_finished
+                is_sim_finished=self.xenvironment.agent.sequencer.is_sim_finished,
+                config=self.config_monitor_egress
             )
         )
-
-        """
-
-        """
 
         """
             Generators
@@ -112,7 +133,10 @@ class TestBed(Module):
             "sys":
             [
                 self.xenvironment.run_env(
-                    scenario_select=EnvironmentScenarios.SIMPLE_GENERIC),
+                    # scenario_select=EnvironmentScenarios.SIMPLE_GENERIC),
+                    # scenario_select=EnvironmentScenarios.DOUBLE_ONLY),
+                    # scenario_select=EnvironmentScenarios.DECODER_MCA),
+                    scenario_select=EnvironmentScenarios.TEST_ALL),
                 self.xmonitor_ingress.monitor(),
                 self.xmonitor_egress.monitor(),
             ]
@@ -137,17 +161,17 @@ class DDR5RCD01CoreTests_SingleChannel(unittest.TestCase):
         """
             Waveform file
         """
-        dir_name = "./wave_ut"
-        if not os.path.exists(dir_name):
-            os.mkdir(dir_name)
-        file_name = self._testMethodName
-        self.wave_file_name = dir_name + '/' + file_name + ".vcd"
+        self.dir_name = "./wave_ut"
+        if not os.path.exists(self.dir_name):
+            os.mkdir(self.dir_name)
+        self.file_name = self._testMethodName
+        self.wave_file_name = self.dir_name + '/' + self.file_name + ".vcd"
         """
             Logging
         """
-        LOG_FILE_NAME = dir_name + '/' + file_name + ".log"
+        self.LOG_FILE_NAME = self.dir_name + '/' + self.file_name + ".log"
         FORMAT = "[%(module)s.%(funcName)s] %(message)s"
-        fileHandler = logging.FileHandler(filename=LOG_FILE_NAME,mode='w')
+        fileHandler = logging.FileHandler(filename=self.LOG_FILE_NAME, mode='w')
         fileHandler.formatter = logging.Formatter(FORMAT)
         streamHandler = logging.StreamHandler()
 
@@ -156,28 +180,75 @@ class DDR5RCD01CoreTests_SingleChannel(unittest.TestCase):
         logger.addHandler(streamHandler)
         logger.setLevel(logging.DEBUG)
 
-
     def tearDown(self):
         del self.tb
 
-    def test_core(self):
+    def test_mode_normal_rank_A(self):
         logger = logging.getLogger('root')
-        logger.debug("-"*80)
+
+        """
+            migen simulation
+        """
         run_simulation(
             self.tb,
             generators=self.tb.run_test(),
             clocks=self.tb.xcrg.clocks,
             vcd_name=self.wave_file_name
         )
-        # breakpoint()
-        self.tb.xmonitor_ingress.post_process()
-        self.tb.xmonitor_egress.post_process()        
-        
-        logger.debug(str(self.tb.xmonitor_ingress.monitor_q))
-        logger.debug(str(self.tb.xmonitor_egress.monitor_q))
-        # breakpoint()
+
+        """
+            Post-processing validation modules
+        """
+        self.tb.processor_ingress = BusCSCAMonitorPostProcessor(
+            signal_list=self.tb.xmonitor_ingress.signal_list,
+            config=self.tb.xmonitor_ingress.config
+        )
+        self.tb.processor_ingress.post_process()
+
+        self.tb.processor_egress = BusCSCAMonitorPostProcessor(
+            signal_list=self.tb.xmonitor_egress.signal_list,
+            config=self.tb.xmonitor_egress.config
+        )
+        self.tb.processor_egress.post_process()
+
+        """
+            Debug logs
+        """
+        commands_ingress = self.tb.processor_ingress.commands
+        commands_egress = self.tb.processor_egress.commands
+
+        logger_change_log_file(old_log_file_name=self.file_name,
+                               new_log_file_name=self.dir_name+"/traffic_ingress.log")
+        for commands in [commands_ingress]:
+            logging.debug("Commands")
+            for cmd in commands:
+                logging.debug(cmd)
+            logging.debug("----------------")
+
+        logger_change_log_file(old_log_file_name="traffic_ingress",
+                               new_log_file_name=self.dir_name+"/traffic_egress.log")
+        for commands in [commands_egress]:
+            logging.debug("Commands")
+            for cmd in commands:
+                logging.debug(cmd)
+            logging.debug("----------------")
+
+        logger_change_log_file(
+            old_log_file_name="traffic_egress", new_log_file_name=self.LOG_FILE_NAME)
+
+        """
+            Validation
+        """
+        self.tb.scoreboard = BusCSCAScoreboard(
+            p=self.tb.processor_ingress,
+            p_other=self.tb.processor_egress
+        )
+
         assert 1 == 1
 
+    # def test_core2(self):
+    #     logger = logging.getLogger('root')
+    #     logger.debug("-"*80)
 
 
 if __name__ == '__main__':

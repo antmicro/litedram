@@ -48,31 +48,38 @@ class TestBed(Module):
         )
 
         qvalid = Signal()
+        qvalid_A = Signal()
+        qvalid_B = Signal()
         is_this_ui_odd = Signal()
         is_cmd_beginning = Signal()
-        qcs_n = Signal()
-        qca = Signal(7)
+
+        self.if_csca_o = If_ibuf()
+        self.if_csca_o_rank_A = If_ibuf()
+        self.if_csca_o_rank_B = If_ibuf()
 
         self.submodules.dut = DDR5RCD01Decoder(
             if_ibuf=self.if_ibuf_A,
-            qcs_n=qcs_n,
-            qca=qca,
+            if_csca_o=self.if_csca_o,
+            if_csca_o_rank_A=self.if_csca_o_rank_A,
+            if_csca_o_rank_B=self.if_csca_o_rank_B,
             qvalid=qvalid,
-            is_cmd_beginning=is_cmd_beginning,
+            qvalid_A=qvalid_A,
+            qvalid_B=qvalid_B,
             is_this_ui_odd=is_this_ui_odd,
+            is_cmd_beginning=is_cmd_beginning,
         )
 
-        """ 
+        """
             Validation
         """
         count_commands = Signal(16)
         self.sync += If(
-            is_cmd_beginning,
+            is_cmd_beginning & qvalid_A,
             count_commands.eq(count_commands+1)
         )
         count_valid = Signal(16)
         self.sync += If(
-            qvalid,
+            qvalid_A,
             count_valid.eq(count_valid+1)
         )
         self.count_commands = count_commands
@@ -156,7 +163,8 @@ class DDR5RCD01DecoderTests(unittest.TestCase):
         env_count_commands = 0
         for id, item in enumerate(self.tb.xenvironment.queue):
             if item["cs_signalling"] != "inactive":
-                env_count_commands = env_count_commands + 1
+                if item["destination_rank"] != "B":
+                    env_count_commands = env_count_commands + 1
         assert env_count_commands == dut_count_commands
 
 
