@@ -15,6 +15,7 @@ from litedram.DDR5RCD01.RCD_interfaces_external import *
 from litedram.DDR5RCD01.RCD_utils import *
 # Submodules
 from litedram.DDR5RCD01.DDR5RCD01ControlCenter import DDR5RCD01ControlCenter
+from litedram.DDR5RCD01.DDR5RCD01CommandLogic import DDR5RCD01CommandLogic
 from litedram.DDR5RCD01.DDR5RCD01Error import DDR5RCD01Error
 from litedram.DDR5RCD01.DDR5RCD01InputBuffer import DDR5RCD01InputBuffer
 from litedram.DDR5RCD01.DDR5RCD01RankBuffer import DDR5RCD01RankBuffer
@@ -77,6 +78,7 @@ class DDR5RCD01Channel(Module):
         if_ctrl_ibuf = If_ctrl_ibuf()
         if_ibuf_o = If_ibuf()
 
+
         xibuf = DDR5RCD01InputBuffer(
             if_ib_i=if_ibuf,
             if_ib_o=if_ibuf_o,
@@ -84,18 +86,49 @@ class DDR5RCD01Channel(Module):
         )
         self.submodules += xibuf
 
-        if_ibuf_2_ranks = If_bus_csca()
-        self.comb += if_ibuf_2_ranks.cs_n.eq(if_ibuf_o.dcs_n)
-        self.comb += if_ibuf_2_ranks.ca.eq(if_ibuf_o.dca)
+        """
+            Command Logic : Rank A
+        """
+        if_csca_o = If_ibuf()
+        if_csca_o_rank_A = If_ibuf()
+        if_csca_o_rank_B = If_ibuf()
+
+        if_ctrl_lbuf_row_A_rankA = If_ctrl_lbuf()
+        if_ctrl_lbuf_row_B_rankA = If_ctrl_lbuf()
+
+        if_ctrl_lbuf_row_A_rankB = If_ctrl_lbuf()
+        if_ctrl_lbuf_row_B_rankB = If_ctrl_lbuf()
+
+        tmp_rw_is_output_inversion_enabled=Signal()
+        self.comb += tmp_rw_is_output_inversion_enabled.eq(1)
+
+        tmp_rw_is_parity_checking_enabled=Signal()
+        self.comb += tmp_rw_is_parity_checking_enabled.eq(0)
+        tmp_parity_error=Signal()
+        tmp_reserved_if_mrw_actor=Signal()
+
+        xcmd_logic = DDR5RCD01CommandLogic(
+            if_ibuf_i=if_ibuf_o,
+            if_csca_o=if_csca_o,
+            if_csca_o_rank_A=if_csca_o_rank_A,
+            if_csca_o_rank_B=if_csca_o_rank_B,
+            if_ctrl_lbuf_rank_A_row_A=if_ctrl_lbuf_row_A_rankA,
+            if_ctrl_lbuf_rank_A_row_B=if_ctrl_lbuf_row_B_rankA,
+            if_ctrl_lbuf_rank_B_row_A=if_ctrl_lbuf_row_A_rankB,
+            if_ctrl_lbuf_rank_B_row_B=if_ctrl_lbuf_row_B_rankB,
+            rw_is_output_inversion_enabled=tmp_rw_is_output_inversion_enabled,
+            rw_is_parity_checking_enabled=tmp_rw_is_parity_checking_enabled,
+            parity_error=tmp_parity_error,
+            reserved_if_mrw_actor=tmp_reserved_if_mrw_actor,
+        )
+        self.submodules += xcmd_logic
 
         """
-             Rank A
+             Rank Buffer A
         """
         if_obuf_csca_row_A_rankA = If_bus_csca_o()
         if_obuf_csca_row_B_rankA = If_bus_csca_o()
 
-        if_ctrl_lbuf_row_A_rankA = If_ctrl_lbuf()
-        if_ctrl_lbuf_row_B_rankA = If_ctrl_lbuf()
         if_ctrl_obuf_csca_row_A_rankA = If_ctrl_obuf_CSCA()
         if_ctrl_obuf_csca_row_B_rankA = If_ctrl_obuf_CSCA()
         if_ctrl_obuf_clks_row_A_rankA = If_ctrl_obuf_CLKS()
@@ -104,8 +137,12 @@ class DDR5RCD01Channel(Module):
         if_obuf_clks_row_A_rankA = If_ck()
         if_obuf_clks_row_B_rankA = If_ck()
 
+        if_csca_rank_A = If_bus_csca()
+        self.comb += if_csca_rank_A.cs_n.eq(if_csca_o_rank_A.dcs_n)
+        self.comb += if_csca_rank_A.ca.eq(if_csca_o_rank_A.dca)
+
         xrankA = DDR5RCD01RankBuffer(
-            if_ibuf=if_ibuf_2_ranks,
+            if_ibuf=if_csca_rank_A,
             if_clk_row_A=if_clk_rowA_rankA,
             if_clk_row_B=if_clk_rowB_rankA,
             if_obuf_csca_row_A=if_obuf_csca_row_A_rankA,
@@ -136,8 +173,6 @@ class DDR5RCD01Channel(Module):
             Rank B
         """
 
-        if_ctrl_lbuf_row_A_rankB = If_ctrl_lbuf()
-        if_ctrl_lbuf_row_B_rankB = If_ctrl_lbuf()
         if_ctrl_obuf_csca_row_A_rankB = If_ctrl_obuf_CSCA()
         if_ctrl_obuf_csca_row_B_rankB = If_ctrl_obuf_CSCA()
         if_ctrl_obuf_clks_row_A_rankB = If_ctrl_obuf_CLKS()
@@ -149,8 +184,12 @@ class DDR5RCD01Channel(Module):
         if_obuf_clks_row_A_rankB = If_ck()
         if_obuf_clks_row_B_rankB = If_ck()
 
+        if_csca_rank_B = If_bus_csca()
+        self.comb += if_csca_rank_B.cs_n.eq(if_csca_o_rank_B.dcs_n)
+        self.comb += if_csca_rank_B.ca.eq(if_csca_o_rank_B.dca)
+
         xrankB = DDR5RCD01RankBuffer(
-            if_ibuf=if_ibuf_2_ranks,
+            if_ibuf=if_csca_rank_B,
             if_clk_row_A=if_clk_rowA_rankB,
             if_clk_row_B=if_clk_rowB_rankB,
             if_obuf_csca_row_A=if_obuf_csca_row_A_rankB,
@@ -176,12 +215,11 @@ class DDR5RCD01Channel(Module):
 
         self.comb += if_obuf.qdck_t.eq(if_obuf_clks_row_B_rankB.ck_t)
         self.comb += if_obuf.qdck_c.eq(if_obuf_clks_row_B_rankB.ck_c)
+
         """
             Control Center
         """
-
         xcontrol_center = DDR5RCD01ControlCenter(
-            if_ibuf_o=if_ibuf_o,
             if_ctrl_ibuf=if_ctrl_ibuf,
             if_ctrl_lbuf_row_A_rankA=if_ctrl_lbuf_row_A_rankA,
             if_ctrl_lbuf_row_B_rankA=if_ctrl_lbuf_row_B_rankA,
@@ -205,9 +243,6 @@ class DDR5RCD01Channel(Module):
 
         self.submodules += xcontrol_center
 
-        # TODO implement error handler
-        # xerror = DDR5RCD01Error(iif_err=if_sdram, oif_err=if_err)
-        # self.submodules += xerror
 
 
 class TestBed(Module):

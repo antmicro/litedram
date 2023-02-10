@@ -8,24 +8,27 @@ import logging
 import os
 import inspect
 
+
 class NotSupportedException(Exception):
-    def __init__(self,*args):
-            if args:
-                self.message = str(args[0])
-            else:
-                self.message = "Engineering test of this block will not be provided."
+    def __init__(self, *args):
+        if args:
+            self.message = str(args[0])
+        else:
+            self.message = "Engineering test of this block will not be provided."
+
     def __str__(self):
-            return self.message
+        return self.message
 
 
 class UnderConstruction(Exception):
-    def __init__(self,*args):
-            if args:
-                self.message = str(args[0])
-            else:
-                self.message = "Engineering test of this block is being developed."
+    def __init__(self, *args):
+        if args:
+            self.message = str(args[0])
+        else:
+            self.message = "Engineering test of this block is being developed."
+
     def __str__(self):
-            return self.message
+        return self.message
 
 
 class EngTest():
@@ -62,6 +65,21 @@ class EngTest():
         description += "Log:\t" + self.log_file_name + "\n"
         description += "Wave:\t" + self.wave_file_name + "\n"
         return description
+
+
+def logger_change_log_file(old_log_file_name, new_log_file_name):
+    logger = logging.getLogger('root')
+    for handler in logger.handlers:
+        try:
+            handler_file_name = (
+                (handler.baseFilename).split('/')[-1]).split('.')[0]
+            if handler_file_name == old_log_file_name:
+                logger.removeHandler(handler)
+        except:
+            pass
+    fileHandler = logging.FileHandler(filename=new_log_file_name, mode='w')
+    logger.addHandler(fileHandler)
+
 
 if __name__ == "__main__":
     raise NotSupportedException

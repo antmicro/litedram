@@ -19,6 +19,7 @@ from litedram.DDR5RCD01.DDR5RCD01Pages import DDR5RCD01Pages
 from litedram.DDR5RCD01.DDR5RCD01CSLogic import DDR5RCD01CSLogic
 from litedram.DDR5RCD01.DDR5RCD01Error import DDR5RCD01Error
 
+
 class DDR5RCD01ControlCenter(Module):
     """DDR5 RCD01 Control Center
     TODO Documentation
@@ -31,7 +32,7 @@ class DDR5RCD01ControlCenter(Module):
       - non-sticky registers are restored to default (preferred 0)
       - QRST_n is asserted
       - other outputs are to flow, except QCS[x]_n which should be asserted
-    This state is also called the low-power state.  
+    This state is also called the low-power state.
 
     *Powerdown is widely used to describe a power-state, in which
     the bias circuitry is disabled, however, there is a stable power supply
@@ -41,7 +42,7 @@ class DDR5RCD01ControlCenter(Module):
       - DRST_n is deasserted
       - DCS_n are deasserted
       - Host starts the dck clock
-      - host writes to coarse and fine grain frequency registers 
+      - host writes to coarse and fine grain frequency registers
       - host writes to DCA input mode (DDR, SDR)
       - wait for PLL to re-lock
     Next, training:
@@ -70,7 +71,6 @@ class DDR5RCD01ControlCenter(Module):
     """
 
     def __init__(self,
-                 if_ibuf_o,
                  if_ctrl_ibuf,
                  if_ctrl_lbuf_row_A_rankA,
                  if_ctrl_lbuf_row_B_rankA,
@@ -91,16 +91,6 @@ class DDR5RCD01ControlCenter(Module):
                  if_config_common,
                  is_channel_A=True,
                  ):
-        # if is_channel_A:
-        #     logging.debug('I am channel A')
-        #     # Set direction of glob_settings
-        #     # Drive the registers
-        #     if not args:
-        #         logging.error(
-        #             'The global config was not passed to the channel A')
-        #     if_config_pll = args[0]
-        #     if_config_lb = args[1]
-        #     if_config_err = args[2]
 
         bank_d = Signal(8)
         bank_page_pointer = Signal(8)
@@ -131,7 +121,7 @@ class DDR5RCD01ControlCenter(Module):
         """
         CSR, RW, PAGE
         This section described the CSR of the device. Connects physical functions
-        to its control words in Control Registers. 
+        to its control words in Control Registers.
 
         """
         # Boot Image
@@ -213,7 +203,7 @@ class DDR5RCD01ControlCenter(Module):
         self.comb += if_ctrl_obuf_clks_row_B_rankB.oe_ck_t.eq(QDCK_CLK_ENABLE)
         self.comb += if_ctrl_obuf_clks_row_B_rankB.oe_ck_c.eq(QDCK_CLK_ENABLE)
 
-        """ Table 108 
+        """ Table 108
             RW09
             Output address and Control Enable Control Word
             regs[0x09]
@@ -273,7 +263,7 @@ class DDR5RCD01ControlCenter(Module):
         self.comb += if_ctrl_obuf_clks_row_B_rankB.o_inv_en_ck_c.eq(
             OUTPUT_INVERSION_ENABLE)
 
-        """ Table 115 
+        """ Table 115
             RW11
             Command Latency Adder Configuration Control Word
             regs[0x11]
@@ -314,7 +304,7 @@ class DDR5RCD01ControlCenter(Module):
         boot_image_rw00_rw5f[RW_ERROR_LOG_CA_2UI] = 0b00000000
         boot_image_rw00_rw5f[RW_ERROR_LOG_CA_3UI] = 0b00000000
         boot_image_rw00_rw5f[RW_ERROR_LOG_CA_4UI] = 0b00000000
-        
+
         RW_ERROR_STATUS = 0x24
         # RESERVED = regs[RW_ERROR_STATUS][0]
         RW_ERROR_LOG_CS_2UI = regs[RW_ERROR_STATUS][2:1]
@@ -326,62 +316,27 @@ class DDR5RCD01ControlCenter(Module):
         boot_image_rw00_rw5f[RW_ERROR_STATUS] = 0b00000000
 
         """
-            Error
-        """
-        # xerror = DDR5RCD01Error(
-            # derrors from sdram
-            # parity error
-            #
-        # )
-        # self.submodules += xerror
-
-        """
             CS Logic
         """
-        xcs_logic_row_A_rank_A = DDR5RCD01CSLogic(if_ibuf_o=if_ibuf_o,
-                                                  if_ctrl_lbuf=if_ctrl_lbuf_row_A_rankA,
-                                                  cs_bit=0,
-                                                  )
-        self.submodules += xcs_logic_row_A_rank_A
-
-        xcs_logic_row_B_rank_A = DDR5RCD01CSLogic(if_ibuf_o=if_ibuf_o,
-                                                  if_ctrl_lbuf=if_ctrl_lbuf_row_B_rankA,
-                                                  cs_bit=0,
-                                                  )
-        self.submodules += xcs_logic_row_B_rank_A
-
-        xcs_logic_row_A_rank_B = DDR5RCD01CSLogic(if_ibuf_o=if_ibuf_o,
-                                                  if_ctrl_lbuf=if_ctrl_lbuf_row_A_rankB,
-                                                  inv_en=True,
-                                                  cs_bit=1,
-                                                  )
-        self.submodules += xcs_logic_row_A_rank_B
-
-        xcs_logic_row_B_rank_B = DDR5RCD01CSLogic(if_ibuf_o=if_ibuf_o,
-                                                  if_ctrl_lbuf=if_ctrl_lbuf_row_B_rankB,
-                                                  inv_en=True,
-                                                  cs_bit=1,
-                                                  )
-        self.submodules += xcs_logic_row_B_rank_B
 
         """ TODO Modal FSM
 
         RESET_HARD - reset after power-up
 
         RESET_SOFT - reset after drst_n assertion
-        
+
         INIT_HARD  - initialize after RESET_HARD
         In the init state a boot image is loaded into the CSRs. It is done
         via a sequence of writes to the Register Files. The init state
         should then last approximately (number of directly addressed
         registers =96 ) cycles. After this initial configuration the RCD model
-        should go into normal operation and be ready to receive commands 
+        should go into normal operation and be ready to receive commands
         from the host device.
 
         INIT_SOFT  - initialize after RESET_SOF
-        
+
         NORMAL     - normal for RCD means listening for commands
-        
+
         possible other states
         PRE_TRAINING, TRAINING, POST_TRAINING (?)
         """

@@ -42,51 +42,150 @@ class DDR5RCD01Error(Module):
     """
 
     def __init__(self,
-                 if_ck_rst,
-                 if_ibuf,
-                 if_channel_sdram,
-                 if_2_rws,
+                 if_csca,
+                 if_csca_rank_A,
+                 if_csca_rank_B,
+                 if_csca_o,
+                 if_csca_o_rank_A,
+                 if_csca_o_rank_B,
+                 valid,
+                 valid_A,
+                 valid_B,
+                 is_this_ui_odd,
+                 is_cmd_beginning,
+                 qvalid,
+                 qvalid_A,
+                 qvalid_B,
+                 qis_this_ui_odd,
+                 qis_cmd_beginning,
+                 rw_is_parity_checking_enabled,
+                 parity_error,
                  ):
-        # if_ck_rst to handle drst_n
-
-        # if_ibuf to calculate parity
-
-        # if_channel_sdram to take derror_in_n
-
-        # if_2_rws, whatever is required to write to error registers
         """
             Check parity
         """
-        err_parity = Signal()
-        dca_w = 7
+        parity_checking_reenable = Signal()
+        del_is_cmd_beginning = Signal()
+        is_2nd_ui_active = Signal()
 
-        # If in first, second,.... UI
+        self.sync += del_is_cmd_beginning.eq(is_cmd_beginning)
+        self.comb += is_2nd_ui_active.eq(del_is_cmd_beginning)
+
+        is_parity_error_detected = Signal()
+        dca_w = len(if_csca.dca)
+
         self.comb += If(
-            err_parity.eq(reduce(xor, [if_ibuf.dca[bit]
-                          for bit in range(dca_w)]) ^ if_ibuf.dpar)
+            valid,
+            is_parity_error_detected.eq(
+                reduce(xor, [if_csca.dca[bit] for bit in range(dca_w)]) ^ if_csca.dpar)
+        ).Else(
+            is_parity_error_detected.eq(0)
         )
 
-        
+        d_is_parity_error_detected = Signal()
+        self.sync += If(
+            is_parity_error_detected,
+            d_is_parity_error_detected.eq(1)
+        ).Else(
+            If(
+                parity_checking_reenable,
+                d_is_parity_error_detected.eq(0)
+            )
+        )
 
+        """
+            Table 9 - Blocking commands on Parity Error
+        """
+        is_blocking_future_cmds = Signal()
+        is_parity_checking_enabled = Signal()
 
-class TestBed(Module):
-    def __init__(self):
+        del_rw_is_parity_checking_enabled = Signal()
+        self.sync += del_rw_is_parity_checking_enabled.eq(
+            rw_is_parity_checking_enabled)
+        edge_parity_enable = Signal()
+        self.comb += edge_parity_enable.eq(
+            del_rw_is_parity_checking_enabled ^ rw_is_parity_checking_enabled)
 
-        self.submodules.dut = DDR5RCD01Error()
+        self.comb += parity_checking_reenable.eq(
+            edge_parity_enable & rw_is_parity_checking_enabled)
 
+        self.sync += If(
+            parity_checking_reenable,
+            is_parity_checking_enabled.eq(1),
+            is_blocking_future_cmds.eq(0),
+        ).Else(
+            If(
+                is_parity_error_detected,
+                is_parity_checking_enabled.eq(0),
+                is_blocking_future_cmds.eq(1),
+            )
+        )
 
-def run_test(dut):
-    logging.debug('Run test')
-    for i in range(5):
-        yield
-    logging.debug('Yield from run test.')
+        disable_future_cmds = Signal()
+        self.sync += If(
+            parity_checking_reenable,
+            disable_future_cmds.eq(0),
+        ).Else(
+            If(
+                is_blocking_future_cmds & (~valid),
+                disable_future_cmds.eq(1)
+            )
+        )
+
+        self.comb += If(
+            disable_future_cmds,
+            if_csca_o.dcs_n.eq(~0),
+            if_csca_o.dca.eq(0),
+            if_csca_o_rank_A.dcs_n.eq(~0),
+            if_csca_o_rank_A.dca.eq(0),
+            if_csca_o_rank_B.dcs_n.eq(~0),
+            if_csca_o_rank_B.dca.eq(0),
+        ).Else(
+            If(
+                is_parity_checking_enabled,
+                If(
+                    is_parity_error_detected | d_is_parity_error_detected,
+                    if_csca_o.dcs_n.eq(~0),
+                    if_csca_o.dca.eq(if_csca.dca),
+                    if_csca_o_rank_A.dcs_n.eq(~0),
+                    if_csca_o_rank_A.dca.eq(if_csca.dca),
+                    if_csca_o_rank_B.dcs_n.eq(~0),
+                    if_csca_o_rank_B.dca.eq(if_csca.dca),
+                ).Else(
+                    if_csca_o.dcs_n.eq(0),
+                    if_csca_o.dca.eq(if_csca.dca),
+                    if_csca_o_rank_A.dcs_n.eq(0),
+                    if_csca_o_rank_A.dca.eq(if_csca.dca),
+                    if_csca_o_rank_B.dcs_n.eq(0),
+                    if_csca_o_rank_B.dca.eq(if_csca.dca),
+                )
+            ).Else(
+                if_csca_o.dcs_n.eq(if_csca.dcs_n),
+                if_csca_o.dca.eq(if_csca.dca),
+                if_csca_o_rank_A.dcs_n.eq(if_csca.dcs_n),
+                if_csca_o_rank_A.dca.eq(if_csca.dca),
+                if_csca_o_rank_B.dcs_n.eq(if_csca.dcs_n),
+                if_csca_o_rank_B.dca.eq(if_csca.dca),
+            )
+        )
+
+        self.comb += If(
+            disable_future_cmds,
+            qvalid.eq(0),
+            qvalid_A.eq(0),
+            qvalid_B.eq(0),
+            qis_this_ui_odd.eq(0),
+            qis_cmd_beginning.eq(0),
+        ).Else(
+            qvalid.eq(valid),
+            qvalid_A.eq(valid_A),
+            qvalid_B.eq(valid_B),
+            qis_this_ui_odd.eq(is_this_ui_odd),
+            qis_cmd_beginning.eq(is_cmd_beginning),
+        )
+
+        self.comb += parity_error.eq(is_parity_error_detected)
 
 
 if __name__ == "__main__":
-    eT = EngTest()
-    logging.info("<- Module called")
-    tb = TestBed()
-    logging.info("<- Module ready")
-    run_simulation(tb, run_test(tb), vcd_name=eT.wave_file_name)
-    logging.info("<- Simulation done")
-    logging.info(str(eT))
+    NotSupportedException

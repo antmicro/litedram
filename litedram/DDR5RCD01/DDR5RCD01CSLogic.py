@@ -12,8 +12,11 @@ from migen.fhdl import verilog
 # RCD
 from litedram.DDR5RCD01.RCD_definitions import *
 from litedram.DDR5RCD01.RCD_interfaces import *
+from litedram.DDR5RCD01.RCD_interfaces_external import *
 from litedram.DDR5RCD01.RCD_utils import *
 # Submodules
+from litedram.DDR5RCD01.DDR5RCD01Decoder import DDR5RCD01Decoder
+from litedram.DDR5RCD01.DDR5RCD01Error import DDR5RCD01Error
 
 
 class DDR5RCD01CSLogic(Module):
@@ -49,12 +52,15 @@ class DDR5RCD01CSLogic(Module):
     """
 
     def __init__(self,
+                 if_ibuf_i,
                  if_ibuf_o,
                  if_ctrl_lbuf,
                  inv_en=False,
-                 cs_bit=0,
+                 CS_BIT_SELECT=0,
                  ):
-        # Fix ibuf : if dcs_n == 0x00 should be if dcs_n[1] = 0 ,etc. for all cases
+        """
+            Output inversion enable
+        """
         if inv_en:
             self.comb += if_ctrl_lbuf.deser_cs_n_d_disable_state.eq(0xFFFF)
             self.comb += if_ctrl_lbuf.deser_ca_d_disable_state.eq(0x0000)
@@ -63,122 +69,47 @@ class DDR5RCD01CSLogic(Module):
             self.comb += if_ctrl_lbuf.deser_ca_d_disable_state.eq(0xFFFF)
 
         """
-          Drive deser if a command is sent
+            Decoder
         """
-        # Normal forward
-        xfsm_cslogic = FSM(reset_state="RESET")
-        self.submodules += xfsm_cslogic
+        valid_int = Signal()
+        is_this_ui_odd_int = Signal()
+        is_cmd_beginning_int = Signal()
+        if_ibuf_int = If_ibuf()
 
-        fetch_decode_en = Signal()
-        self.comb += fetch_decode_en.eq(1)
-
-        xfsm_cslogic.act(
-            "RESET",
-            if_ctrl_lbuf.deser_sel_lower_upper.eq(0),
-            if_ctrl_lbuf.deser_ca_d_en.eq(0),
-            if_ctrl_lbuf.deser_ca_q_en.eq(0),
-            if_ctrl_lbuf.deser_cs_n_d_en.eq(0),
-            if_ctrl_lbuf.deser_cs_n_q_en.eq(0),
-            If(
-                fetch_decode_en,
-                NextState("IDLE")
-            )
-        )
-        xfsm_cslogic.act(
-            "IDLE",
-            If(
-                if_ibuf_o.dcs_n[cs_bit] == 0x0,
-                if_ctrl_lbuf.deser_sel_lower_upper.eq(0),
-                if_ctrl_lbuf.deser_ca_d_en.eq(1),
-                if_ctrl_lbuf.deser_ca_q_en.eq(0),
-                if_ctrl_lbuf.deser_cs_n_d_en.eq(1),
-                if_ctrl_lbuf.deser_cs_n_q_en.eq(0),
-                NextState("S_0a")
-            ).Else(
-                if_ctrl_lbuf.deser_sel_lower_upper.eq(0),
-                if_ctrl_lbuf.deser_ca_d_en.eq(0),
-                if_ctrl_lbuf.deser_ca_q_en.eq(0),
-                if_ctrl_lbuf.deser_cs_n_d_en.eq(0),
-                if_ctrl_lbuf.deser_cs_n_q_en.eq(0),
-            )
-        )
-        xfsm_cslogic.act(
-            "S_0a",
-            if_ctrl_lbuf.deser_sel_lower_upper.eq(1),
-            if_ctrl_lbuf.deser_ca_d_en.eq(1),
-            if_ctrl_lbuf.deser_ca_q_en.eq(0),
-            if_ctrl_lbuf.deser_cs_n_d_en.eq(1),
-            if_ctrl_lbuf.deser_cs_n_q_en.eq(0),
-            NextState("S_0b")
-        )
-        xfsm_cslogic.act(
-            "S_0b",
-            if_ctrl_lbuf.deser_sel_lower_upper.eq(0),
-            if_ctrl_lbuf.deser_ca_d_en.eq(1),
-            if_ctrl_lbuf.deser_ca_q_en.eq(1),
-            if_ctrl_lbuf.deser_cs_n_d_en.eq(1),
-            if_ctrl_lbuf.deser_cs_n_q_en.eq(1),
-            NextState("S_1a")
-        )
-        xfsm_cslogic.act(
-            "S_1a",
-            if_ctrl_lbuf.deser_sel_lower_upper.eq(1),
-            if_ctrl_lbuf.deser_ca_d_en.eq(1),
-            if_ctrl_lbuf.deser_ca_q_en.eq(0),
-            if_ctrl_lbuf.deser_cs_n_d_en.eq(1),
-            if_ctrl_lbuf.deser_cs_n_q_en.eq(0),
-            NextState("S_1b")
-        )
-        xfsm_cslogic.act(
-            "S_1b",
-            if_ctrl_lbuf.deser_sel_lower_upper.eq(0),
-            if_ctrl_lbuf.deser_ca_d_en.eq(0),
-            if_ctrl_lbuf.deser_ca_q_en.eq(1),
-            if_ctrl_lbuf.deser_cs_n_d_en.eq(0),
-            if_ctrl_lbuf.deser_cs_n_q_en.eq(1),
-            NextState("POST")
-        )
-        xfsm_cslogic.act(
-            "POST",
-            if_ctrl_lbuf.deser_sel_lower_upper.eq(0),
-            if_ctrl_lbuf.deser_ca_d_en.eq(0),
-            if_ctrl_lbuf.deser_ca_q_en.eq(1),
-            if_ctrl_lbuf.deser_cs_n_d_en.eq(0),
-            if_ctrl_lbuf.deser_cs_n_q_en.eq(1),
-            NextState("IDLE")
+        self.submodules.decoder = DDR5RCD01Decoder(
+            if_ibuf=if_ibuf_i,
+            if_ibuf_o=if_ibuf_int,
+            qvalid=valid_int,
+            is_cmd_beginning=is_cmd_beginning_int,
+            is_this_ui_odd=is_this_ui_odd_int,
+            CS_BIT_SELECT=0
         )
 
+        parity_error = Signal()
+        valid = Signal()
+        is_this_ui_odd = Signal()
+        is_cmd_beginning = Signal()
 
-class TestBed(Module):
-    def __init__(self):
+        self.submodules.error = DDR5RCD01Error(
+            if_ibuf_i=if_ibuf_int,
+            if_ibuf_o=if_ibuf_o,
+            decoder_valid=valid_int,
+            decoder_is_this_ui_odd=is_this_ui_odd_int,
+            decoder_is_cmd_beginning=is_cmd_beginning_int,
+            q_valid=valid,
+            q_is_this_ui_odd=is_this_ui_odd,
+            q_is_cmd_beginning=is_cmd_beginning,
+            error=parity_error
+        )
 
-        self.submodules.regfile = DDR5RCD01CSLogic()
-        # print(verilog.convert(self.regfile))
-
-
-def run_test(dut):
-    logging.debug('Write test')
-    yield from behav_write_word(0x0)
-    yield from behav_write_word(0x1)
-    yield from behav_write_word(0x0)
-    yield from behav_write_word(0x1)
-    yield from behav_write_word(0x0)
-
-    logging.debug('Yield from write test.')
-
-
-def behav_write_word(tb):
-    #
-    yield tb.d.eq(1)
-    yield
-
+        """
+          If a valid command is decoded, deserialize it.
+        """
+        self.comb += if_ctrl_lbuf.deser_sel_lower_upper.eq(is_this_ui_odd),
+        self.comb += if_ctrl_lbuf.deser_ca_d_en.eq(valid),
+        self.comb += if_ctrl_lbuf.deser_ca_q_en.eq(is_this_ui_odd),
+        self.comb += if_ctrl_lbuf.deser_cs_n_d_en.eq(valid),
+        self.comb += if_ctrl_lbuf.deser_cs_n_q_en.eq(is_this_ui_odd),
 
 if __name__ == "__main__":
-    raise UnderConstruction
-    eT = EngTest()
-    logging.info("<- Module called")
-    tb = TestBed()
-    logging.info("<- Module ready")
-    run_simulation(tb, run_test(tb), vcd_name=eT.wave_file_name)
-    logging.info("<- Simulation done")
-    logging.info(str(eT))
+    raise NotImplementedError

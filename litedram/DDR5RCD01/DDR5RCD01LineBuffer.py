@@ -9,7 +9,6 @@ from random import randrange
 import logging
 # migen
 from migen import *
-from migen.fhdl import verilog
 # Litex
 from litedram.DDR5RCD01.RCD_definitions import *
 from litedram.DDR5RCD01.RCD_utils import *
@@ -17,16 +16,17 @@ from litedram.DDR5RCD01.RCD_interfaces import *
 
 
 class DDR5RCD01LineBuffer(Module):
-    """DDR5 RCD01 Line Buffer
-    TODO Documentation
-    This module servers 3 purposes:
+    """
+    DDR5 RCD01 Line Buffer
+    ----------------------
+
+    This module serves 3 purposes:
       1. Deserialize the 2UI into 1 UI
       2. Model the latency from the input buffer to the output buffer. It's a constant delay
-      is estimated from:
+      estimated from:
         - analog input buffer delay
         - time required for internal control, register file accesses, etc.
         - analog output buffer delay
-      Currently, rcd_t_prop_delay_nck is set to 1, but this may be a subject of change.
       3. Latency Equalization Support
       Model the latency equalization, which is a programmable feature of additionally
       delaying the output by nCK, n={0,1,2,3,4}
@@ -38,8 +38,9 @@ class DDR5RCD01LineBuffer(Module):
     c               - Config interface {sel_latency_add}
 
     sel_latency_add - Input : Select added latency (3 bits should be enough)
-    ------
+
     Parameters
+    ----------
     rcd_t_prop_delay_nck : Constant time delay, expressed in clock periods
       Expected value : 1
                  Min : 1
@@ -56,34 +57,31 @@ class DDR5RCD01LineBuffer(Module):
         len_qca = 2*len_dca
 
         # Deserializer
-        # TODO Should The Deserializer also perform the dcs sync for different modes SDR,DDR??
-        deser_qca = Signal(len_qca)
-        deser_qcs_n = Signal(len_dcs_n)
+        deser_qca = Signal(len_qca, reset=~0)
+        deser_qcs_n = Signal(len_dcs_n, reset=~0)
         xdeser_dca = Deserializer_2_to_1(d=if_i.ca,
                                          d_en=if_ctrl.deser_ca_d_en,
                                          q=deser_qca,
                                          q_en=if_ctrl.deser_ca_q_en,
                                          sel=if_ctrl.deser_sel_lower_upper,
-                                         d_disable_state=if_ctrl.deser_ca_d_disable_state)
+                                         d_disable_state=if_ctrl.deser_ca_d_disable_state,
+                                         d_w=len_dca)
         self.submodules += xdeser_dca
 
         xdeser_dcs_n = Deserializer_2_to_1(d=if_i.cs_n,
                                            d_en=if_ctrl.deser_cs_n_d_en,
                                            q=deser_qcs_n,
                                            q_en=if_ctrl.deser_cs_n_q_en,
-                                           sel=0,
-                                           d_disable_state=if_ctrl.deser_cs_n_d_disable_state)
+                                           sel=if_ctrl.deser_sel_lower_upper,
+                                           d_disable_state=if_ctrl.deser_cs_n_d_disable_state,
+                                           d_w=len_dcs_n)
 
         self.submodules += xdeser_dcs_n
-
-        # TODO Check if both ranks get the same values
-
-        # d_const_delay = Array(Signal(len_dcs_n)
-        #                       for y in range(rcd_t_prop_delay_nck))
+        # breakpoint()
         # Static delay
         sta_qcs_n = Signal(len_dcs_n)
         static_delay_qcs = StaticDelay(
-            d=deser_qcs_n, q=sta_qcs_n, delay=rcd_t_prop_delay_nck)
+            d=deser_qcs_n[0:2], q=sta_qcs_n, delay=rcd_t_prop_delay_nck)
         self.submodules.static_delay_qcs = static_delay_qcs
 
         sta_qca = Signal(len_qca)
@@ -101,13 +99,9 @@ class DDR5RCD01LineBuffer(Module):
         prog_delay_qca = ProgDelay(
             sta_qca, prog_qca, if_ctrl.sel_latency_add, delay_prog_max=rcd_t_eq_latency_nck_max)
         self.submodules.prog_delay_qca = prog_delay_qca
-        # breakpoint()
 
         self.comb += if_o.qcs_n.eq(prog_qcs_n)
         self.comb += if_o.qca.eq(prog_qca)
-
-        # self.comb += if_o.qacs_b_n.eq(prog_qcs_n)
-        # self.comb += if_o.qaca_b.eq(prog_qca)
 
 
 class Deserializer_2_to_1(Module):
@@ -151,13 +145,17 @@ class Deserializer_2_to_1(Module):
             )
         )
 
+        q_int = Signal(2*d_w)
         self.sync += If(
+            ~sel,
+            q_int.eq(Cat(d_lower, d_upper))
+        )
+
+        self.comb += If(
             q_en,
-            q.eq(Cat(d_lower, d_upper))
+            q.eq(q_int)
         ).Else(
-            If(~d_en,
-               q.eq(d_disable_state)
-               )
+            q.eq(d_disable_state)
         )
 
 
@@ -245,7 +243,6 @@ class TestBed(Module):
 
         self.submodules.dut = DDR5RCD01LineBuffer(
             self.iif, self.oif, self.ctrl_if)
-        # print(verilog.convert(self.dut))
 
 
 def run_test(dut):

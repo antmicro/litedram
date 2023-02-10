@@ -67,22 +67,32 @@ class DDR5RCD01Decoder(Module):
 
     def __init__(self,
                  if_ibuf,
-                 qca,
-                 qcs_n,
+                 if_csca_o,
+                 if_csca_o_rank_A,
+                 if_csca_o_rank_B,
                  qvalid,
+                 qvalid_A,
+                 qvalid_B,
                  is_this_ui_odd,
                  is_cmd_beginning,
-                 CS_BIT_SELECT=0
                  ):
+        """
+            Definitions
+            CA[1] bit holds information whether the command is 1UI or 2UI
+            Rank A is selected by asserting CS[1]
+            Rank B is selected by asserting CS[0]
+        """
         CA_IS_1UI_BIT = 1
-        cs_n_w = len(if_ibuf.dcs_n[CS_BIT_SELECT])
-        ca_w = len(if_ibuf.dca)
+        RANK_A_BIT_SEL = 1
+        RANK_B_BIT_SEL = 0
 
         """
             XOR edge detection
         """
+        cs_n_w = len(if_ibuf.dcs_n)
+        ca_w = len(if_ibuf.dca)
         del_dcs_n = Signal(cs_n_w, reset=~0)
-        self.sync += del_dcs_n.eq(if_ibuf.dcs_n[CS_BIT_SELECT])
+        self.sync += del_dcs_n.eq(if_ibuf.dcs_n)
 
         del_dca = Signal(ca_w)
         self.sync += del_dca.eq(if_ibuf.dca)
@@ -100,7 +110,7 @@ class DDR5RCD01Decoder(Module):
         self.comb += det_negedge.eq(det_edge & ~if_ibuf.dcs_n)
 
         """
-        
+            Detect if command is 1UI or 2UI
         """
         is_cmd_active = Signal()
 
@@ -112,6 +122,7 @@ class DDR5RCD01Decoder(Module):
         del_is_1_ui_command = Signal()
         self.sync += del_is_1_ui_command.eq(is_1_ui_command)
 
+        # 2UI commands requires keeping "active" after DCS is deasserted
         self.sync += If(
             is_cmd_active & (is_this_ui_odd == 0) & (del_is_1_ui_command == 0),
             force_active_high.eq(3),
@@ -122,8 +133,8 @@ class DDR5RCD01Decoder(Module):
             ).Else(
                 force_active_high.eq(0),
             )
-
         )
+
         is_force_non_zero = Signal()
         self.comb += is_force_non_zero.eq(force_active_high > 0)
 
@@ -136,7 +147,10 @@ class DDR5RCD01Decoder(Module):
                 is_cmd_active.eq(0),
             )
         )
-
+        """
+            Pseudo-clock is a signal which toggles at the start of each detected UI.
+            The clock always starts at LOW at the DCS assertion edge.
+        """
         pseudo_clock = Signal()
         pseudo_clock_en = Signal()
         self.sync += If(
@@ -157,19 +171,93 @@ class DDR5RCD01Decoder(Module):
                 pseudo_clock.eq(0)
             )
         )
-        """
-            if posedge came, but in previous cycle is_1_ui_command was low, then 
-            delay deassertion of cmd_active
-        """
 
         self.comb += is_this_ui_odd.eq(pseudo_clock)
         self.comb += qvalid.eq(is_cmd_active | is_force_non_zero)
-
         self.comb += is_cmd_beginning.eq(qvalid &
                                          (~is_this_ui_odd) & (is_force_non_zero == 0))
 
-        self.comb += qcs_n.eq(del_dcs_n)
-        self.comb += qca.eq(del_dca)
+        """
+            Addressing feature
+            CS
+            11 - deselect
+            01 - send to rank A
+            10 - send to rank B
+            00 - send to both ranks
+        """
+        capture_previous_cs = Signal(2, reset=~0)
+        self.sync += If(
+            is_cmd_beginning,
+            capture_previous_cs.eq(del_dcs_n),
+        )
+
+        is_cmd_destined_for_rank_A = Signal()
+        is_cmd_destined_for_rank_B = Signal()
+        is_cmd_destined_for_both_ranks = Signal()
+
+        self.comb += If(
+            ~qvalid,
+            is_cmd_destined_for_rank_A.eq(0),
+        ).Else(
+            If(
+                is_cmd_beginning,
+                is_cmd_destined_for_rank_A.eq(~del_dcs_n[RANK_A_BIT_SEL]),
+            ).Else(
+                is_cmd_destined_for_rank_A.eq(
+                    ~capture_previous_cs[RANK_A_BIT_SEL])
+            )
+        )
+
+        self.comb += If(
+            ~qvalid,
+            is_cmd_destined_for_rank_B.eq(0),
+        ).Else(
+            If(
+                is_cmd_beginning,
+                is_cmd_destined_for_rank_B.eq(~del_dcs_n[RANK_B_BIT_SEL]),
+            ).Else(
+                is_cmd_destined_for_rank_B.eq(
+                    ~capture_previous_cs[RANK_B_BIT_SEL])
+            )
+        )
+
+        self.comb += is_cmd_destined_for_both_ranks.eq(
+            is_cmd_destined_for_rank_A & is_cmd_destined_for_rank_B)
+        self.comb += qvalid_A.eq(qvalid & is_cmd_destined_for_rank_A)
+        self.comb += qvalid_B.eq(qvalid & is_cmd_destined_for_rank_B)
+
+        self.comb += If(
+            is_cmd_destined_for_rank_A,
+            if_csca_o_rank_A.dcs_n.eq(del_dcs_n),
+            if_csca_o_rank_A.dca.eq(del_dca),
+            if_csca_o_rank_A.dpar.eq(del_dpar),
+        ).Else(
+            if_csca_o_rank_A.dcs_n.eq(~0),
+            if_csca_o_rank_A.dca.eq(~0),
+            if_csca_o_rank_A.dpar.eq(~0),
+        )
+
+        self.comb += If(
+            is_cmd_destined_for_rank_B,
+            if_csca_o_rank_B.dcs_n.eq(del_dcs_n),
+            if_csca_o_rank_B.dca.eq(del_dca),
+            if_csca_o_rank_B.dpar.eq(del_dpar),
+        ).Else(
+            if_csca_o_rank_B.dcs_n.eq(~0),
+            if_csca_o_rank_B.dca.eq(~0),
+            if_csca_o_rank_B.dpar.eq(~0),
+        )
+
+        self.comb += If(
+            qvalid,
+            if_csca_o.dcs_n.eq(del_dcs_n),
+            if_csca_o.dca.eq(del_dca),
+            if_csca_o.dpar.eq(del_dpar),
+        ).Else(
+            if_csca_o.dcs_n.eq(~0),
+            if_csca_o.dca.eq(~0),
+            if_csca_o.dpar.eq(~0),
+        )
 
 
 if __name__ == "__main__":
