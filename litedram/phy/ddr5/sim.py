@@ -398,6 +398,7 @@ class CommandsSim(Module, AutoCSR):
             })
         )
 
+        # CA training
         self.submodules.ca_training = ca_training = ResetInserter()(FSM())
         ca_direct_control      = Signal()
         ca_direct_value        = Signal()
@@ -444,6 +445,7 @@ class CommandsSim(Module, AutoCSR):
         )
         ca_training.finalize()
 
+        # CS training
         self.submodules.cs_training = cs_training = ResetInserter()(FSM())
         cs_direct_control   = Signal()
         cs_direct_value     = Signal()
@@ -509,6 +511,7 @@ class CommandsSim(Module, AutoCSR):
         )
         pda.finalize()
 
+        # Write leveling
         dqs_dom = f"dqs_t_dimm_{module_num}"
         setattr(self.clock_domains, "cd"+dqs_dom,
             ClockDomain(dqs_dom))
@@ -590,8 +593,11 @@ class CommandsSim(Module, AutoCSR):
         return self.cmd_one_step("MRW",
             cond = self.cs_n_low[:5] == 0b00101,
             comb = [
-                select.eq((self.mode_regs[1][0:4] == self.mode_regs[1][4:])| \
-                          (self.mode_regs[1][4:] == 0xf)),
+                select.eq((
+                    (self.mode_regs[1][0:4] == self.mode_regs[1][4:]) | \
+                    (self.mode_regs[1][4:] == 0xf)) & \
+                    ~self.cs_n_high[10]
+                ),
                 If(select,
                     self.log.info(prefix+"MRW: MR[%d] = 0x%02x", ma, op),
                     op.eq(self.cs_n_high[:8]),
@@ -630,7 +636,7 @@ class CommandsSim(Module, AutoCSR):
         ma  = Signal(8)
         op  = Signal(8)
         return self.cmd_one_step("MRR",
-            cond = self.cs_n_low[:5] == 0b10101,
+            cond = (self.cs_n_low[:5] == 0b10101) & ~self.cs_n_high[10],
             comb = [
                 ma.eq(self.cs_n_low[5:13]),
                 If(ma != 31,
