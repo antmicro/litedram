@@ -7,7 +7,10 @@
 import argparse
 
 """
-    python qm.py 0x1F 0x2F
+    Example usage:
+        python qm.py 0x1F 0x2F
+        python qm.py 124 0x2F
+        python qm.py 124 54
 """
 
 def print_systems(a,ins=True):
@@ -29,21 +32,28 @@ parser.add_argument('ui1')
 
 args = parser.parse_args()
 
-ui0 = int(args.ui0,16)
-ui1 = int(args.ui1,16)
+if args.ui0.startswith("0x"):
+    ui0 = int(args.ui0,16)
+else:
+    ui0 = int(args.ui0)
 
-""" Make sure uis are 7 bit integers"""
+if args.ui1.startswith("0x"):
+    ui1 = int(args.ui1,16)
+else:
+    ui1 = int(args.ui1)
+
+""" Make sure uis are 7 bit integers """
 assert ui0 >= 0
 assert ui0 < 128
 
 assert ui1 >= 0
 assert ui1 < 128
 
-uid = deserialize(ui0,ui1)
+uid = deserialize(ui1,ui0)
 nuid = (~uid) & 0x3FFF
 
 print_systems(ui0)
 print_systems(ui1)
 print_systems(uid,False)
-print_systems(nuid)     
+print_systems(nuid)
 
