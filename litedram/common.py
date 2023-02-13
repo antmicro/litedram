@@ -14,6 +14,7 @@ from collections import OrderedDict
 from typing import Union, Optional
 
 from migen import *
+from migen import Signal
 
 from litex.soc.interconnect import stream
 
@@ -165,6 +166,54 @@ class TappedDelayLine(Module):
         for i in range(ntaps):
             self.sync += self.taps[i].eq(self.input if i == 0 else self.taps[i-1])
         self.output = self.taps[-1]
+
+# ShiftRegister ------------------------------------------------------------------------------------
+
+class ShiftRegister(Module):
+    class _Proxy():
+        def __init__(self, parent):
+            self.parent = parent
+
+        def __getitem__(self, key):
+            length = self.parent.ntaps
+            width  = self.parent.width
+            sr     = self.parent.shift_window
+            if isinstance(key, int):
+                if key > length:
+                    raise IndexError
+                if key < 0:
+                    key += length
+                return Cat([sr[i][key] for i in range(width)])
+            elif isinstance(key, Signal):
+                return Cat([sr[i].part(key, 1) for i in range(width)])
+            else:
+                raise TypeError("Cannot use type {} ({}) as key".format(
+                    type(key), repr(key)))
+
+
+    def __init__(self, signal=None, ntaps=1):
+        self.input = Signal() if signal is None else signal
+        self.ntaps = ntaps
+        self.width = width = len(self.input)
+
+        self.shift_window = shift_window = \
+            [Signal(ntaps, reset_less=True) for _ in range(width)]
+        for i in range(width):
+            self.sync += shift_window[i].eq(Cat(self.input[i], shift_window[i]))
+
+        rst_cnt                  = Signal(max=ntaps+1, reset=ntaps)
+        self.rst_done = rst_done = Signal()
+        self.sync += [
+            If(~rst_done,
+                rst_cnt.eq(rst_cnt - 1),
+            ),
+            If(rst_cnt == 0,
+                rst_done.eq(1)
+            )
+        ]
+
+        self.taps = ShiftRegister._Proxy(self)
+        self.output = Cat([shift_window[i][-1] for _ in range(width)])
 
 # DQS Pattern --------------------------------------------------------------------------------------
 
@@ -440,6 +489,8 @@ class tXXDController(Module):
 
 
 class tFAWController(Module):
+    # Four active window controller
+    # It requires 2**tfaw.nbits cycles after reset to work
     def __init__(self, tfaw):
         self.valid = valid = Signal()
         self.ready = ready = Signal(reset=1)
@@ -454,22 +505,26 @@ class tFAWController(Module):
             access = Signal.like(tfaw)
             self.sync += access.eq(tfaw-1)
 
-            window = Array(Signal() for _ in range(2**tfaw.nbits))
-            window_pass = Signal((2**tfaw.nbits))
-            for i in range(1, 2**tfaw.nbits):
-                self.sync += window[i].eq(window[i-1])
-            self.sync += window[0].eq(valid)
+            handshake = Signal()
+            self.comb += handshake.eq(valid & ready)
+
+            sr = ShiftRegister(ntaps=2**tfaw.nbits, signal=handshake)
+            self.submodules.shift_register = sr
+
+            tfaw_range_last_bit = Signal()
+            self.comb += tfaw_range_last_bit.eq(sr.taps[access])
+            self.comb += ready.eq((~count[2] | tfaw_range_last_bit) & sr.rst_done)
 
             self.sync += [
-                If(window[access] & valid,
-                ).Elif(window[access],
+                If(tfaw_range_last_bit & ~handshake,
                     count.eq(count - 1),
-                ).Elif(valid & ready,
+                ).Elif(~tfaw_range_last_bit & handshake,
                     count.eq(count + 1),
                 ),
+                If(~sr.rst_done,
+                    count.eq(0),
+                ),
             ]
-
-            self.comb += ready.eq(~count[2] | window[access])
 
 
 class TimelineCounter(Module):

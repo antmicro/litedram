@@ -99,6 +99,8 @@ class TestTiming(unittest.TestCase):
 
     def tfaw_controller_test(self, txxd, valids, readys):
         def generator(dut):
+            for _ in range(dut.reset_dly):
+                yield
             dut.errors = 0
             for valid, ready in zip(valids, readys):
                 yield dut.tfaw.valid.eq(c2bool(valid))
@@ -109,6 +111,7 @@ class TestTiming(unittest.TestCase):
         class DUT(Module):
             def __init__(self, txxd):
                 txxd_sig = Signal(10, reset=txxd)
+                self.reset_dly = 2**txxd_sig.nbits
                 self.submodules.tfaw = tFAWController(txxd_sig)
 
         dut = DUT(txxd)
