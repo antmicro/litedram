@@ -93,8 +93,6 @@ class BusCSCAMonitorDev(Module):
                  ):
 
         self.config = config
-
-        self.xarr_post_sim = []
         self.is_sim_finished = is_sim_finished
         self.signal_list = []
         if isinstance(if_ibuf_i, If_ibuf):

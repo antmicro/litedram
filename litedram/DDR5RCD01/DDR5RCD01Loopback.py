@@ -34,7 +34,7 @@ class DDR5RCD01Loopback(Module):
     'signals are 1/4 or 1/2 rate' is understood to mean 'the strobe and data signals
     are generated in the dck_t(c) domain at every other (every 4th) positive edge'
     As such if the loopback module uses the dck_t(c) signals we know the relationship
-    betweend strobe signal and dck_t. They are aligned?
+    between strobe signal and dck_t. They are aligned?
 
 
     [INTERNAL] RW26.3-5 internal RCD bit selection
@@ -81,46 +81,43 @@ class DDR5RCD01Loopback(Module):
   """
 
     def __init__(self,
-                if_ck_rst,
-                if_lb,
-                if_common,
-                if_ctrl_common,
-                if_config_common,
-                ):
-
-        #
-        # Internal path
-        #
-
-        int_da = Signal()
-        int_db = Signal()
-        # Mux : select bit
-        # breakpoint()
-        self.comb += Case(if_ctrl_lb.sel_int_bit, {0: int_da.eq(if_channel_A_dfe_lb.dca_lb[0]),
-                                                   1: int_da.eq(if_channel_A_dfe_lb.dca_lb[1]),
-                                                   2: int_da.eq(if_channel_A_dfe_lb.dca_lb[2]),
-                                                   3: int_da.eq(if_channel_A_dfe_lb.dca_lb[3]),
-                                                   4: int_da.eq(if_channel_A_dfe_lb.dca_lb[4]),
-                                                   5: int_da.eq(if_channel_A_dfe_lb.dca_lb[5]),
-                                                   6: int_da.eq(if_channel_A_dfe_lb.dca_lb[6]),
-                                                   7: int_da.eq(if_channel_A_dfe_lb.dpar_lb)}
-                          )
-        self.comb += Case(if_ctrl_lb.sel_int_bit, {0: int_db.eq(if_channel_B_dfe_lb.dca_lb[0]),
-                                                   1: int_db.eq(if_channel_B_dfe_lb.dca_lb[1]),
-                                                   2: int_db.eq(if_channel_B_dfe_lb.dca_lb[2]),
-                                                   3: int_db.eq(if_channel_B_dfe_lb.dca_lb[3]),
-                                                   4: int_db.eq(if_channel_B_dfe_lb.dca_lb[4]),
-                                                   5: int_db.eq(if_channel_B_dfe_lb.dca_lb[5]),
-                                                   6: int_db.eq(if_channel_B_dfe_lb.dca_lb[6]),
-                                                   7: int_db.eq(if_channel_B_dfe_lb.dpar_lb)}
-                          )
-
-        # Mux : select phase for internal
-        phase_ck = Signal()
-        self.comb += If(if_ctrl_lb.sel_phase_ab == 1,
-                        phase_ck.eq(if_ck.ck_t)
-                        ).Else(phase_ck.eq(if_ck.ck_c))
-
+                 if_ibuf,
+                 sdram_lbd,
+                 sdram_lbs,
+                 qlbd,
+                 qlbs,
+                 if_ctrl,
+                 ):
+        """
+            Bit select
+        """
+        lbd = Signal()
+        self.comb += Case(
+            if_ctrl.sel_int_bit,
+            {
+                0: lbd.eq(if_ibuf.dca_lb[0]),
+                1: lbd.eq(if_ibuf.dca_lb[1]),
+                2: lbd.eq(if_ibuf.dca_lb[2]),
+                3: lbd.eq(if_ibuf.dca_lb[3]),
+                4: lbd.eq(if_ibuf.dca_lb[4]),
+                5: lbd.eq(if_ibuf.dca_lb[5]),
+                6: lbd.eq(if_ibuf.dca_lb[6]),
+                7: lbd.eq(if_ibuf.dpar_lb)
+            }
+        )
+        """
+            TODO to enable phase selection
+            If ( ctrl interface select phase a or b); then
+                rename clock domain to ck_t
+            Else; then
+                rename clock domain to ck_c
+        """
+        self.comb += If(
+            if_ctrl.sel_lb_int_ext,
+            qlbd.eq(lbd)
+        ).Else(
+            qlbd.eq(lbd)
+        )
         # Mux : select A or B channel
         int_d = Signal()
         self.comb += If(if_ctrl_lb.sel_mode == 1,
@@ -129,10 +126,6 @@ class DDR5RCD01Loopback(Module):
                                int_d.eq(int_db)
                                ).Else(int_d.eq(0))
         # TODO Change domain of this sync to phase_ck
-        int_dd = Signal()
-        self.sync += int_dd.eq(int_d)
-
-        # External path
 
         # Mux between internal and external
         self.comb += Case(if_ctrl_lb.sel_mode, {0: [if_rcd_lb.lbs.eq(TIE_LOW),
@@ -152,25 +145,7 @@ class DDR5RCD01Loopback(Module):
 
 class TestBed(Module):
     def __init__(self):
-        #
-        self.if_ck = If_ck()
-        self.if_host_lb = If_lb()
-        self.if_rcd_lb = If_lb()
-        self.if_sdram_A_lb = If_lb()
-        self.if_sdram_B_lb = If_lb()
-        self.if_channel_A_dfe_lb = If_int_lb()
-        self.if_channel_B_dfe_lb = If_int_lb()
-        self.if_ctrl_lb = If_ctrl_lb()
-        ###
-        self.submodules.dut = DDR5RCD01Loopback(self.if_ck,
-                                               self.if_host_lb,
-                                               self.if_rcd_lb,
-                                               self.if_sdram_A_lb,
-                                               self.if_sdram_B_lb,
-                                               self.if_channel_A_dfe_lb,
-                                               self.if_channel_B_dfe_lb,
-                                               self.if_ctrl_lb)
-        # print(verilog.convert(self.lb))
+        pass
 
 
 def run_test(tb):

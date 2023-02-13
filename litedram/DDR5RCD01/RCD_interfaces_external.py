@@ -23,7 +23,7 @@ class If_ck_rst(Record):
 
     def if_rst_assert(self):
         yield self.drst_n.eq(0)
-    
+
     def if_rst_deassert(self):
         yield self.drst_n.eq(1)
 

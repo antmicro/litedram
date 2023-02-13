@@ -18,7 +18,7 @@ from litedram.DDR5RCD01.RCD_utils import *
 class DDR5RCD01PLL(Module):
     """DDR5 RCD01 PLL
     TODO Documentation
-    RW05 dimm operating speed, frequency band select - test mode?
+    RW05 DIMM operating speed, frequency band select - test mode?
     RW06 defines the dck input clock frequency
     Do I need the x64 clock to generate fractions n/64?
     Is the main function of PLL in physical implementation to re-drive the clock?
@@ -35,9 +35,8 @@ class DDR5RCD01PLL(Module):
     def __init__(self,
                  if_ck_rst,
                  if_pll,
-                 if_common,
-                 if_ctrl_common,
-                 if_config_common,
+                 if_ctrl,
+                 if_config,
                  ):
         # Clock pass-through
         for i in range(4):
@@ -46,6 +45,7 @@ class DDR5RCD01PLL(Module):
 
         # TODO Replace with a real PLL model
         # TODO Implement control interface handler
+
 
 
 class TestBed(Module):
