@@ -188,28 +188,24 @@ class BankMachine(Module):
         fsm.act("REGULAR",
             If(refresh_req,
                 NextState("REFRESH")
-            ).Elif(cmd_buffer.source.valid,
-                If(row_opened,
-                    If(row_hit,
-                        cmd.valid.eq(1),
-                        If(cmd_buffer.source.we,
-                            req.wdata_ready.eq(cmd.ready),
-                            cmd.is_write.eq(1),
-                            cmd.we.eq(1),
-                        ).Else(
-                            req.rdata_valid.eq(cmd.ready),
-                            cmd.is_read.eq(1)
-                        ),
-                        cmd.cas.eq(1),
-                        If(cmd.ready & auto_precharge,
-                           NextState("AUTOPRECHARGE")
-                        )
-                    ).Else(  # row_opened & ~row_hit
-                        NextState("PRECHARGE")
-                    )
-                ).Else(  # ~row_opened
-                    NextState("ACTIVATE")
+            ).Elif(cmd_buffer.source.valid & row_opened & row_hit,
+                cmd.valid.eq(1),
+                If(cmd_buffer.source.we,
+                    req.wdata_ready.eq(cmd.ready),
+                    cmd.is_write.eq(1),
+                    cmd.we.eq(1),
+                ).Else(
+                    req.rdata_valid.eq(cmd.ready),
+                    cmd.is_read.eq(1)
+                ),
+                cmd.cas.eq(1),
+                If(cmd.ready & auto_precharge,
+                   NextState("AUTOPRECHARGE")
                 )
+            ).Elif(cmd_buffer.source.valid & row_opened,
+                NextState("PRECHARGE")
+            ).Elif(cmd_buffer.source.valid,
+                NextState("ACTIVATE")
             )
         )
         fsm.act("PRECHARGE",
