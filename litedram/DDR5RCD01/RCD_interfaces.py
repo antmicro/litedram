@@ -62,7 +62,7 @@ class If_bus_csca_o(Record):
 class If_channel_sdram(Record):
     """
     This interface is used for the:
-    Signals coming from the sdram to channel
+    Signals coming from the SDRAM to channel
     """
 
     def __init__(self):
@@ -71,7 +71,10 @@ class If_channel_sdram(Record):
 
     def description(self):
         return [
-            ('err_n', 1, False),
+            ('derror_in_n', 1, False),
+            ('qrst_n', 1),
+            ('dlbd',    1),
+            ('dlbs',    1),
         ]
 
 
@@ -187,72 +190,72 @@ class If_config_common(Record):
         ]
 
 
-class If_common(Record):
-    """
-    This interface is used for the:
-    Configuration of the common block settings
-    """
+# class If_common(Record):
+#     """
+#     This interface is used for the:
+#     Configuration of the common block settings
+#     """
 
-    def __init__(self):
-        layout = self.description()
-        Record.__init__(self, layout)
+#     def __init__(self):
+#         layout = self.description()
+#         Record.__init__(self, layout)
 
-    def description(self):
-        return [
-            # TODO parity, lb, etc.
-            ('parity', 1),
-            ('loopback', 1),
-        ]
-
-
-class If_common_sdram(Record):
-    """
-    Channel/common signals
-    """
-
-    def __init__(self):
-        layout = self.description()
-        Record.__init__(self, layout)
-
-    def description(self):
-        return [
-            ('qrst_a_n', 1),
-            ('qrst_b_n', 1),
-        ]
+#     def description(self):
+#         return [
+#             # TODO parity, lb, etc.
+#             ('parity', 1),
+#             ('loopback', 1),
+#         ]
 
 
-class If_channel_common(Record):
-    """
-    Channel/common signals
-    """
+# class If_common_sdram(Record):
+#     """
+#     Channel/common signals
+#     """
 
-    def __init__(self):
-        layout = self.description()
-        Record.__init__(self, layout)
+#     def __init__(self):
+#         layout = self.description()
+#         Record.__init__(self, layout)
 
-    def description(self):
-        return [
-            ('err_parity', 1),
-            ('err_n_sdram', 1),
-            ('dlbd',  1),
-            ('dlbs',  1),
-        ]
+#     def description(self):
+#         return [
+#             ('qrst_a_n', 1),
+#             ('qrst_b_n', 1),
+#         ]
 
 
-class If_int_lb(Record):
-    """
-    DFE Tap internal loopback interface
-    """
+# class If_channel_common(Record):
+#     """
+#     Channel/common signals
+#     """
 
-    def __init__(self):
-        layout = self.description()
-        Record.__init__(self, layout)
+#     def __init__(self):
+#         layout = self.description()
+#         Record.__init__(self, layout)
 
-    def description(self):
-        return [
-            ('dca_lb',    7),
-            ('dpar_lb',    1),
-        ]
+#     def description(self):
+#         return [
+#             ('err_parity', 1),
+#             ('err_n_sdram', 1),
+#             ('dlbd',  1),
+#             ('dlbs',  1),
+#         ]
+
+
+# class If_int_lb(Record):
+#     """
+#     DFE Tap internal loopback interface
+#     """
+
+#     def __init__(self):
+#         layout = self.description()
+#         Record.__init__(self, layout)
+
+#     def description(self):
+#         return [
+#             ('dca_lb',    7),
+#             ('dpar_lb',    1),
+#         ]
 
 
 class If_rst_n(Record):
@@ -276,21 +279,6 @@ class If_rst_n(Record):
         ]
 
 
-# class If_error(Record):
-#     """
-#     Host/RCD error interface
-#     """
-
-#     def __init__(self):
-#         layout = self.description()
-#         Record.__init__(self, layout)
-
-#     def description(self):
-#         return [
-#             ('err_n', 1),
-#         ]
-
-
 class If_ctrl_common(Record):
     """
     PLL configuration interface
@@ -309,6 +297,7 @@ class If_ctrl_common(Record):
             ('lb_sel_mode', 1),
             ('lb_sel_phase_ab', 1),
             ('lb_sel_int_bit', 3),
+            ('lb_sel_channel_A_B', 1),
         ]
 
 

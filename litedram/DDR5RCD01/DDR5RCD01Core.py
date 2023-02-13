@@ -29,7 +29,7 @@ class DDR5RCD01Core(Module):
 
     The Core consists of 2 independent channels and some common logic, e.g.: clocking.
 
-    The term "Definintion X.Y.Z" refers to the X.Y.Z section of the JEDEC Standard DDR5 Registering
+    The term "Definition X.Y.Z" refers to the X.Y.Z section of the JEDEC Standard DDR5 Registering
     Clock Driver Definition (DDR5RCD01).
 
     """
@@ -49,19 +49,16 @@ class DDR5RCD01Core(Module):
                  if_sideband,
                  is_dual_channel=True):
 
-        # Clock distribution
         if_pll = If_ck(n_clks=4)
-        # A is master of common, Common is slave
-        if_common = If_common()
+        if_common_A = If_channel_sdram()
+        if_common_B = If_channel_sdram()
         if_ctrl_common = If_ctrl_common()
         if_config_common = If_config_common()
 
         """
-            Channel A
+            Channel A is master of global configuration, chanel B is slave
         """
         is_channel_A_master = True
-
-        # Channel A is master of global, chanel B is slave
         if_ctrl_global = If_config_global()
         if_config_global = If_config_global()
 
@@ -73,7 +70,7 @@ class DDR5RCD01Core(Module):
             if_bcom=if_bcom_A,
             if_ctrl_global=if_ctrl_global,
             if_config_global=if_config_global,
-            if_common=if_common,
+            if_common=if_common_A,
             if_ctrl_common=if_ctrl_common,
             if_config_common=if_config_common,
             is_master=is_channel_A_master,
@@ -93,28 +90,32 @@ class DDR5RCD01Core(Module):
                 if_bcom=if_bcom_B,
                 if_ctrl_global=if_ctrl_global,
                 if_config_global=if_config_global,
-                if_common=if_common,
+                if_common=if_common_B,
                 if_ctrl_common=None,
                 if_config_common=None,
                 is_master=is_channel_B_master,
             )
             self.submodules += xchannel_B
+
         """
             Common
         """
         xcommon = DDR5RCD01Common(
-            if_ck_rst=if_ck_rst,
-            if_alert_n=if_alert_n,
-            if_lb=if_lb,
+            if_host_ck_rst=if_ck_rst,
+            if_host_alert_n=if_alert_n,
+            if_host_lb=if_lb,
             if_pll=if_pll,
-            if_common=if_common,
+            if_channel_A=if_common_A,
+            if_channel_B=if_common_B,
             if_ctrl_common=if_ctrl_common,
             if_config_common=if_config_common,
         )
         self.submodules += xcommon
 
-        # Sideband
-        # Not implemented
+        """
+            Sideband
+        """
+        #TODO Implement
 
 
 class TestBed(Module):
@@ -169,7 +170,7 @@ def n_ui_dram_command(tb, nums, sel_cs="rank_AB", non_target_termination=False):
         "JEDEC 82-511 Figure 7
         One UI DRAM Command Timing Diagram"
 
-    Nums can be any length to incroporate two, or more, UI commands
+    Nums can be any length to incorporate two, or more, UI commands
 
     The non target termination parameter extends the DCS assertion to the 2nd UI
     """
