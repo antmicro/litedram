@@ -21,6 +21,7 @@ from litedram.phy.utils import (bitpattern, delayed, Serializer, Deserializer, L
     CommandsPipeline)
 from litedram.phy.ddr5.commands import DFIPhaseAdapter
 
+from litedram.phy.ddr5.BasePHYPatternGenerators import DQOePattern, DQSPattern
 
 class DDR5Output:
     """
@@ -54,53 +55,6 @@ class DDR5Output:
             setattr(self, prefix+'dqs_oe',   [Signal(2*nphases, name=name and f"{name}_{i}_dqs_oe") for i in range(nstrobes)])
             setattr(self, prefix+'dqs_c_o',  [Signal(2*nphases, name=name and f"{name}_{i}_dqs_c_o") for i in range(nstrobes)])
             setattr(self, prefix+'dqs_c_i',  [Signal(2*nphases, name=name and f"{name}_{i}_dqs_c_i") for i in range(nstrobes)])
-
-
-class DDR5DQOePattern(Module):
-    def __init__(self, nphases, wlevel_en):
-        self.window = window = Signal(nphases + 1)
-        self.oe = Signal(2*nphases)
-        for i in range(nphases):
-            self.comb += [
-                If(~wlevel_en,
-                    self.oe[2*i:2*i+2].eq(Cat(Replicate(reduce(or_, [window[i], window[i+1]]), 2))),
-                ),
-            ]
-
-
-class DDR5DQSPattern(Module):
-    def __init__(self, nphases, wlevel_en: Signal()):
-        self.window = window = Signal(nphases + 3)
-        self.o  = Signal(2*nphases)
-        self.oe = Signal(2*nphases)
-
-        # # #
-
-        # DQS Pattern transmitted as LSB-first.
-        # Always enabled in write leveling mode, else during transfers
-        # Preamble is 2 cycles and postamble is 0.5 cycle
-
-        cases = []
-
-        for i in range(1, nphases+1):
-            cases.extend([
-                If(reduce(or_, window[i:i+2]),
-                    self.o[2*(i-1):2*i].eq(0b01),
-                ).Else(
-                    self.o[2*(i-1):2*i].eq(0),
-                ),
-                If(reduce(or_, window[i-1:i+3]) | wlevel_en,
-                    self.oe[2*(i-1):2*i].eq(0b11),
-                ).Else(
-                    self.o[2*(i-1):2*i].eq(0),
-                ),
-            ])
-
-        self.comb += [
-            self.o.eq(0),
-            self.oe.eq(0),
-            *cases,
-        ]
 
 
 class DDR5PHYAddress(Module):
@@ -840,7 +794,7 @@ class DDR5PHY(Module, AutoCSR):
                 ]
 
                 dqs_oe        = Signal(2*nphases)
-                dqs_pattern   = DDR5DQSPattern(
+                dqs_pattern   = DQSPattern(
                     nphases   = nphases,
                     wlevel_en = getattr(self, prefix+'wlevel_en').storage,
                 )
@@ -886,7 +840,7 @@ class DDR5PHY(Module, AutoCSR):
                 ]
 
                 dq_oe        = Signal(2*nphases)
-                dq_pattern   = DDR5DQOePattern(
+                dq_pattern   = DQOePattern(
                     nphases   = nphases,
                     wlevel_en = getattr(self, prefix+'wlevel_en').storage,
                 )
