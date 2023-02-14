@@ -19,132 +19,12 @@ from litedram.phy.dfi import *
 
 from litedram.phy.utils import (bitpattern, delayed, Serializer, Deserializer, Latency,
     CommandsPipeline)
+
 from litedram.phy.ddr5.commands import DFIPhaseAdapter
 
 from litedram.phy.ddr5.BasePHYOutput import BasePHYOutput
 from litedram.phy.ddr5.BasePHYPatternGenerators import DQOePattern, DQSPattern
-
-class DDR5PHYAddress(Module):
-    def __init__(self, out, dfi, rdimm_mode, prefix):
-        # DDR5 CS/CA/PAR PATH ----------------------------------------------------------------------
-
-        nranks = len(getattr(dfi.phases[0], prefix).cs_n)
-        assert nranks > 0
-        nphases = len(dfi.phases)
-        assert nphases > 0 and (nphases & (nphases-1)) == 0
-
-        # Buffer DFI -------------------------------------------------------------------------------
-        cs_n_buf = [Signal(nranks) for _ in range(nphases)]
-        for i, phase in enumerate(dfi.phases):
-            self.sync += cs_n_buf[i].eq(getattr(phase, prefix).cs_n)
-
-        ca_buf = [Signal(14) for _ in range(nphases)]
-        for i, phase in enumerate(dfi.phases):
-            self.sync += ca_buf[i].eq(getattr(phase, prefix).address)
-
-        mode_2n_buf = [Signal() for _ in range(nphases)]
-        for i, phase in enumerate(dfi.phases):
-            self.sync += mode_2n_buf[i].eq(phase.mode_2n)
-
-        # DDR5 CS ----------------------------------------------------------------------------------
-        for rank in range(nranks):
-            carry_cs_n = Signal(reset=1)
-            self.sync += [
-                If(mode_2n_buf[-1],
-                    carry_cs_n.eq(cs_n_buf[-1][rank])
-                ).Else(
-                    carry_cs_n.eq(1)
-                )
-            ]
-
-            for j in range(nphases):
-                self.comb += [
-                    If(~mode_2n_buf[j],
-                        getattr(out, prefix + 'cs_n')[rank][2*j].eq(
-                            cs_n_buf[j][rank] & (carry_cs_n if j == 0 else 1)
-                        ),
-                        getattr(out, prefix + 'cs_n')[rank][2*j+1].eq(
-                            cs_n_buf[j][rank]
-                        ),
-                    ).Else(
-                        getattr(out, prefix + 'cs_n')[rank][2*j].eq(
-                            carry_cs_n if j == 0 else cs_n_buf[j-1][rank]
-                        ),
-                        getattr(out, prefix + 'cs_n')[rank][2*j+1].eq(
-                            cs_n_buf[j][rank]
-                        ),
-                    ),
-                ]
-
-        # DDR5 PAR -------------------------------------------------------------------------------------
-        self.comb += getattr(out, prefix + 'par').eq(
-            Cat([reduce(xor, ca_buf[phase][7*i:7+7*i]) for phase in range(nphases) for i in range(2)]))
-
-        # DDR5 CA --------------------------------------------------------------------------------------
-            # RDIMM 2N mode ----------------------------------------------------------------------------
-        mem   = Signal(max(3, nphases))
-
-        take_lower_bits   = Signal(nphases)
-        take_lower_bits_m = Signal(nphases)
-        take_lower_bits_1 = Signal(nphases)
-        take_lower_bits_2 = Signal(nphases)
-        for i in range(1, len(take_lower_bits)):
-            self.comb += take_lower_bits_1[i].eq(~reduce(and_, cs_n_buf[i-1]))
-        for i in range(3, len(take_lower_bits)):
-            self.comb += take_lower_bits_2[i].eq(
-                ~reduce(and_, cs_n_buf[i-3]) & ~ca_buf[i-3][1]
-            )
-
-        self.comb += take_lower_bits_m.eq(Cat(mode_2n_buf))
-        for i in range(0, 3, nphases):
-            for j in range(nphases):
-                if i+j >= 3:
-                    break
-                arr = []
-                if i+j+nphases < 3:
-                    arr.append(mem[i+j+nphases])
-                if i + j < 1:
-                    arr.append(~reduce(and_, cs_n_buf[nphases-1+i+j]))
-                if 0 <= nphases-3 + i+j:
-                    idx = nphases-3+i+j
-                    arr.append(~reduce(and_, cs_n_buf[idx]) & ~ca_buf[idx][1])
-                self.sync += mem[i+j].eq(reduce(or_, arr))
-
-        for i in range(nphases):
-            self.comb += take_lower_bits[i].eq(
-                (take_lower_bits_1[i] | take_lower_bits_2[i] | mem[i]) & take_lower_bits_m[i]
-            )
-
-            # CA Slicer ----------------------------------------------------------------------------
-        for bit in range(7):
-            for j in range(nphases):
-                sig = getattr(out, prefix+'ca')[bit][j*2:j*2+2]
-                self.comb += [
-                    If(rdimm_mode,
-                        If(mode_2n_buf[j],
-                            If(~take_lower_bits[j],
-                                sig.eq(Replicate(ca_buf[j][bit], 2)),
-                            ).Else(
-                                sig.eq(Replicate(ca_buf[j][bit + 7], 2)),
-                            )
-                        ).Else(
-                            sig.eq(Cat([ca_buf[j][bit + 7*i] for i in range (2)])),
-                        ),
-                    ).Else(
-                        sig.eq(Cat([ca_buf[j][bit] for _ in range (2)])),
-                    ),
-                ]
-
-        for bit in range(7, 14):
-            _ca = getattr(out, prefix+'ca')[bit]
-            for j in range(nphases):
-                self.comb += [
-                    If(~rdimm_mode,
-                        _ca[j*2:j*2+2].eq(Replicate(ca_buf[j][bit], 2)),
-                    ).Else(
-                        _ca[j*2:j*2+2].eq(Replicate(0, 2)),
-                    ),
-                ]
+from litedram.phy.ddr5.BasePHYAddressSlicer import PHYAddressSlicer
 
 
 class DDR5PHY(Module, AutoCSR):
@@ -235,8 +115,8 @@ class DDR5PHY(Module, AutoCSR):
         cwl = cl - 2
 
         # Address path delay before serialization
-        addr_pre_ser_delay = nphases
-        assert addr_pre_ser_delay == 4
+        addr_pre_ser_delay = PHYAddressSlicer.dfi_delay(nphases)
+        assert addr_pre_ser_delay == 8
 
         self.des_latency          = des_latency
         self.ser_latency          = ser_latency
@@ -246,7 +126,7 @@ class DDR5PHY(Module, AutoCSR):
 
         # Read latency
         # This value should be the worst case delay between sending a read cmd and
-        # getting data back. There will be exact delay may vary based on the training result.
+        # getting data back. The exact delay may vary based on the training result.
         self.min_read_latency  = min_read_latency = (
             cmd_latency - 1 +      # CMD latency
             addr_pre_ser_delay +   # PHY address buffering
@@ -260,10 +140,11 @@ class DDR5PHY(Module, AutoCSR):
         # Write latency
         # Set to 0, Training PHY will align DQS and DQ for write commands
         # See write leveling training in JESD79-5A
-        # Max supported latency is 64 DRAM bus cycles
-        self.min_write_latency = min_write_latency = nphases + 2 - 1 - addr_pre_ser_delay
-        assert self.min_write_latency >= 0
-        self.max_write_latency = min_write_latency + nphases + 64
+        # Max supported latency is 64 DRAM bus cycles + 1 for 2N mode
+        write_addjust = -min(0, nphases + 2 - 1 - addr_pre_ser_delay)
+        min_write_latency = nphases + 2 - 1 - addr_pre_ser_delay
+        self.min_write_latency = min_write_latency + write_addjust
+        self.max_write_latency = 64 + 1
 
         # Registers --------------------------------------------------------------------------------
 
@@ -408,7 +289,7 @@ class DDR5PHY(Module, AutoCSR):
             cmd_delay     = cmd_delay,
             strobes       = combined_strobes,
             address_lines       = address_lines,
-            min_write_latency   = min_write_latency,
+            min_write_latency   = min_write_latency + write_addjust,
             min_read_latency    = 2,
             with_sub_channels   = with_sub_channels,
             with_clock_odelay   = with_clock_odelay,
@@ -417,7 +298,7 @@ class DDR5PHY(Module, AutoCSR):
             with_idelay         = with_idelay,
             with_per_dq_idelay  = with_per_dq_idelay,
             direct_control      = direct_control,
-            t_ctrl_delay        = nphases,
+            t_ctrl_delay        = addr_pre_ser_delay,
         )
 
         # DFI Interface ----------------------------------------------------------------------------
@@ -447,7 +328,7 @@ class DDR5PHY(Module, AutoCSR):
         self.comb += self.alert.status.eq(_alert_reduce)
 
         for prefix in prefixes:
-            self.submodules += DDR5PHYAddress(self.out, dfi, self._rdimm_mode.storage, prefix)
+            self.submodules += PHYAddressSlicer(self.out, dfi, self._rdimm_mode.storage, prefix)
 
             for strobe in range(strobes):
                 # Read Control Path ------------------------------------------------------------------------
@@ -704,7 +585,7 @@ class DDR5PHY(Module, AutoCSR):
                 ]
 
                 # Write Control Path -----------------------------------------------------------------------
-                wrtap = (self.min_write_latency + 64 + nphases - 1)//nphases
+                wrtap = (self.min_write_latency + write_addjust + 66 + nphases + 1 + nphases - 1)//nphases
                 assert wrtap >= 0
 
                 # Create a delay line of write commands coming from the DFI interface. This taps are used to
@@ -724,14 +605,14 @@ class DDR5PHY(Module, AutoCSR):
                 wr_reset_value = 0 if default_write_latency < min_write_latency else default_write_latency - min_write_latency
 
                 wr_window       = Signal(nphases + 3)
-                wr_delay        = Signal(max=65, reset=wr_reset_value)
-                wr_index        = Signal(max=64//nphases+1)
+                wr_delay        = Signal(max=66 + write_addjust, reset=wr_reset_value)
+                wr_index        = Signal(max=(66 + write_addjust)//nphases+1)
                 wr_offset       = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
 
                 self.sync += [
                     If(getattr(self, prefix+'dly_sel').storage[strobe] & \
                        getattr(self, prefix+'ck_wdly_inc').re & \
-                       (wr_delay < 64),
+                       (wr_delay < 65),
                         wr_delay.eq(wr_delay + 1),
                     ).Elif(getattr(self, prefix+'dly_sel').storage[strobe] & \
                            getattr(self, prefix+'ck_wdly_rst').re,
@@ -775,14 +656,14 @@ class DDR5PHY(Module, AutoCSR):
                 ]
 
                 wr_data_window  = Signal(nphases+1)
-                wr_data_delay   = Signal(max=67, reset=wr_reset_value + 2)
-                wr_data_index   = Signal(max=67//nphases+1)
+                wr_data_delay   = Signal(max=68 + write_addjust, reset=wr_reset_value + 2)
+                wr_data_index   = Signal(max=(68 + write_addjust)//nphases+1)
                 wr_data_offset  = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
 
                 self.sync += [
                     If(getattr(self, prefix+'dly_sel').storage[strobe] & \
                        getattr(self, prefix+'ck_wddly_inc').re & \
-                       (wr_data_delay < 66),
+                       (wr_data_delay < 67),
                         wr_data_delay.eq(wr_data_delay + 1),
                     ).Elif(getattr(self, prefix+'dly_sel').storage[strobe] & \
                            getattr(self, prefix+'ck_wddly_rst').re,
