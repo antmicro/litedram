@@ -52,7 +52,7 @@ class DDR5RCD01Page(Module):
         logging.debug(line+'0x05')
 
     def load_page_def(self, page_id=0):
-        """ Loads string data from RCD_definitions.py to an object regsiters_metadata
+        """ Loads string data from RCD_definitions.py to an object registers_metadata
         """
         logging.debug('Reading information in page ' +
                       str(page_id) + ' definition')
