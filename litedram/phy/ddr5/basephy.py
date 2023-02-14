@@ -539,82 +539,127 @@ class DDR5PHY(Module, AutoCSR):
                 for i in range(nphases):
                     self.comb += rddata_en_input[i].eq(getattr(dfi.phases[i], prefix).rddata_en | getattr(self, prefix+'wlevel_en').storage)
 
-                rddata_en = TappedDelayLine(
-                    signal = rddata_en_input,
-                    ntaps  = read_latency + 3
-                )
-                self.submodules += rddata_en
-
                 default_read_latency = default_read_latency - 2 if default_read_latency > 2 else 0
                 rd_reset_value = min_read_latency + default_read_latency
 
-                rd_window   = Signal(nphases)
-                rd_delay    = Signal(max=4*read_latency, reset=rd_reset_value)
-                rd_index    = Signal(max=read_latency)
-                rd_offset   = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
-
-                rd_preamble_window  = Signal(nphases)
-                rd_last_preamble_window  = Signal(nphases)
-                rd_preamble         = Signal(max=4*read_latency, reset=rd_reset_value - 2)
-                rd_preamble_index   = Signal(max=read_latency)
-                rd_preamble_offset  = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
-
                 nphases_log = nphases.bit_length() - 1
+
+                # Read window ----------------------------------------------------------------------
+                rddata_ens = [
+                    ShiftRegister(
+                        signal = rddata_en_input[i],
+                        ntaps  = read_latency + 1
+                    ) for i in range(nphases)
+                ]
+                for i, rs in enumerate(rddata_ens):
+                    setattr(self.submodules, f"{prefix}{strobe}_Read_SR_{i}", rs)
+
+                rddata_out_en = ShiftRegister(
+                    signal = reduce(or_, rddata_en_input),
+                    ntaps  = read_latency + 3
+                )
+                setattr(self.submodules, f"{prefix}{strobe}_Read_FIFO_SR_{i}", rddata_out_en)
+
+
+                rd_window = Signal(nphases)
+                rd_delay  = Signal(max=4*read_latency, reset=rd_reset_value)
+                rd_index  = Signal(max=read_latency)
+                rd_offset = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
 
                 self.sync += [
                     If(getattr(self, prefix+'dly_sel').storage[strobe] & \
                        getattr(self, prefix+'ck_rdly_inc').re & \
                        (rd_delay < (min_read_latency + 66)),
                         rd_delay.eq(rd_delay + 1),
-                        rd_preamble.eq(rd_preamble + 1),
                     ).Elif(getattr(self, prefix+'dly_sel').storage[strobe] & \
                            getattr(self, prefix+'ck_rdly_rst').re,
                         rd_delay.eq(rd_reset_value),
-                        rd_preamble.eq(rd_reset_value - 2),
                     ),
                 ]
 
                 self.comb += [
                     rd_index.eq(rd_delay[nphases_log:]),
                     rd_offset.eq(rd_delay[:nphases_log]),
-                    rd_preamble_index.eq(rd_preamble[nphases_log:]),
-                    rd_preamble_offset.eq(rd_preamble[:nphases_log]),
                 ]
 
+                rd_index_p = [Signal(max=read_latency) for _ in range(nphases)]
                 rd_cases = {}
-                rd_cases[0] = rd_window.eq(rddata_en.taps[rd_index])
-                if nphases > 1:
-                    for i in range(1, nphases):
-                        rd_cases[i] = rd_window.eq(
-                            Cat(rddata_en.taps[rd_index+1][:i], rddata_en.taps[rd_index][i:]))
+                for i in range(nphases):
+                    first_part  = [rd_index_p[j].eq(rd_index + 1) for j in range(i)]
+                    second_part = [rd_index_p[j].eq(rd_index) for j in range(i, nphases)]
+                    rd_cases[i] = first_part + second_part
 
                 self.comb += [
                     Case(rd_offset,
                         rd_cases,
-                    )
+                    ),
+                    rd_window.eq(Cat([rddata_ens[i].taps[rd_index_p[i]] for i in range(nphases)])),
                 ]
 
+                # Read Preamble window -------------------------------------------------------------
+                rddata_preamble_ens = [
+                    ShiftRegister(
+                        signal = rddata_en_input[i],
+                        ntaps  = read_latency
+                    ) for i in range(nphases)
+                ]
+                for i, rs in enumerate(rddata_preamble_ens):
+                    setattr(self.submodules, f"{prefix}{strobe}_Preamble_SR_{i}", rs)
+
+                rd_preamble_window      = Signal(nphases)
+                rd_last_preamble_window = Signal(nphases)
+                rd_preamble        = Signal(max=4*read_latency, reset=rd_reset_value - 2)
+                rd_preamble_index  = Signal(max=read_latency)
+                rd_preamble_offset = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
+
+                self.sync += [
+                    If(getattr(self, prefix+'dly_sel').storage[strobe] & \
+                       getattr(self, prefix+'ck_rdly_inc').re & \
+                       (rd_delay < (min_read_latency + 66)),
+                        rd_preamble.eq(rd_preamble + 1),
+                    ).Elif(getattr(self, prefix+'dly_sel').storage[strobe] & \
+                           getattr(self, prefix+'ck_rdly_rst').re,
+                        rd_preamble.eq(rd_reset_value - 2),
+                    ),
+                ]
+
+                self.comb += [
+                    rd_preamble_index.eq(rd_preamble[nphases_log:]),
+                    rd_preamble_offset.eq(rd_preamble[:nphases_log]),
+                ]
+
+                rd_preamble_index_p = [Signal(max=read_latency) for _ in range(nphases)]
                 rd_preamble_cases = {}
-                rd_preamble_cases[0] = rd_preamble_window.eq(rddata_en.taps[rd_preamble_index])
-                if nphases > 1:
-                    for i in range(1, nphases):
-                        rd_preamble_cases[i] = rd_preamble_window.eq(
-                            Cat(rddata_en.taps[rd_preamble_index+1][:i], rddata_en.taps[rd_preamble_index][i:]))
+                for i in range(nphases):
+                    first_part  = [rd_preamble_index_p[j].eq(rd_preamble_index + 1) for j in range(i)]
+                    second_part = [rd_preamble_index_p[j].eq(rd_preamble_index) for j in range(i, nphases)]
+                    rd_preamble_cases[i] = first_part + second_part
 
                 self.comb += [
                     Case(rd_preamble_offset,
                         rd_preamble_cases,
-                    )
+                    ),
+                    rd_preamble_window.eq(
+                        Cat([rddata_preamble_ens[i].taps[rd_preamble_index_p[i]] for i in range(nphases)])
+                    ),
                 ]
-
                 self.sync += [
                     rd_last_preamble_window.eq(rd_preamble_window),
                 ]
 
+                # Read Preamble Path ---------------------------------------------------------------
                 rd_preamble_rdy = Signal(max=2*nphases)
-                self.comb += [If(~rd_last_preamble_window[-1] & rd_preamble_window[0], rd_preamble_rdy.eq(1))]
+                self.comb += [
+                    If(~rd_last_preamble_window[-1] & rd_preamble_window[0],
+                        rd_preamble_rdy.eq(1)
+                    ),
+                ]
                 for i in range(1, nphases):
-                    self.comb += [If(~rd_preamble_window[i-1] & rd_preamble_window[i], rd_preamble_rdy.eq(2*i | 1))]
+                    self.comb += [
+                        If(~rd_preamble_window[i-1] & rd_preamble_window[i],
+                            rd_preamble_rdy.eq(2*i | 1)
+                        ),
+                    ]
 
                 rd_sampled_preamble = Signal(2*2)
                 rd_preamble_cnt     = Signal()
@@ -716,8 +761,8 @@ class DDR5PHY(Module, AutoCSR):
                 # Retime
                 self.comb += [
                     getattr(phase, prefix).rddata_valid.eq( \
-                        reduce(or_, rddata_en.output)) \
-                    for i, phase in enumerate(self.dfi.phases)
+                        reduce(or_, rddata_out_en.output)) \
+                    for phase in self.dfi.phases
                 ]
 
                 rddata_start = strobe*2*dq_dqs_ratio
@@ -729,10 +774,11 @@ class DDR5PHY(Module, AutoCSR):
                 ]
 
                 self.comb += [
-                    If(rd_fifo_good, getattr(phase, prefix).rddata[rddata_start:rddata_end].eq(rd_fifo.dout[i*2*dq_dqs_ratio:(i+1)*2*dq_dqs_ratio])) \
-                    for i, phase in enumerate(self.dfi.phases)
+                    If(rd_fifo_good,
+                        getattr(phase, prefix).rddata[rddata_start:rddata_end].eq(rd_fifo.dout[i*2*dq_dqs_ratio:(i+1)*2*dq_dqs_ratio])
+                    ) for i, phase in enumerate(self.dfi.phases)
                 ] + [
-                    rd_fifo.re.eq(reduce(or_, rddata_en.taps[-2]))
+                    rd_fifo.re.eq(rddata_out_en.taps[-2])
                 ]
 
                 # Write Control Path -----------------------------------------------------------------------
