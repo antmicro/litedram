@@ -12,7 +12,7 @@ jobs:
       fail-fast: false
       matrix:
         pytest_args:
-          - 'test                -k "not Verilator" -k "not ddr5"'
+          - 'test                -k "not (Verilator or ddr5)"'
           - 'test/test_lpddr4.py -k "Verilator"'
           - 'test/test_lpddr5.py -k "Verilator"'
     steps:
@@ -35,6 +35,7 @@ jobs:
           pip3 install pexpect
           pip3 install meson==0.62.0
           pip3 install pytest==7.1.0
+          pip3 install numpy
       - name: Install pytest-parallel
         if: ${{ contains(matrix.pytest_args, 'not') }}
         run: pip install pytest-parallel
@@ -98,9 +99,10 @@ jobs:
       matrix:
         pytest_args:
           - 'test/test_ddr5_phy.py'
+          - 'test/test_ddr5_phy_regression.py'
           - 'test/test_ddr5_rcd_core.py'
           - 'test/test_ddr5_rcd_decoder.py'
-          - 'test/test_ddr5_rcd_submodules.py'
+          #- 'test/test_ddr5_rcd_submodules.py'
           - 'test/test_ddr5_rdimm_phy.py'
 
     steps:

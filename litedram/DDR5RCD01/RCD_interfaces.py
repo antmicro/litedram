@@ -298,6 +298,7 @@ class If_ctrl_common(Record):
             ('lb_sel_phase_ab', 1),
             ('lb_sel_int_bit', 3),
             ('lb_sel_channel_A_B', 1),
+            ('alert_n_mode',1),
         ]
 
 

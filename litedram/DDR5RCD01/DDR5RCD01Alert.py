@@ -16,6 +16,12 @@ from litedram.DDR5RCD01.RCD_interfaces_external import *
 from litedram.DDR5RCD01.RCD_utils import *
 
 
+@enum.unique
+class RCDAlertModes(enum.IntEnum):
+    STATIC = 0
+    PULSED = 1
+
+
 class DDR5RCD01Alert(Module):
     """
     DDR5 RCD01 Alert
@@ -77,35 +83,30 @@ class DDR5RCD01Alert(Module):
         logging.debug("Set PULSE WIDTH = " + str(PULSE_WIDTH))
         pulse_width_counter_w = self.get_counter_width(PULSE_WIDTH_DICT)
         pulse_width_counter = Signal(pulse_width_counter_w)
-        """
-            Debug option
-        """
-        self.comb += alert_n.eq(1)
 
-        # Error from SDRAM takes highest priority
-        is_high_priority_error_asserted = Signal()
-        self.comb += If(
-            (err_a == 0) |
-            (err_b == 0),
-            alert_n.eq(0),
-            is_high_priority_error_asserted.eq(1),
-        ).Else(
-            If(
-                (pulse_width_counter > 0),
-                alert_n.eq(0),
-                is_high_priority_error_asserted.eq(0)
-            )
-        )
-
-        # Parity errors
         start_alert = Signal()
+
         self.sync += If(
-            ~is_high_priority_error_asserted,
+            if_ctrl.alert_n_mode == RCDAlertModes.STATIC,
             If(
                 err_a | err_b,
-                start_alert.eq(1),
+                alert_n.eq(0)
             ).Else(
-                start_alert.eq(0),
+                alert_n.eq(1)
+            )
+        ).Elif(
+            if_ctrl.alert_n_mode == RCDAlertModes.PULSED,
+            If(
+                err_a | err_b,
+                start_alert.eq(1)
+            ).Else(
+                start_alert.eq(0)
+            ),
+            If(
+                pulse_width_counter > 0,
+                alert_n.eq(0)
+            ).Else(
+                alert_n.eq(1)
             )
         )
 
@@ -120,10 +121,10 @@ class DDR5RCD01Alert(Module):
         )
 
     def get_counter_width(self, dict):
-        max_settings = []
+        max_settings=[]
         for pulse_width_modes in dict.values():
             max_settings.append(list(pulse_width_modes.values()))
-        counter_width = max(max(max_settings)).bit_length()
+        counter_width=max(max(max_settings)).bit_length()
         return counter_width
 
 
