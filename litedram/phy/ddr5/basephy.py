@@ -333,7 +333,7 @@ class DDR5PHY(Module, AutoCSR):
             2 +                    # Minimal Preamble
             des_latency.sys4x      # Data deserialization latency
         ) # CL 0
-        self.max_read_latency = max_read_latency = min_read_latency + 64 + 2 # CL 64 and 2N mode
+        self.max_read_latency = max_read_latency = min_read_latency + 66 + 1 # CL 64 and 2N mode
         read_latency = (max_read_latency + nphases - 1) // nphases
         # Write latency
         # Set to 0, Training PHY will align DQS and DQ for write commands
