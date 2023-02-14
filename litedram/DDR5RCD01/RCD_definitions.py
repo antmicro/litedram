@@ -42,6 +42,8 @@ CW_ALL_NUM = CW_DA_REGS_NUM+CW_PAGE_PTRS_NUM+CW_PAGE_REG_NUM
 ADDR_CW_READ_POINTER = 0x5E
 ADDR_CW_PAGE = 0x5F
 
+
+
 @enum.unique
 class DDR5Opcodes(enum.IntEnum):
     """

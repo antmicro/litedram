@@ -19,7 +19,9 @@ from litedram.DDR5RCD01.DDR5RCD01Page import *
 
 
 class DDR5RCD01RegFile(Module):
-    """DDR5 RCD01 Register File
+    """
+        DDR5 RCD Register File
+        ----------------------
     TODO Documentation
       RCD Register File is used to model the:
           - 96 direct addressable registers
@@ -42,6 +44,43 @@ class DDR5RCD01RegFile(Module):
        registers,'all registers at all times are visible as output (unlikely to be synthesized at high-speed)'
        q, 'addr point to some register. q shows its content'
     """
+
+    def __init__(self, d, addr, we, q, page, page_pointer):
+        self.registers = Array(Signal(CW_REG_BIT_SIZE)
+                               for y in range(CW_DA_REGS_NUM+CW_PAGE_PTRS_NUM))
+        logging.debug('Created Register File: %d x %db', len(
+            self.registers), len(self.registers[0]))
+
+        # Attribute registers
+        # attr_regs = AttributeRegs()
+        # self.submodules.attr_regs = attr_regs
+
+        # Create da_regs_metadata
+        # self.load_rcd_definitions()
+
+        # Registers
+        # 1. Read_only is set via attr_regs
+        # 2. Single cycle we to enable a write
+        # 3. Directly addressable
+        # If in channel A, set channel A to 1; then read_only must be anded with channel X bit
+        for id in range(CW_DA_REGS_NUM):
+            self.sync += If(
+                we,
+                If(
+                    addr == id,
+                    self.registers[id].eq(d)
+                )
+            )
+        # read_only is 2, need to replace this
+        #    If(self.attr_regs.attr_regs[id][2] == 0,)
+
+        for id in range(CW_DA_REGS_NUM, CW_DA_REGS_NUM+CW_PAGE_PTRS_NUM):
+            logging.debug("Register num = " + str(id) +
+                          " Page reg num=" + str(id-CW_DA_REGS_NUM))
+            self.comb += self.registers[id].eq(page[id-CW_DA_REGS_NUM])
+
+        self.comb += q.eq(self.registers[self.registers[ADDR_CW_READ_POINTER]])
+        self.comb += page_pointer.eq(self.registers[ADDR_CW_PAGE])
 
     def pretty_print_regs(self):
         repack = Repr()
@@ -69,56 +108,12 @@ class DDR5RCD01RegFile(Module):
         logging.debug(line+'0x05')
 
     def load_rcd_definitions(self):
-        # self.rcw = RegisterControlWords()
         self.registers_metadata = []
         for id, decode_msg in enumerate(CONTROL_WORD_DECODING):
             decode_msg.append(ControlWordAttributes.RD_WR)
             self.registers_metadata.append(decode_msg)
         # TODO Add tables for page meaning
         # Currently only DA Regs
-
-    def __init__(self, d, addr, we, q, page):
-        # Register file
-        self.registers = Array(Signal(CW_REG_BIT_SIZE)
-                               for y in range(CW_DA_REGS_NUM+CW_PAGE_PTRS_NUM))
-        logging.debug('Created Register File: %d x %db', len(
-            self.registers), len(self.registers[0]))
-
-        # Attribute registers
-        attr_regs = AttributeRegs()
-        self.submodules.attr_regs = attr_regs
-
-        # Create da_regs_metadata
-        self.load_rcd_definitions()
-        # Initialize
-        #
-
-        # Translate the address
-
-        self.trans_addr = Signal()
-        # Registers
-        # 1. Read_only is set via attr_regs
-        # 2. Single cycle we to enable a write
-        # 3. Directly addressable
-        # If in channel A, set channel A to 1; then read_only must be anded with channel X bit
-        # TODO Re-enable address translation
-        # This line is not recommended for synthesis, produces a huge mux
-        for id in range(CW_DA_REGS_NUM):
-            self.sync += If(we == 1,
-                            If(addr == id,
-                               # read_only is 2, need to replace this
-                               If(self.attr_regs.attr_regs[id][2] == 0,
-                                  self.registers[id].eq(d))
-                               )
-                            )
-
-        for id in range(CW_DA_REGS_NUM, CW_DA_REGS_NUM+CW_PAGE_PTRS_NUM):
-            logging.debug("Register num = " + str(id) +
-                          " Page reg num=" + str(id-CW_DA_REGS_NUM))
-            self.comb += self.registers[id].eq(
-                page[id-CW_DA_REGS_NUM])
-
-        self.comb += q.eq(self.registers[self.registers[ADDR_CW_READ_POINTER]])
 
 
 class TestBed(Module):
@@ -138,7 +133,6 @@ class TestBed(Module):
         ###
         self.submodules.dut = DDR5RCD01RegFile(
             addr=self.addr, we=self.we, d=self.d, q=self.q, page=self.page)
-        # print(verilog.convert(self.dut))
 
 
 def run_test(tb):
