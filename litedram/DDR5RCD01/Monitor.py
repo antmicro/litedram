@@ -45,12 +45,9 @@ class Monitor(Module):
     def monitor(self):
         sig_list = []
         while not self.is_sim_finished[0]:
-            # for id, sig in enumerate(self.sig):
             sig_value = yield self.sig
             sig_list.append(sig_value)
-            # breakpoint()
             yield
-        # breakpoint()
         self.signal_list = sig_list
 
 
