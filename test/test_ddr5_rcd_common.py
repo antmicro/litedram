@@ -21,6 +21,7 @@ from litedram.DDR5RCD01.CRG import CRG
 from litedram.DDR5RCD01.Monitor import Monitor
 from litedram.DDR5RCD01.DDR5RCD01Alert import RCDAlertModes
 
+
 class TestBed(Module):
     def __init__(self, is_dual_channel=False):
         self.is_sim_finished = [False]
@@ -85,6 +86,10 @@ class TestBed(Module):
 
         xmonitor_loopback = Monitor(
             [
+                self.if_common_A.dlbd,
+                self.if_common_A.dlbs,
+                self.if_common_B.dlbd,
+                self.if_common_B.dlbs,
                 self.if_host_lb.qlbs,
                 self.if_host_lb.qlbd,
             ],
@@ -100,24 +105,67 @@ class TestBed(Module):
             self.generators_dict()
         )
 
+    def stimulus_rst(self):
+        while (yield ResetSignal("sys")):
+            yield
+        for b in [0, 1]*5:
+            yield self.if_host_ck_rst.drst_n.eq(b)
+            yield
+
+    def stimulus_pll(self):
+        while (yield ResetSignal("sys")):
+            yield
+        for b in [0, 1]*5:
+            yield self.if_host_ck_rst.dck_t.eq(b)
+            yield self.if_host_ck_rst.dck_c.eq(~b)
+            yield
+
     def stimulus_alert(self):
         while (yield ResetSignal("sys")):
             yield
         yield self.if_ctrl_common.alert_n_mode.eq(RCDAlertModes.STATIC)
+        yield self.if_common_A.derror_in_n.eq(0)
+        yield self.if_common_B.derror_in_n.eq(0)
+        yield
         yield self.if_common_A.derror_in_n.eq(1)
         yield
         yield self.if_common_A.derror_in_n.eq(0)
+        yield self.if_ctrl_common.alert_n_mode.eq(RCDAlertModes.PULSED)
+        yield
+        yield self.if_common_A.derror_in_n.eq(1)
+        yield
+        yield self.if_common_A.derror_in_n.eq(0)
+        yield
+        for _ in range(5):
+            yield
+
+    def stimulus_loopback(self):
+        while (yield ResetSignal("sys")):
+            yield
+        for b in [0, 1]*2:
+            yield self.if_common_A.dlbd.eq(b)
+            yield self.if_common_A.dlbs.eq(~b)
+            yield self.if_common_B.dlbd.eq(1)
+            yield self.if_common_B.dlbs.eq(0)
+            yield
+        yield self.if_ctrl_common.lb_sel_channel_A_B.eq(1)
+        yield
+        for b in [0, 1]*2:
+            yield self.if_common_A.dlbd.eq(b)
+            yield self.if_common_A.dlbs.eq(~b)
+            yield self.if_common_B.dlbd.eq(1)
+            yield self.if_common_B.dlbs.eq(0)
+            yield
 
     def run_sim(self):
         while (yield ResetSignal("sys")):
             yield
-        for _ in range(5):
+        for _ in range(15):
             yield
         self.is_sim_finished = [True]
         self.xmonitor_pll.is_sim_finished = [True]
         self.xmonitor_alert.is_sim_finished = [True]
         self.xmonitor_loopback.is_sim_finished = [True]
-
 
     def generators_dict(self):
         return {
@@ -127,7 +175,10 @@ class TestBed(Module):
                 self.xmonitor_pll.monitor(),
                 self.xmonitor_alert.monitor(),
                 self.xmonitor_loopback.monitor(),
-                self.stimulus_alert()
+                self.stimulus_pll(),
+                self.stimulus_alert(),
+                self.stimulus_loopback(),
+                self.stimulus_rst()
             ]
         }
 
@@ -179,24 +230,29 @@ class DDR5RCD01DecoderTests(unittest.TestCase):
     def tearDown(self):
         del self.tb
 
-    def test_loopback(self):
+    def test_common(self):
         logger = logging.getLogger('root')
         logger.debug("-"*80)
-        sim_data = self.tb.xmonitor_loopback.signal_list
+        # TODO Re-enable tests below and add meaningful assertions
         assert 1 == 1
 
-    def test_alert(self):
-        logger = logging.getLogger('root')
-        logger.debug("-"*80)
-        sim_data = self.tb.xmonitor_alert.signal_list
-        # breakpoint()
-        assert 1 == 1
+    # def test_loopback(self):
+    #     logger = logging.getLogger('root')
+    #     logger.debug("-"*80)
+    #     sim_data = self.tb.xmonitor_loopback.signal_list
+    #     assert 1 == 1
 
-    def test_reset(self):
-        logger = logging.getLogger('root')
-        logger.debug("-"*80)
-        sim_data = self.tb.xmonitor_pll.signal_list
-        assert 1 == 1
+    # def test_alert(self):
+    #     logger = logging.getLogger('root')
+    #     logger.debug("-"*80)
+    #     sim_data = self.tb.xmonitor_alert.signal_list
+    #     assert 1 == 1
+
+    # def test_reset(self):
+    #     logger = logging.getLogger('root')
+    #     logger.debug("-"*80)
+    #     sim_data = self.tb.xmonitor_pll.signal_list
+    #     assert 1 == 1
 
 
 if __name__ == '__main__':
