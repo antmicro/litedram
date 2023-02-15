@@ -7,6 +7,7 @@
 import re
 
 from migen import *
+from migen.genlib.fifo import _FIFOInterface
 
 from litex.build.sim import SimPlatform
 from litex.build.sim.config import SimConfig
@@ -16,6 +17,8 @@ from litex.soc.interconnect.csr import CSRStorage, AutoCSR
 from litedram.common import Settings, tXXDController
 from litedram.phy.utils import Serializer, Deserializer, edge
 
+from operator import or_
+from functools import reduce
 
 # PHY ----------------------------------------------------------------------------------------------
 
@@ -394,3 +397,155 @@ class PulseTiming(Module):
 
     def progress(self):
         return self.timing.progress()
+
+
+class AsyncFIFOXilinx7(Module):
+    LATENCY=3
+    WCL_LATENCY=3
+    RANDOMIZE=False
+
+    @classmethod
+    def randomize_delay(cls):
+        cls.RANDOMIZE = True
+        cls.WCL_LATENCY=4
+
+    def __init__(self, wclk, rclk, randomize=False):
+        delay = 3
+        if self.RANDOMIZE:
+            from random import random
+            if 0.5 < random():
+                delay += 1
+
+        self.DI = Signal(72)
+        self.WREN = Signal()
+        self.FULL = Signal()
+
+        self.DO = Signal(72)
+        self.RDEN = Signal()
+        self.EMPTY = Signal(reset=1)
+
+        wclk_w_cnt = Signal(10)
+        rclk_r_cnt = Signal(10)
+
+        rclk_w_cnt = [Signal(10) for _ in range(delay-1)]
+        wclk_r_cnt = [Signal(10) for _ in range(delay-1)]
+
+        mem = Memory(72, 512)
+        self.specials += mem
+        w_port = mem.get_port(write_capable=True, has_re=True, clock_domain=wclk)
+        r_port = mem.get_port(has_re=True, clock_domain=rclk)
+
+        self.comb += w_port.dat_w.eq(self.DI)
+        self.comb += w_port.adr.eq(wclk_w_cnt[:9])
+        self.comb += w_port.we.eq(self.WREN)
+
+        self.comb += self.DO.eq(r_port.dat_r)
+        self.comb += r_port.adr.eq(rclk_r_cnt[:9])
+        self.comb += r_port.re.eq(self.RDEN)
+
+        empty = [Signal(reset=1) for _ in range(delay)]
+        full  = [Signal() for _ in range(delay)]
+
+        sampled_empty = Signal()
+        sampled_full  = Signal()
+
+        self.comb += self.FULL.eq(reduce(or_, full))
+        self.comb += self.EMPTY.eq(reduce(or_, empty))
+        self.comb += [
+            full[0].eq((rclk_r_cnt[9] != wclk_w_cnt[9]) & (rclk_r_cnt[:9] == wclk_w_cnt[:9]) | sampled_full),
+            empty[0].eq((rclk_r_cnt[9] == wclk_w_cnt[9]) & (rclk_r_cnt[:9] == wclk_w_cnt[:9]) | sampled_empty),
+        ]
+
+        cd_wclk = getattr(self.sync, wclk)
+        cd_wclk += [
+            If(self.WREN,
+                wclk_w_cnt.eq(wclk_w_cnt+1),
+            ),
+            *[full[i+1].eq(full[i]) for i in range(delay-1)],
+            wclk_r_cnt[0].eq(rclk_r_cnt),
+            *[wclk_r_cnt[i+1].eq(wclk_r_cnt[i]) for i in range(delay-2)],
+            If(empty[0],
+                sampled_empty.eq(empty[0]),
+            ),
+            If(sampled_full,
+                sampled_full.eq(0),
+            )
+        ]
+
+        cd_rclk = getattr(self.sync, rclk)
+        cd_rclk += [
+            If(self.RDEN,
+                rclk_r_cnt.eq(rclk_r_cnt+1),
+            ),
+            *[empty[i+1].eq(empty[i]) for i in range(delay-1)],
+            rclk_w_cnt[0].eq(wclk_w_cnt),
+            *[rclk_w_cnt[i+1].eq(rclk_w_cnt[i]) for i in range(delay-2)],
+            If(full[0],
+                sampled_full.eq(full[0]),
+            ),
+            If(sampled_empty,
+                sampled_empty.eq(0),
+            )
+        ]
+
+
+class AsyncFIFOXilinx7Wrap(Module, _FIFOInterface):
+    LATENCY     = AsyncFIFOXilinx7.LATENCY
+    WCL_LATENCY = AsyncFIFOXilinx7.WCL_LATENCY
+
+    @classmethod
+    def reset_latency(cls):
+        cls.LATENCY=AsyncFIFOXilinx7.LATENCY
+        cls.WCL_LATENCY=AsyncFIFOXilinx7.WCL_LATENCY
+
+    def __init__(self, wclk, rclk, i_dw, o_dw, name=None):
+        _FIFOInterface.__init__(self, max(i_dw, o_dw), 512)
+        width=max(i_dw, o_dw)
+        number_of_fifos = (width + 71)//72
+        cdcs = [AsyncFIFOXilinx7(wclk, rclk) for _ in range(number_of_fifos)]
+        self.submodules += cdcs
+        intermediate_din  = Signal(width)
+        intermediate_dout = Signal(width)
+        do_read           = Signal(reset=1)
+        do_write          = Signal(reset=1)
+        assert max(i_dw, o_dw)//min(i_dw, o_dw) in [1,2]
+        w_cnt               = Signal()
+        r_cnt               = Signal()
+        r_cnt_i             = Signal()
+        i_cd = getattr(self.sync, wclk)
+        o_cd = getattr(self.sync, rclk)
+
+        self.comb += [
+            self.readable.eq(reduce(and_, [~cdc.EMPTY for cdc in cdcs]) | r_cnt),
+            *[cdc.RDEN.eq(self.re & do_read) for cdc in cdcs],
+            self.writable.eq(reduce(and_, [~cdc.FULL for cdc in cdcs])),
+            *[cdc.WREN.eq(self.we & do_write) for cdc in cdcs],
+            Cat([cdc.DI for cdc in cdcs])[:width].eq(intermediate_din),
+            intermediate_dout.eq(Cat([cdc.DO for cdc in cdcs])[:width]),
+        ]
+        if i_dw < width:
+            self.comb += self.dout.eq(intermediate_dout)
+            reg = Signal(i_dw)
+            self.comb += intermediate_din.eq(Cat(reg, self.din[:i_dw]))
+            self.comb += do_write.eq((w_cnt == 1))
+            i_cd += [
+                If((w_cnt == 1),
+                    w_cnt.eq(0),
+                ).Elif(self.we,
+                    reg.eq(self.din[:i_dw]),
+                    w_cnt.eq(1),
+                )
+            ]
+        elif o_dw < width:
+            self.comb += intermediate_din.eq(self.din)
+            self.comb += self.dout.eq(intermediate_dout.part(r_cnt_i*o_dw, o_dw))
+            self.comb += do_read.eq((r_cnt == 0) & self.re)
+            o_cd += [
+                If((r_cnt == 0) & self.re,
+                    r_cnt.eq(1),
+                    r_cnt_i.eq(0),
+                ).Else(
+                    r_cnt.eq(0),
+                    r_cnt_i.eq(1),
+                )
+            ]
