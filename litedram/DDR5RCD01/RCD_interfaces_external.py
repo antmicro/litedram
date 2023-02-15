@@ -5,6 +5,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 from migen import *
+from litedram.DDR5RCD01.RCD_definitions import *
 from litedram.DDR5RCD01.RCD_utils import *
 
 """
@@ -210,6 +211,25 @@ class If_sideband(Record):
         return [
             ('sda', 1),
             ('scl', 1),
+        ]
+
+
+class If_sideband_mock(Record):
+    """
+    Sideband mock
+    """
+
+    def __init__(self):
+        layout = self.description()
+        Record.__init__(self, layout)
+
+    def description(self,):
+        return [
+            ('we', 1),
+            ('channel', 4),
+            ('page_num', CW_REG_BIT_SIZE),
+            ('reg_num', CW_REG_BIT_SIZE),
+            ('data', CW_REG_BIT_SIZE),
         ]
 
 
