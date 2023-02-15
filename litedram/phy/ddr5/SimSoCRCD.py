@@ -18,6 +18,7 @@ from litex.soc.interconnect.csr import CSR
 from litex.soc.integration.soc_core import SoCCore, soc_core_args, soc_core_argdict
 from litex.soc.integration.builder import builder_args, builder_argdict, Builder
 from litex.soc.cores.cpu import CPUS
+from litex.soc.cores.bitbang import I2CMasterSim
 
 from litedram.gen import LiteDRAMCoreControl
 from litedram import modules as litedram_modules
@@ -27,6 +28,8 @@ from litedram.phy.model import DFITimingsChecker, _speedgrade_timings, _technolo
 from litedram.phy.ddr5.simphy import DDR5SimPHY
 from litedram.phy.ddr5.sdram_simulation_model import DDR5SDRAMSimulationModel
 
+from litedram.DDR5RCD01.RCD_interfaces_external import *
+from litedram.DDR5RCD01.I2CMockMaster import I2CMockMaster
 from litedram.DDR5RCD01.DDR5RCD01SystemWrapper import DDR5RCD01SystemWrapper
 
 from litedram.phy.sim_utils import Clocks, CRG, Platform
@@ -64,8 +67,9 @@ _io = {
          Subsignal("B_dqs_c", Pins(1)),
         ),
         ("i2c", 0,
-         Subsignal("scl", Pins(1)),
-         Subsignal("sda", Pins(1)),
+         Subsignal("scl",     Pins(1)),
+         Subsignal("sda_out", Pins(1)),
+         Subsignal("sda_in",  Pins(1)),
         ),
     ],
     "sub8": [
@@ -98,8 +102,9 @@ _io = {
          Subsignal("B_dqs_c", Pins(1)),
         ),
         ("i2c", 0,
-         Subsignal("scl", Pins(1)),
-         Subsignal("sda", Pins(1)),
+         Subsignal("scl",     Pins(1)),
+         Subsignal("sda_out", Pins(1)),
+         Subsignal("sda_in",  Pins(1)),
         ),
     ],
     "sub4x2": [
@@ -132,8 +137,9 @@ _io = {
          Subsignal("B_dqs_c", Pins(2)),
         ),
         ("i2c", 0,
-         Subsignal("scl", Pins(1)),
-         Subsignal("sda", Pins(1)),
+         Subsignal("scl",     Pins(1)),
+         Subsignal("sda_out", Pins(1)),
+         Subsignal("sda_in",  Pins(1)),
         ),
     ],
     "sub8x2": [
@@ -166,8 +172,9 @@ _io = {
          Subsignal("B_dqs_c", Pins(2)),
         ),
         ("i2c", 0,
-         Subsignal("scl", Pins(1)),
-         Subsignal("sda", Pins(1)),
+         Subsignal("scl",     Pins(1)),
+         Subsignal("sda_out", Pins(1)),
+         Subsignal("sda_in",  Pins(1)),
         ),
     ],
 }
@@ -264,7 +271,12 @@ class SimSoCRCD(SoCCore):
         self.add_constant("MEMTEST_ADDR_SIZE", 8*1024)
         self.add_constant("DDR5_TRAINING_SIM", 1)
 
-        # DR5 RCD ----------------------------------------------------------------------------------
+        # DDR5 RCD ---------------------------------------------------------------------------------
+
+        self.submodules.i2c = I2CMasterSim(platform.request("i2c"))
+
+        if_mock = If_sideband_mock()
+        self.submodules.rcd_xmockmaster = rcd_xmockmaster = I2CMockMaster(if_mock)
 
         xRCDSystem = DDR5RCD01SystemWrapper(
             phy_pads        = self.ddrphy.pads,
