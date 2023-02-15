@@ -5,6 +5,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 from migen import *
+from litedram.DDR5RCD01.RCD_definitions import *
 from litedram.DDR5RCD01.RCD_utils import *
 
 
@@ -299,6 +300,24 @@ class If_ctrl_common(Record):
             ('lb_sel_int_bit', 3),
             ('lb_sel_channel_A_B', 1),
             ('alert_n_mode',1),
+        ]
+
+
+class If_registers(Record):
+    """
+    I2CSlaveMock<->Registers interface
+    """
+
+    def __init__(self):
+        layout = self.description()
+        Record.__init__(self, layout)
+
+    def description(self,):
+        return [
+            ('we', 1),
+            ('addr', CW_REG_BIT_SIZE),
+            ('d', CW_REG_BIT_SIZE),
+            ('q', CW_REG_BIT_SIZE),
         ]
 
 
