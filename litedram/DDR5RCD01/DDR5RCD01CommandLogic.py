@@ -57,6 +57,7 @@ class DDR5RCD01CommandLogic(Module):
         valid_B_int = Signal()
         is_this_ui_odd_int = Signal()
         is_cmd_beginning_int = Signal()
+        is_cw_bit_set = Signal()
 
         if_csca_o_int = If_ibuf()
         if_csca_o_rank_A_int = If_ibuf()
@@ -72,6 +73,7 @@ class DDR5RCD01CommandLogic(Module):
             qvalid_B=valid_B_int,
             is_this_ui_odd=is_this_ui_odd_int,
             is_cmd_beginning=is_cmd_beginning_int,
+            is_cw_bit_set=is_cw_bit_set,
         )
 
         """
@@ -174,7 +176,6 @@ class DDR5RCD01CommandLogic(Module):
             if_ctrl_lbuf_rank_A_row_B.deser_cs_n_q_en.eq(0),
         )
 
-
         """
             RANK B
             If a valid command is decoded, deserialize it.
@@ -222,25 +223,6 @@ class DDR5RCD01CommandLogic(Module):
             if_ctrl_lbuf_rank_B_row_B.deser_ca_q_en.eq(0),
             if_ctrl_lbuf_rank_B_row_B.deser_cs_n_q_en.eq(0),
         )
-
-
-        # self.comb += if_ctrl_lbuf_rank_B_row_A.deser_sel_lower_upper.eq(
-        #     qis_this_ui_odd)
-        # self.comb += if_ctrl_lbuf_rank_B_row_A.deser_ca_d_en.eq(qvalid_B)
-        # self.comb += if_ctrl_lbuf_rank_B_row_A.deser_ca_q_en.eq(
-        #     ~qis_this_ui_odd)
-        # self.comb += if_ctrl_lbuf_rank_B_row_A.deser_cs_n_d_en.eq(qvalid_B)
-        # self.comb += if_ctrl_lbuf_rank_B_row_A.deser_cs_n_q_en.eq(
-        #     ~qis_this_ui_odd)
-
-        # self.comb += if_ctrl_lbuf_rank_B_row_B.deser_sel_lower_upper.eq(
-        #     qis_this_ui_odd)
-        # self.comb += if_ctrl_lbuf_rank_B_row_B.deser_ca_d_en.eq(qvalid_B)
-        # self.comb += if_ctrl_lbuf_rank_B_row_B.deser_ca_q_en.eq(
-        #     ~qis_this_ui_odd)
-        # self.comb += if_ctrl_lbuf_rank_B_row_B.deser_cs_n_d_en.eq(qvalid_B)
-        # self.comb += if_ctrl_lbuf_rank_B_row_B.deser_cs_n_q_en.eq(
-        #     ~qis_this_ui_odd)
 
 
 if __name__ == "__main__":

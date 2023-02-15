@@ -46,8 +46,8 @@ class TestBed(Module):
             Items on the bed
         """
         self.if_ck_rst = If_ck_rst()
-        self.if_sdram_A = If_sdram()
-        self.if_sdram_B = If_sdram()
+        self.if_sdram_A = If_channel_sdram()
+        self.if_sdram_B = If_channel_sdram()
         self.if_alert_n = If_alert_n()
         self.if_ibuf_A = If_ibuf()
         self.if_ibuf_B = If_ibuf()
@@ -128,6 +128,10 @@ class TestBed(Module):
             self.generators_dict()
         )
 
+    def tb_run(self):
+        yield self.if_ck_rst.drst_n.eq(1)
+        yield
+
     def generators_dict(self):
         return {
             "sys":
@@ -137,6 +141,7 @@ class TestBed(Module):
                     # scenario_select=EnvironmentScenarios.DOUBLE_ONLY),
                     # scenario_select=EnvironmentScenarios.DECODER_MCA),
                     scenario_select=EnvironmentScenarios.TEST_ALL),
+                self.tb_run(),
                 self.xmonitor_ingress.monitor(),
                 self.xmonitor_egress.monitor(),
             ]
@@ -171,7 +176,8 @@ class DDR5RCD01CoreTests_SingleChannel(unittest.TestCase):
         """
         self.LOG_FILE_NAME = self.dir_name + '/' + self.file_name + ".log"
         FORMAT = "[%(module)s.%(funcName)s] %(message)s"
-        fileHandler = logging.FileHandler(filename=self.LOG_FILE_NAME, mode='w')
+        fileHandler = logging.FileHandler(
+            filename=self.LOG_FILE_NAME, mode='w')
         fileHandler.formatter = logging.Formatter(FORMAT)
         streamHandler = logging.StreamHandler()
 

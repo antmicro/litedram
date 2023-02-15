@@ -14,8 +14,9 @@ from litedram.DDR5RCD01.RCD_definitions import *
 from litedram.DDR5RCD01.RCD_interfaces import *
 from litedram.DDR5RCD01.RCD_utils import *
 # Submodules
-from litedram.DDR5RCD01.DDR5RCD01RegFile import DDR5RCD01RegFile
-from litedram.DDR5RCD01.DDR5RCD01Pages import DDR5RCD01Pages
+# from litedram.DDR5RCD01.DDR5RCD01RegFile import DDR5RCD01RegFile
+from litedram.DDR5RCD01.DDR5RCD01Registers import DDR5RCD01Registers
+# from litedram.DDR5RCD01.DDR5RCD01Pages import DDR5RCD01Pages
 from litedram.DDR5RCD01.DDR5RCD01CSLogic import DDR5RCD01CSLogic
 from litedram.DDR5RCD01.DDR5RCD01Error import DDR5RCD01Error
 
@@ -51,14 +52,14 @@ class DDR5RCD01ControlCenter(Module):
 
     Note, qrst_n remains asserted until a proper command register write.
 
-    After initilization, a proper write sequence should occur to configure the application.
+    After initialization, a proper write sequence should occur to configure the application.
     -- 3.9 on soft reset (vdd remains on)
     TODO analyze
 
     TODO List of states:
     HARD_RESET
     SOFT_RESET
-    INITILIZATION
+    INITIALIZATION
     NORMAL
     TRAINING (4 modes)
     POWER_SAVINGS (4 modes)
@@ -84,6 +85,8 @@ class DDR5RCD01ControlCenter(Module):
                  if_ctrl_obuf_csca_row_B_rankB,
                  if_ctrl_obuf_clks_row_A_rankB,
                  if_ctrl_obuf_clks_row_B_rankB,
+                 drst_rw04,
+                 drst_pon,
                  if_ctrl_global,
                  if_config_global,
                  if_common,
@@ -92,32 +95,29 @@ class DDR5RCD01ControlCenter(Module):
                  is_channel_A=True,
                  ):
 
-        bank_d = Signal(8)
-        bank_page_pointer = Signal(8)
-        bank_we = Signal()
-        page_addr = Signal(8)
-        page_copy = Array(Signal(CW_REG_BIT_SIZE)
-                          for y in range(CW_PAGE_PTRS_NUM))
+        """
+            Registers hardware description
+        """
+        # TODO speed-up simulation, only 6 pages
+        # cw_page_num = CW_PAGE_NUM
+        cw_page_num = 6
 
-        # TODO Pages are currently unused, so their number is reduced to speed-up the simulation
-        xbank_file = DDR5RCD01Pages(
-            bank_d, bank_we, bank_page_pointer, page_copy, page_addr, cw_page_num=6)
-        self.submodules += xbank_file
-        banks = xbank_file.pages
+        self.reg_d = Signal(CW_REG_BIT_SIZE)
+        self.reg_addr = Signal(CW_REG_BIT_SIZE)
+        self.reg_we = Signal()
+        self.reg_q = Signal(CW_REG_BIT_SIZE)
 
-        reg_d = Signal(8)
-        reg_addr = Signal(8)
-        reg_we = Signal()
-        reg_q = Signal(CW_REG_BIT_SIZE)
+        xregisters = DDR5RCD01Registers(
+            d=self.reg_d,
+            addr=self.reg_addr,
+            we=self.reg_we,
+            q=self.reg_q,
+            cw_page_num=cw_page_num
+        )
+        self.submodules.xregisters = xregisters
 
-        xreg_file = DDR5RCD01RegFile(reg_d, reg_addr, reg_we, reg_q, page_copy)
-        self.submodules += xreg_file
-
-        regs = xreg_file.registers
-        page_addr = regs[ADDR_CW_PAGE]
-        page_copy = banks[bank_page_pointer]
-        bank_page_pointer = regs[ADDR_CW_PAGE]
-
+        regs = self.xregisters.xreg_file.registers
+        pages = self.xregisters.xpage_file.pages
         """
         CSR, RW, PAGE
         This section described the CSR of the device. Connects physical functions
@@ -173,6 +173,56 @@ class DDR5RCD01ControlCenter(Module):
         ALERT_REENABLE = regs[RW_SECONDARY_FEATURES][7]
         # --------------------------------------------0b76543210
         boot_image_rw00_rw5f[RW_SECONDARY_FEATURES] = 0b10000010
+
+
+        """ Table 103
+            RW04
+            Command Space Global Control Word
+            After issuing a write to RW04, RCD has t_MRC time to execute the command
+            Special case of write!
+            regs[0x04]
+        """
+        RW_CMD_SPACE_GLOBAL_CONTROL = 0x04
+        CMD_0_NOP = 0x00
+        # Not supported: LRDIMM
+        # CMD_1_CH_A_DB_RST = 0x01
+        # CMD_2_CH_A_DB_RST_CLEAR = 0x02
+        # CMD_3_CH_B_DB_RST = 0x03
+        # CMD_4_CH_B_DB_RST_CLEAR = 0x04
+        CMD_5_CH_A_DRAM_RST = 0x05
+        CMD_6_CH_A_DRAM_RST_CLEAR = 0x06
+        CMD_7_CH_B_DRAM_RST = 0x07
+        CMD_8_CH_B_DRAM_RST_CLEAR = 0x08
+        CMD_9_CH_A_PARITY_ERR_CLEAR = 0x09
+        CMD_A_CH_B_PARITY_ERR_CLEAR = 0x0A
+        # Not supported: DFE model
+        # CMD_B_CH_A_DFE_ERR_COUNTER_RST = 0x0B
+        # CMD_C_CH_B_DFE_ERR_COUNTER_RST = 0x0C
+        CMD_D_ALERT_N_TOGGLE = 0x0D
+        CMD_E_CH_A_QCS_HIGH = 0x0E
+        CMD_F_CH_B_QCS_HIGH = 0x0F
+        # --------------------------------------------------0b76543210
+        boot_image_rw00_rw5f[RW_CMD_SPACE_GLOBAL_CONTROL] = 0b00000000
+
+        """
+            TODO add RW04 actor
+            anytime RW04 changes, execute a command
+            1.important
+                dram resets (cmds 5-8)
+            2.less important now
+                parity err clear
+            3.important
+                alert toggle
+            4.important
+                keep qcs high (can be done by disabling cs outputs)
+        """
+        self.sync += If(
+            0, # rw04 command 5
+            drst_rw04.eq(1)
+        ).Else(
+            drst_rw04.eq(0)
+        )
+        command = Signal(CW_REG_BIT_SIZE)
 
         """ Table 107
             RW08
@@ -230,6 +280,12 @@ class DDR5RCD01ControlCenter(Module):
         self.comb += if_ctrl_obuf_csca_row_B_rankB.oe_qca.eq(
             QBCA_OUTPUT_ENABLE)
 
+        """
+            TODO priority encoder
+            1. RW04_KEEP HIGH
+            2. QCS_ENABLE
+            3.
+        """
         self.comb += if_ctrl_obuf_csca_row_A_rankA.oe_qcs_n.eq(QACS_N_ENABLE)
         self.comb += if_ctrl_obuf_csca_row_B_rankA.oe_qcs_n.eq(QACS_N_ENABLE)
         self.comb += if_ctrl_obuf_csca_row_A_rankB.oe_qcs_n.eq(QBCS_N_ENABLE)
@@ -345,7 +401,8 @@ class DDR5RCD01ControlCenter(Module):
 
         xfsm.act(
             "RESET_HARD",
-            NextState("INIT_HARD")
+            drst_pon.eq(1),
+            NextState("INIT_HARD"),
         )
 
         rw_boot_image_reader_start = Signal()
@@ -355,11 +412,12 @@ class DDR5RCD01ControlCenter(Module):
             "INIT_HARD",
             NextValue(rw_custom_csr, rw_custom_csr_boot_word),
             rw_boot_image_reader_start.eq(1),
-
+            drst_pon.eq(1),
             If(
                 rw_boot_image_reader_finish,
                 NextState("NORMAL")
-            )
+            ),
+
         )
         xfsm.act(
             "NORMAL",
@@ -377,14 +435,6 @@ class DDR5RCD01ControlCenter(Module):
                 NextState("NORMAL")
             )
         )
-
-        # Debug information
-        xfsm_debug_state = Signal(8)
-        self.comb += If(xfsm.ongoing("RESET_HARD"), xfsm_debug_state.eq(0))
-        self.comb += If(xfsm.ongoing("INIT_HARD"), xfsm_debug_state.eq(1))
-        self.comb += If(xfsm.ongoing("NORMAL"), xfsm_debug_state.eq(2))
-        self.comb += If(xfsm.ongoing("CA_PASS_THROUGH_MODE"),
-                        xfsm_debug_state.eq(3))
 
         """
             Boot image reader
@@ -412,9 +462,9 @@ class DDR5RCD01ControlCenter(Module):
         self.comb += If(rw_boot_image_reader_start &
                         (rw_counter < CW_DA_REGS_NUM) &
                         (~rw_boot_image_reader_finish),
-                        reg_we.eq(1),
-                        reg_d.eq(boot_word),
-                        reg_addr.eq(rw_counter),
+                        self.reg_we.eq(1),
+                        self.reg_d.eq(boot_word),
+                        self.reg_addr.eq(rw_counter),
                         )
 
 

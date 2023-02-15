@@ -18,9 +18,14 @@ from litedram.DDR5RCD01.RCD_interfaces_external import *
 from litedram.DDR5RCD01.RCD_utils import *
 
 
-class RCD01SpecialMR(enum.IntEnum):
+class RCDSpecialMR(enum.IntEnum):
     MRW_5E = 0x5E
+    MRW_5F = 0x5F
     MRW_3F = 0x3F
+
+
+class RCDSpecialOpcode(enum.IntEnum):
+    MRW = 0b00101
 
 
 class DDR5RCD01ActorMRW(Module):
@@ -46,37 +51,59 @@ class DDR5RCD01ActorMRW(Module):
     """
 
     def __init__(self,
-                 trigger,
-                 mrw_mra,
-                 mrw_op,
-                 mrw_cw,
-                 RW5E_d,
-                 RW5E_addr,
-                 RW5E_we,
-                 RW5E_star_q,
-                 mrw_op_o,
-                 mrw_op_override,
+                 if_csca_i,
+                 if_csca_o,
+                 valid,
+                 is_this_ui_odd,
+                 is_cmd_beginning,
+                 is_cw_bit_set,
+                 reg_d,
+                 reg_addr,
+                 reg_we,
+                 reg_q,
                  ):
+        is_cw_bit_set_d = Signal()
+        self.sync += is_cw_bit_set_d.eq(is_cw_bit_set)
 
-        self.comb += If(
-            mrw_mra == RCD01SpecialMR.MRW_5E,
-            RW5E_we.eq(1),
-            RW5E_d.eq(mrw_op),
-        ).Else(
-            RW5E_we.eq(0),
-            RW5E_d.eq(0),
+        is_mrw_detected = Signal()
+        mra = Signal(CW_REG_BIT_SIZE)
+        opcode = Signal(CW_REG_BIT_SIZE)
+        cw_bit = Signal()
+
+        delay_len = 4
+        is_cmd_beginning_d = Array(Signal() for _ in range(delay_len))
+        for i in range(delay_len):
+            if i == 0:
+                self.sync += is_cmd_beginning_d[i].eq(is_cmd_beginning)
+            else:
+                self.sync += is_cmd_beginning_d[i].eq(is_cmd_beginning_d[i-1])
+
+        self.sync += If(
+            valid & is_cmd_beginning,
+            If(
+                if_csca_i.dca[0:5] == RCDSpecialOpcode.MRW,
+                is_mrw_detected.eq(1),
+                mra[0:2].eq(if_csca_i.dca[5:7]),
+            ).Else(
+                is_mrw_detected.eq(0),
+            )
         )
 
-        self.comb += If(
-            mrw_mra == RCD01SpecialMR.MRW_3F,
-            mrw_op_override.eq(1),
-            mrw_op_o.eq(RW5E_star_q)
-        ).Else(
-            mrw_op_override.eq(0),
-            mrw_op_o.eq(0)
+        self.sync += If(
+            valid & is_cmd_beginning_d[0],
+            mra[2:8].eq(if_csca_i.dca[0:6])
         )
 
-        self.comb += RW5E_addr.eq(RCD01SpecialMR.MRW_5E)
+        self.sync += If(
+            valid & is_cmd_beginning_d[1],
+            opcode[0:7].eq(if_csca_i.dca[0:7]),
+        )
+
+        self.sync += If(
+            valid & is_cmd_beginning_d[2],
+            opcode[7].eq(if_csca_i.dca[0]),
+            cw_bit.eq(if_csca_i.dca[3]),
+        )
 
 
 class TestBed(Module):

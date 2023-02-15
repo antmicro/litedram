@@ -57,20 +57,7 @@ class TestBed(Module):
             If write is to address 0x60 to 0xFF, the write is to pages
             Reads are always through reg_q (must set pointers before reading)
         """
-        self.d = Signal(CW_REG_BIT_SIZE)
-        self.addr = Signal(CW_REG_BIT_SIZE)
-        self.we = Signal()
-        self.q = Signal(CW_REG_BIT_SIZE)
-        # cw_page_num = CW_PAGE_NUM
-        cw_page_num = 6
-        xregisters = DDR5RCD01Registers(
-            d=self.d,
-            addr=self.addr,
-            we=self.we,
-            q=self.q,
-            cw_page_num=cw_page_num
-        )
-        self.submodules.xregisters = xregisters
+
 
         """
             Generators

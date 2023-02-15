@@ -17,6 +17,7 @@ from litedram.DDR5RCD01.RCD_interfaces import *
 from litedram.DDR5RCD01.RCD_interfaces_external import *
 # Submodules
 from litedram.DDR5RCD01.DDR5RCD01Decoder import DDR5RCD01Decoder
+from litedram.DDR5RCD01.DDR5RCD01ActorMRW import DDR5RCD01ActorMRW
 from litedram.DDR5RCD01.BusCSCAEnvironment import BusCSCAEnvironment
 from litedram.DDR5RCD01.BusCSCAEnvironment import EnvironmentScenarios
 from litedram.DDR5RCD01.CRG import CRG
@@ -72,6 +73,28 @@ class TestBed(Module):
         )
 
         """
+            Actor MRW
+        """
+        self.if_csca_o_actor = If_ibuf()
+        reg_d = Signal(CW_REG_BIT_SIZE)
+        reg_addr = Signal(CW_REG_BIT_SIZE)
+        reg_we = Signal()
+        reg_q = Signal(CW_REG_BIT_SIZE)
+
+        self.submodules.xactor = DDR5RCD01ActorMRW(
+            if_csca_i=self.if_csca_o,
+            if_csca_o=self.if_csca_o_actor,
+            valid=qvalid,
+            is_this_ui_odd=is_this_ui_odd,
+            is_cmd_beginning=is_cmd_beginning,
+            is_cw_bit_set=is_cw_bit_set,
+            reg_d=reg_d,
+            reg_addr=reg_addr,
+            reg_we=reg_we,
+            reg_q=reg_q,
+        )
+
+        """
             Validation
         """
         count_commands = Signal(16)
@@ -105,7 +128,7 @@ class TestBed(Module):
             "sys":
             [
                 self.xenvironment.run_env(
-                    scenario_select=EnvironmentScenarios.DECODER_MCA),
+                    scenario_select=EnvironmentScenarios.TEST_CW_WR_RD),
                 self.read_counters(),
             ]
         }
@@ -122,7 +145,7 @@ class TestBed(Module):
         return self.generators
 
 
-class DDR5RCD01DecoderTests(unittest.TestCase):
+class DDR5RCD01ActorMRWTests(unittest.TestCase):
 
     def setUp(self):
         self.tb = TestBed(is_dual_channel=False)
@@ -151,7 +174,7 @@ class DDR5RCD01DecoderTests(unittest.TestCase):
     def tearDown(self):
         del self.tb
 
-    def test_decoder(self):
+    def test_actor(self):
         logger = logging.getLogger('root')
         logger.debug("-"*80)
         run_simulation(

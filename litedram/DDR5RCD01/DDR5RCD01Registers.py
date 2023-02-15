@@ -59,7 +59,7 @@ class DDR5RCD01Registers(Module):
                           for y in range(CW_PAGE_PTRS_NUM))
         bank_page_pointer = Signal(CW_REG_BIT_SIZE)
         # Not all pages are currently used, so their number may be reduced to speed-up the simulation
-        self.submodules.xbank_file = DDR5RCD01Pages(
+        xpage_file = DDR5RCD01Pages(
             d=bank_d,
             we=bank_we,
             page_pointer=bank_page_pointer,
@@ -67,10 +67,10 @@ class DDR5RCD01Registers(Module):
             page_addr=page_addr,
             cw_page_num=cw_page_num,
         )
-
+        self.submodules.xpage_file = xpage_file
         reg_q = Signal(CW_REG_BIT_SIZE)
         # If writing to the register, set reg_d to valid data, set reg_we to '1'
-        self.submodules.xreg_file = DDR5RCD01RegFile(
+        xreg_file = DDR5RCD01RegFile(
             d=reg_d,
             addr=addr,
             we=reg_we,
@@ -78,7 +78,7 @@ class DDR5RCD01Registers(Module):
             page=page_copy,
             page_pointer=bank_page_pointer
         )
-
+        self.submodules.xreg_file = xreg_file
         self.comb += q.eq(reg_q)
 
 

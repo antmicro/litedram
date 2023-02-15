@@ -254,6 +254,7 @@ class DDR5RDIMM_PHY(unittest.TestCase):
             }},
             vcd_name="ddr5_rdimm_phy_cs_n_phase_0_1N.vcd"
         )
+
     def test_ddr5_seq(self):
         self.run_test(
             dfi_sequence = [

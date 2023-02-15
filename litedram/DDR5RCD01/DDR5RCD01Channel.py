@@ -15,8 +15,10 @@ from litedram.DDR5RCD01.RCD_interfaces_external import *
 from litedram.DDR5RCD01.RCD_utils import *
 # Submodules
 from litedram.DDR5RCD01.DDR5RCD01ControlCenter import DDR5RCD01ControlCenter
+from litedram.DDR5RCD01.DDR5RCD01ResetGenerator import DDR5RCD01ResetGenerator
 from litedram.DDR5RCD01.DDR5RCD01CommandLogic import DDR5RCD01CommandLogic
-from litedram.DDR5RCD01.DDR5RCD01Error import DDR5RCD01Error
+from litedram.DDR5RCD01.DDR5RCD01ActorMRW import DDR5RCD01ActorMRW
+# from litedram.DDR5RCD01.DDR5RCD01Error import DDR5RCD01Error
 from litedram.DDR5RCD01.DDR5RCD01InputBuffer import DDR5RCD01InputBuffer
 from litedram.DDR5RCD01.DDR5RCD01RankBuffer import DDR5RCD01RankBuffer
 
@@ -48,7 +50,7 @@ class DDR5RCD01Channel(Module):
             Master is the one providing global settings
         """
         if is_master:
-            # Drive the ctrl and common intefaces
+            # Drive the ctrl and common interfaces
             # TODO
             pass
         else:
@@ -122,6 +124,11 @@ class DDR5RCD01Channel(Module):
             reserved_if_mrw_actor=tmp_reserved_if_mrw_actor,
         )
         self.submodules += xcmd_logic
+
+        xactor_mrw = DDR5RCD01ActorMRW(
+            if_csca_i=if_csca_o,
+        )
+        self.submodules.xactor_mrw = xactor_mrw
 
         """
              Rank Buffer A
@@ -219,6 +226,9 @@ class DDR5RCD01Channel(Module):
         """
             Control Center
         """
+        drst_rw04 = Signal()
+        drst_pon = Signal()
+
         xcontrol_center = DDR5RCD01ControlCenter(
             if_ctrl_ibuf=if_ctrl_ibuf,
             if_ctrl_lbuf_row_A_rankA=if_ctrl_lbuf_row_A_rankA,
@@ -233,6 +243,8 @@ class DDR5RCD01Channel(Module):
             if_ctrl_obuf_csca_row_B_rankB=if_ctrl_obuf_csca_row_B_rankB,
             if_ctrl_obuf_clks_row_A_rankB=if_ctrl_obuf_clks_row_A_rankB,
             if_ctrl_obuf_clks_row_B_rankB=if_ctrl_obuf_clks_row_B_rankB,
+            drst_rw04=drst_rw04,
+            drst_pon=drst_pon,
             if_ctrl_global=if_ctrl_global,
             if_config_global=if_config_global,
             if_common=if_common,
@@ -242,6 +254,14 @@ class DDR5RCD01Channel(Module):
         )
 
         self.submodules += xcontrol_center
+
+        xreset_generator = DDR5RCD01ResetGenerator(
+            drst_n=if_common.qrst_n,
+            drst_pon=drst_pon,
+            drst_rw04=drst_rw04,
+            qrst_n=if_sdram.qrst_n,
+        )
+        self.submodules += xreset_generator
 
 
 

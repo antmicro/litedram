@@ -121,8 +121,8 @@ class DDR5RCD01Core(Module):
 class TestBed(Module):
     def __init__(self):
         self.if_ck_rst = If_ck_rst()
-        self.if_sdram_A = If_sdram()
-        self.if_sdram_B = If_sdram()
+        self.if_sdram_A = If_channel_sdram()
+        self.if_sdram_B = If_channel_sdram()
         self.if_alert_n = If_alert_n()
         self.if_ibuf_A = If_ibuf()
         self.if_ibuf_B = If_ibuf()

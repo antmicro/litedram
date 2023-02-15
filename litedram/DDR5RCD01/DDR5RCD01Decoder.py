@@ -75,6 +75,7 @@ class DDR5RCD01Decoder(Module):
                  qvalid_B,
                  is_this_ui_odd,
                  is_cmd_beginning,
+                 is_cw_bit_set,
                  ):
         """
             Definitions
@@ -257,6 +258,15 @@ class DDR5RCD01Decoder(Module):
             if_csca_o.dcs_n.eq(~0),
             if_csca_o.dca.eq(~0),
             if_csca_o.dpar.eq(~0),
+        )
+
+        """
+            Detect if command is meant for RCD
+        """
+        is_cw_bit_set = Signal()
+        self.comb += If(
+            force_active_high == 0b10,
+            is_cw_bit_set.eq(if_ibuf.dca[3])
         )
 
 
