@@ -51,6 +51,39 @@ class I2CMockMaster(Module, AutoCSR):
         yield from self._data.write(data)
         yield from self._execute.write(0)
 
+    def rcd_read(self, dev, channel, page_num, reg_num):
+        return [0, 0, 0, 0]
+
+    def rcd_write(self, _dev, channel, page_num, reg_num, data, size):
+        for i, byte in enumerate(data[:size]):
+            yield from self.write(channel, page_num, reg_num + i, byte)
+
+    def enter_dcstm(self, channel, rank):
+        # taken from litex/soc/software/liblitedram/ddr5_helpers.c
+        rw_data = self.rcd_read(0, channel, 0, 0)
+
+        rw_data[1] &= ~(1 << 5)
+        rw_data[2] &= ~(0b11 << (2 * channel))
+        rw_data[2] |= (0b10 | (rank & 1)) << (2 * channel)
+
+        yield from self.rcd_write(0, channel, 0, 0, rw_data, 4)
+
+    def exit_dcstm(self, channel, rank):
+        # taken from litex/soc/software/liblitedram/ddr5_helpers.c
+        rw_data = self.rcd_read(0, channel, 0, 0)
+
+        rw_data[2] &= ~(0b11 << (2 * channel))
+
+        yield from self.rcd_write(0, channel, 0, 2, [rw_data[2]], 1)
+
+    def rcd_set_dimm_operating_speed(self, channel, rank, target_speed):
+        assert target_speed == -1, "We only simulate setting speed PLL bypass mode"
+
+        coarse = 0x0f # PLL bypass mode
+        fine   = 0x00 # any fine-grained speed bin will do
+        yield from self.rcd_write(0, channel, 0, 5, [coarse], 1)
+        yield from self.rcd_write(0, channel, 0, 6, [fine], 1)
+
 
 if __name__ == "__main__":
     raise NotSupportedException
