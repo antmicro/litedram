@@ -40,15 +40,17 @@ class TestBed(Module):
             I2C master
             Master is responsible for generating a WR/RD pattern
         """
-
-        xmock_master = I2CMockMaster()
+        if_mock = If_sideband_mock()
+        xmock_master = I2CMockMaster(if_mock)
         self.submodules.xmock_master = xmock_master
 
         """
             Slave is responsible for receiving commands from master
             and translating them into RCD Regfile reads/writes
         """
-        xmock_slave = I2CMockSlave()
+        if_regs_A = If_registers()
+        if_regs_B = If_registers()
+        xmock_slave = I2CMockSlave(if_mock, if_regs_A, if_regs_B)
         self.submodules.xmock_slave = xmock_slave
 
         """
@@ -57,7 +59,25 @@ class TestBed(Module):
             If write is to address 0x60 to 0xFF, the write is to pages
             Reads are always through reg_q (must set pointers before reading)
         """
+        # cw_page_num = CW_PAGE_NUM
+        cw_page_num = 6
+        xregisters_A = DDR5RCD01Registers(
+            d=if_regs_A.d,
+            addr=if_regs_A.addr,
+            we=if_regs_A.we,
+            q=if_regs_A.q,
+            cw_page_num=cw_page_num
+        )
+        self.submodules.xregisters_A = xregisters_A
 
+        xregisters_B = DDR5RCD01Registers(
+            d=if_regs_B.d,
+            addr=if_regs_B.addr,
+            we=if_regs_B.we,
+            q=if_regs_B.q,
+            cw_page_num=cw_page_num
+        )
+        self.submodules.xregisters_B = xregisters_B
 
         """
             Generators
@@ -88,33 +108,29 @@ class TestBed(Module):
     def seq(self):
         while (yield ResetSignal("sys")):
             yield
-        for i in range(5):
-            yield from self.reg_write(w_addr=i, w_data=32+i)
-        # ADDR_CW_READ_POINTER
-        # Write 0 to ADDR_CW_READ_POINTER means: "q show register 0"
-        yield from self.reg_write(w_addr=ADDR_CW_READ_POINTER, w_data=1)
-        # ADDR_CW_PAGE
-        # Write 0 to ADDR_CW_READ_POINTER means: "registers 0x60-0xFF are from page 0"
-        yield from self.reg_write(w_addr=0x61, w_data=0xFF)
-        yield from self.reg_write(w_addr=ADDR_CW_PAGE, w_data=0)
-        yield
-        yield from self.reg_write(w_addr=ADDR_CW_PAGE, w_data=1)
-        yield
-        yield
 
-    def reg_init(self):
-        yield self.d.eq(0)
-        yield self.addr.eq(0)
-        yield self.we.eq(0)
-        yield
+        yield from self.xmock_master.rcd_set_dimm_operating_speed(channel=0, rank=0, target_speed=-1)
 
-    def reg_write(self, w_addr, w_data):
-        yield from self.reg_init()
-        yield self.d.eq(w_data)
-        yield self.addr.eq(w_addr)
-        yield self.we.eq(1)
-        yield
-        yield from self.reg_init()
+        for channel in range(2):
+            for rank in range(2):
+                # wait for a little
+                for _ in range(40):
+                    yield
+
+                yield from self.xmock_master.enter_dcstm(channel, rank)
+
+                # wait for a little
+                for _ in range(40):
+                    yield
+
+                yield from self.xmock_master.exit_dcstm(channel, rank)
+
+        # wait for a little
+        for _ in range(40):
+            yield
+
+    def reg_write(self, w_channel, w_page, w_reg, w_data):
+        yield from self.xmock_master.write(w_channel, 0, w_reg, w_data)
 
 
 class DDR5RCD01DecoderTests(unittest.TestCase):
@@ -155,11 +171,6 @@ class DDR5RCD01DecoderTests(unittest.TestCase):
             clocks=self.tb.xcrg.clocks,
             vcd_name=self.wave_file_name
         )
-        """
-            Use cases:
-            TODO write to a register and read from it
-            TODO write to a register in bank and read from it
-        """
 
 
 if __name__ == '__main__':
