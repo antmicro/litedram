@@ -926,15 +926,6 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
             cmds.append(("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
             return cmds
 
-        def cmd_dqs_odt():
-            op = ((mr[33]&0x38)>>3) | (0b01010<<3)
-            cmds = []
-            cmds.append(("Set DQS_RTT_PARK", prefixes, 0, 0xf|(op<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1)),
-            cmds.append(("Set DQS_RTT_PARK", prefixes, all_cs, 0xf|(op<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2)),
-            cmds.append(("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1)),
-            cmds.append(("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
-            return cmds
-
     else:
         def cmd_ck_odt():
             return []
@@ -942,8 +933,15 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
             return []
         def cmd_ca_odt():
             return []
-        def cmd_dqs_odt():
-            return []
+
+    def cmd_dqs_odt():
+        op = ((mr[33]&0x38)>>3) | (0b01010<<3)
+        cmds = []
+        cmds.append(("Set DQS_RTT_PARK", prefixes, 0, 0xf|(op<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1)),
+        cmds.append(("Set DQS_RTT_PARK", prefixes, all_cs, 0xf|(op<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2)),
+        cmds.append(("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1)),
+        cmds.append(("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
+        return cmds
 
     def cmd_load_vref_odt():
         op = 0x1f
@@ -990,7 +988,7 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
 
     def ck(sec):
         # FIXME: use sys_clk_freq (should be added e.g. to TimingSettings), using arbitrary value for now
-        fmax = 250e6 # as we perform active waiting we can assume multiple singlecycle operations
+        fmax = 50e6 # as we perform active waiting we can assume multiple singlecycle operations
         return int(math.ceil(sec * fmax))
 
     reset_sequence = [
@@ -1126,8 +1124,6 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
     r.include("<hw/common.h>")
     r.include("<generated/csr.h>")
     r.newline()
-
-    r.define(f"MEMORY_TYPE_{phy_settings.memtype.upper()}")
 
     r.define("DFII_CONTROL_SEL",     "0x01")
     r.define("DFII_CONTROL_CKE",     "0x02")
