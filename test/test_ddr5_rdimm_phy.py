@@ -16,6 +16,10 @@ from litedram.phy.sim_utils import SimLogger
 from litedram.phy.utils import Serializer, Deserializer
 
 from litedram import modules as litedram_modules
+from litedram.DDR5RCD01.RCD_definitions import sideband_type as sb_enum
+from litedram.DDR5RCD01.RCD_interfaces_external import *
+from litedram.DDR5RCD01.I2CMockMaster import I2CMockMasterWrapper
+from litedram.DDR5RCD01.DDR5RCD01SidebandMockSimulationPads import DDR5RCD01SidebandMockSimulationPads
 from litedram.DDR5RCD01.DDR5RCD01SystemWrapper import DDR5RCD01SystemWrapper
 from litedram.phy.ddr5.sdram_simulation_model import DDR5SDRAMSimulationModel
 
@@ -55,11 +59,18 @@ class DDR5RDIMM_PHY(unittest.TestCase):
             masked_write=True
         )
 
+        pads_sideband = DDR5RCD01SidebandMockSimulationPads()
+        xi2cmockmaster = I2CMockMasterWrapper(
+            pads_sideband
+        )
+        # self.xi2cmockmaster = ClockDomainsRenamer("sys4x_ddr")(xi2cmockmaster)
+        self.xi2cmockmaster = xi2cmockmaster
+
         xRCDSystem = DDR5RCD01SystemWrapper(
             phy_pads        = self.phy.pads,
-            pads_sideband   = None,
+            pads_sideband   = pads_sideband,
             rcd_passthrough = False,
-            sideband_type   = None,
+            sideband_type   = sb_enum.MOCK,
         )
         self.xRCDSystem = ClockDomainsRenamer("sys4x_ddr")(xRCDSystem)
 

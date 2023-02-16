@@ -102,6 +102,8 @@ class DDR5RCD01Channel(Module):
         if_ctrl_lbuf_row_A_rankB = If_ctrl_lbuf()
         if_ctrl_lbuf_row_B_rankB = If_ctrl_lbuf()
 
+        if_register = If_registers()
+
         tmp_rw_is_output_inversion_enabled=Signal()
         self.comb += tmp_rw_is_output_inversion_enabled.eq(1)
 
@@ -109,7 +111,8 @@ class DDR5RCD01Channel(Module):
         self.comb += tmp_rw_is_parity_checking_enabled.eq(0)
         tmp_parity_error=Signal()
         tmp_reserved_if_mrw_actor=Signal()
-        if_register = If_registers()
+
+
         xcmd_logic = DDR5RCD01CommandLogic(
             if_ibuf_i=if_ibuf_o,
             if_csca_o=if_csca_o,

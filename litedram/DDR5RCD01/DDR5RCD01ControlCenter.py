@@ -105,11 +105,10 @@ class DDR5RCD01ControlCenter(Module):
         cw_page_num = 6
 
         xregisters = DDR5RCD01Registers(
-
-            d=if_register.reg_d,
-            addr=if_register.reg_addr,
-            we=if_register.reg_we,
-            q=if_register.reg_q,
+            d=if_register.d,
+            addr=if_register.addr,
+            we=if_register.we,
+            q=if_register.q,
             cw_page_num=cw_page_num
         )
         self.submodules.xregisters = xregisters
@@ -460,15 +459,9 @@ class DDR5RCD01ControlCenter(Module):
         self.comb += If(rw_boot_image_reader_start &
                         (rw_counter < CW_DA_REGS_NUM) &
                         (~rw_boot_image_reader_finish),
-<<<<<<< HEAD
-                        self.reg_we.eq(1),
-                        self.reg_d.eq(boot_word),
-                        self.reg_addr.eq(rw_counter),
-=======
-                        if_regs.we.eq(1),
-                        if_regs.d.eq(boot_word),
-                        if_regs.addr.eq(rw_counter),
->>>>>>> ff48f01 (Connect I2CMockMaster to the RCD internals)
+                        if_register.we.eq(1),
+                        if_register.d.eq(boot_word),
+                        if_register.addr.eq(rw_counter),
                         )
 
 
