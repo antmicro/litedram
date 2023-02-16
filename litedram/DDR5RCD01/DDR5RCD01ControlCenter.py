@@ -93,6 +93,7 @@ class DDR5RCD01ControlCenter(Module):
                  if_common,
                  if_ctrl_common,
                  if_config_common,
+                 if_regs,
                  is_channel_A=True,
                  ):
 
@@ -459,9 +460,15 @@ class DDR5RCD01ControlCenter(Module):
         self.comb += If(rw_boot_image_reader_start &
                         (rw_counter < CW_DA_REGS_NUM) &
                         (~rw_boot_image_reader_finish),
+<<<<<<< HEAD
                         self.reg_we.eq(1),
                         self.reg_d.eq(boot_word),
                         self.reg_addr.eq(rw_counter),
+=======
+                        if_regs.we.eq(1),
+                        if_regs.d.eq(boot_word),
+                        if_regs.addr.eq(rw_counter),
+>>>>>>> ff48f01 (Connect I2CMockMaster to the RCD internals)
                         )
 
 

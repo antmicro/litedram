@@ -18,7 +18,7 @@ from litedram.DDR5RCD01.DDR5RCD01SidebandSimulationPads import DDR5RCD01Sideband
 from litedram.DDR5RCD01.DDR5RCD01CoreWrapper import DDR5RCD01CoreWrapper
 from litedram.DDR5RCD01.I2CSlave import I2CSlave
 from litedram.DDR5RCD01.I3CSlave import I3CSlave
-from litedram.DDR5RCD01.SidebandMock import SidebandMock
+from litedram.DDR5RCD01.I2CMockSlave import I2CMockSlaveWrapper
 
 
 class DDR5RCD01Chip(Module):
@@ -60,7 +60,7 @@ class DDR5RCD01Chip(Module):
         elif sideband_type == sideband_type.I3C:
             iXC_slave = I3CSlave(pads_sideband)
         elif sideband_type == sideband_type.MOCK:
-            iXC_slave = SidebandMock()
+            iXC_slave = I2CMockSlaveWrapper(pads_sideband)
         else:
             raise NotImplementedError("Only i2c and i3c are supported options")
 
@@ -72,7 +72,7 @@ class DDR5RCD01Chip(Module):
                 pads_ingress_A=pads_ingress_A,
                 pads_ingress_B=pads_ingress_B,
                 pads_ingress_common=pads_ingress_common,
-                pads_sideband=pads_sideband,
+                pads_registers=iXC_slave.pads_registers,
             )
         elif dimm_type == dimm_type.LRDIMM:
             raise NotImplementedError("LRDIMM is not supported")

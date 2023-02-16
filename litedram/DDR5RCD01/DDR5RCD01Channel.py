@@ -44,6 +44,7 @@ class DDR5RCD01Channel(Module):
                  if_common,
                  if_ctrl_common,
                  if_config_common,
+                 if_regs,
                  is_master=True,
                  ):
         """
@@ -248,6 +249,7 @@ class DDR5RCD01Channel(Module):
             if_common=if_common,
             if_ctrl_common=if_ctrl_common,
             if_config_common=if_config_common,
+            if_regs=if_regs,
             is_channel_A=is_master,
         )
 
