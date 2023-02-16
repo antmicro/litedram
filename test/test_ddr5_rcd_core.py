@@ -56,7 +56,8 @@ class TestBed(Module):
         self.if_lb = If_lb()
         self.if_bcom_A = If_bcom()
         self.if_bcom_B = If_bcom()
-        self.if_sideband = If_sideband()
+        self.if_regs_A = If_registers()
+        self.if_regs_B = If_registers()
         self.is_dual_channel = is_dual_channel
 
         self.submodules.xenvironment = ClockDomainsRenamer("sys")(
@@ -94,7 +95,8 @@ class TestBed(Module):
                 if_lb=self.if_lb,
                 if_bcom_A=self.if_bcom_A,
                 if_bcom_B=self.if_bcom_B,
-                if_sideband=self.if_sideband,
+                if_regs_A=self.if_regs_A,
+                if_regs_B=self.if_regs_B,
                 is_dual_channel=self.is_dual_channel,
             )
         )

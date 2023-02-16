@@ -89,7 +89,7 @@ class DDR5RCD01CommandLogic(Module):
             if_csca_o=if_csca_o_actor,
             if_csca_o_rank_A=if_csca_o_actor_rank_A,
             if_csca_o_rank_B=if_csca_o_actor_rank_B,
-            valid=qvalid,
+            valid=valid_int,
             is_this_ui_odd=is_this_ui_odd_int,
             is_cmd_beginning=is_cmd_beginning_int,
             is_cw_bit_set=is_cw_bit_set,
