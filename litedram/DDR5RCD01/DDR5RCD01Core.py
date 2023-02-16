@@ -46,7 +46,8 @@ class DDR5RCD01Core(Module):
                  if_lb,
                  if_bcom_A,
                  if_bcom_B,
-                 if_sideband,
+                 if_regs_A,
+                 if_regs_B,
                  is_dual_channel=True):
 
         if_pll = If_ck(n_clks=4)
@@ -73,6 +74,7 @@ class DDR5RCD01Core(Module):
             if_common=if_common_A,
             if_ctrl_common=if_ctrl_common,
             if_config_common=if_config_common,
+            if_regs=if_regs_A,
             is_master=is_channel_A_master,
         )
         self.submodules += xchannel_A
@@ -93,6 +95,7 @@ class DDR5RCD01Core(Module):
                 if_common=if_common_B,
                 if_ctrl_common=None,
                 if_config_common=None,
+                if_regs=if_regs_B,
                 is_master=is_channel_B_master,
             )
             self.submodules += xchannel_B

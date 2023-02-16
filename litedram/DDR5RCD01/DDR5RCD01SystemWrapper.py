@@ -34,10 +34,6 @@ class DDR5RCD01SystemWrapper(Module):
         ----------
     """
     def __init__(self, phy_pads, pads_sideband, rcd_passthrough, sideband_type):
-        _pads_sideband = None
-        if pads_sideband is not None and sideband_type is not None:
-            _pads_sideband = DDR5RCD01SidebandSimulationPads()
-
         common_pads = DDR5RCD01CommonIngressSimulationPads()
         self.submodules += DDR5GlueRCDCommon(phy_pads, common_pads)
 
@@ -71,7 +67,7 @@ class DDR5RCD01SystemWrapper(Module):
             pads_ingress_A      = pads['pads_A'],
             pads_ingress_B      = pads['pads_B'],
             pads_ingress_common = common_pads,
-            pads_sideband   = _pads_sideband,
+            pads_sideband   = pads_sideband,
             sideband_type   = sideband_type,
             rcd_passthrough = rcd_passthrough,
         )

@@ -47,7 +47,7 @@ class DDR5RCD01CoreWrapper(Module):
                  pads_ingress_A,
                  pads_ingress_B,
                  pads_ingress_common,
-                 pads_sideband,
+                 pads_registers,
                  **kwargs):
 
         self.pads_egress_A = DDR5RCD01CoreEgressSimulationPads()
@@ -65,7 +65,8 @@ class DDR5RCD01CoreWrapper(Module):
         if_lb = If_lb()
         if_bcom_A = If_bcom()
         if_bcom_B = If_bcom()
-        if_sideband = If_sideband()
+        if_regs_A = If_registers()
+        if_regs_B = If_registers()
         if pads_ingress_B is not None:
             is_dual_channel = True
         else:
@@ -83,7 +84,8 @@ class DDR5RCD01CoreWrapper(Module):
             if_lb=if_lb,
             if_bcom_A=if_bcom_A,
             if_bcom_B=if_bcom_B,
-            if_sideband=if_sideband,
+            if_regs_A=if_regs_A,
+            if_regs_B=if_regs_B,
             is_dual_channel=is_dual_channel,
         )
 
@@ -119,6 +121,11 @@ class DDR5RCD01CoreWrapper(Module):
         self.comb += self.pads_egress_A.qdck_t.eq(if_obuf_A.qdck_t)
         self.comb += self.pads_egress_A.qdck_c.eq(if_obuf_A.qdck_c)
 
+        self.comb += if_regs_A.we.eq(pads_registers.we_A)
+        self.comb += if_regs_A.d.eq(pads_registers.we_A)
+        self.comb += if_regs_A.addr.eq(pads_registers.we_A)
+        self.comb += pads_registers.q_A.eq(if_regs_A.q)
+
         if pads_ingress_B is not None:
             self.comb += if_ibuf_B.dcs_n.eq(pads_ingress_B.dcs_n)
             self.comb += if_ibuf_B.dca.eq(pads_ingress_B.dca)
@@ -140,6 +147,10 @@ class DDR5RCD01CoreWrapper(Module):
             self.comb += self.pads_egress_B.qdck_t.eq(if_obuf_B.qdck_t)
             self.comb += self.pads_egress_B.qdck_c.eq(if_obuf_B.qdck_c)
 
+            self.comb += if_regs_B.we.eq(pads_registers.we_B)
+            self.comb += if_regs_B.d.eq(pads_registers.we_B)
+            self.comb += if_regs_B.addr.eq(pads_registers.we_B)
+            self.comb += pads_registers.q_B.eq(if_regs_B.q)
 
 
 

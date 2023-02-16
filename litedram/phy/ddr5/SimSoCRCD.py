@@ -28,8 +28,10 @@ from litedram.phy.model import DFITimingsChecker, _speedgrade_timings, _technolo
 from litedram.phy.ddr5.simphy import DDR5SimPHY
 from litedram.phy.ddr5.sdram_simulation_model import DDR5SDRAMSimulationModel
 
+from litedram.DDR5RCD01.RCD_definitions import sideband_type as sb_enum
 from litedram.DDR5RCD01.RCD_interfaces_external import *
-from litedram.DDR5RCD01.I2CMockMaster import I2CMockMaster
+from litedram.DDR5RCD01.I2CMockMaster import I2CMockMasterWrapper
+from litedram.DDR5RCD01.DDR5RCD01SidebandMockSimulationPads import DDR5RCD01SidebandMockSimulationPads
 from litedram.DDR5RCD01.DDR5RCD01SystemWrapper import DDR5RCD01SystemWrapper
 
 from litedram.phy.sim_utils import Clocks, CRG, Platform
@@ -275,14 +277,14 @@ class SimSoCRCD(SoCCore):
 
         self.submodules.i2c = I2CMasterSim(platform.request("i2c"))
 
-        if_mock = If_sideband_mock()
-        self.submodules.rcd_xmockmaster = rcd_xmockmaster = I2CMockMaster(if_mock)
+        pads_sideband = DDR5RCD01SidebandMockSimulationPads()
+        self.submodules.i2cmockmaster = I2CMockMasterWrapper(pads_sideband)
 
         xRCDSystem = DDR5RCD01SystemWrapper(
             phy_pads        = self.ddrphy.pads,
-            pads_sideband   = None,
+            pads_sideband   = pads_sideband,
             rcd_passthrough = pass_through,
-            sideband_type   = None,
+            sideband_type   = sb_enum.MOCK,
         )
         xRCDSystem = ClockDomainsRenamer("sys4x_ddr")(xRCDSystem)
         self.submodules.xRCDSystem = xRCDSystem

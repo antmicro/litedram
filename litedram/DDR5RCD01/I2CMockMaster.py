@@ -14,6 +14,22 @@ from litedram.DDR5RCD01.RCD_definitions import *
 from litedram.DDR5RCD01.RCD_interfaces import *
 from litedram.DDR5RCD01.RCD_interfaces_external import *
 from litedram.DDR5RCD01.RCD_utils import *
+from litedram.DDR5RCD01.DDR5RCD01SidebandMockSimulationPads import DDR5RCD01SidebandMockSimulationPads
+
+
+class I2CMockMasterWrapper(Module, AutoCSR):
+    def __init__(self, pads_sideband: DDR5RCD01SidebandMockSimulationPads):
+        if_mock = If_sideband_mock()
+
+        self.submodules.internal = I2CMockMaster(if_mock)
+
+        self.comb += [
+            if_mock.we.eq(pads_sideband.we),
+            if_mock.channel.eq(pads_sideband.channel),
+            if_mock.page_num.eq(pads_sideband.page_num),
+            if_mock.reg_num.eq(pads_sideband.reg_num),
+            if_mock.data.eq(pads_sideband.data),
+        ]
 
 class I2CMockMaster(Module, AutoCSR):
     """
