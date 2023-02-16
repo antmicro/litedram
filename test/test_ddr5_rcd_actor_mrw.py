@@ -76,22 +76,28 @@ class TestBed(Module):
             Actor MRW
         """
         self.if_csca_o_actor = If_ibuf()
-        reg_d = Signal(CW_REG_BIT_SIZE)
-        reg_addr = Signal(CW_REG_BIT_SIZE)
-        reg_we = Signal()
-        reg_q = Signal(CW_REG_BIT_SIZE)
+        self.if_csca_o_actor_rank_A = If_ibuf()
+        self.if_csca_o_actor_rank_B = If_ibuf()
+        self.reg_d = Signal(CW_REG_BIT_SIZE)
+        self.reg_addr = Signal(CW_REG_BIT_SIZE)
+        self.reg_we = Signal()
+        self.reg_q = Signal(CW_REG_BIT_SIZE)
 
         self.submodules.xactor = DDR5RCD01ActorMRW(
             if_csca_i=self.if_csca_o,
+            if_csca_i_rank_A=self.if_csca_o_rank_A,
+            if_csca_i_rank_B=self.if_csca_o_rank_B,
             if_csca_o=self.if_csca_o_actor,
+            if_csca_o_rank_A=self.if_csca_o_actor_rank_A,
+            if_csca_o_rank_B=self.if_csca_o_actor_rank_B,
             valid=qvalid,
             is_this_ui_odd=is_this_ui_odd,
             is_cmd_beginning=is_cmd_beginning,
             is_cw_bit_set=is_cw_bit_set,
-            reg_d=reg_d,
-            reg_addr=reg_addr,
-            reg_we=reg_we,
-            reg_q=reg_q,
+            reg_d=self.reg_q,
+            reg_addr=self.reg_addr,
+            reg_we=self.reg_we,
+            reg_q=self.reg_d,
         )
 
         """
@@ -117,6 +123,11 @@ class TestBed(Module):
             self.generators_dict()
         )
 
+    def set_registers(self):
+        yield self.reg_q.eq(0x44)
+        while not self.xenvironment.agent.sequencer.is_sim_finished[0]:
+            yield
+
     def read_counters(self):
         while not self.xenvironment.agent.sequencer.is_sim_finished[0]:
             self.val_count_commands = yield self.count_commands
@@ -130,6 +141,7 @@ class TestBed(Module):
                 self.xenvironment.run_env(
                     scenario_select=EnvironmentScenarios.TEST_CW_WR_RD),
                 self.read_counters(),
+                self.set_registers(),
             ]
         }
 

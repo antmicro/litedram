@@ -85,6 +85,7 @@ class DDR5RCD01ControlCenter(Module):
                  if_ctrl_obuf_csca_row_B_rankB,
                  if_ctrl_obuf_clks_row_A_rankB,
                  if_ctrl_obuf_clks_row_B_rankB,
+                 if_register,
                  drst_rw04,
                  drst_pon,
                  if_ctrl_global,
@@ -102,16 +103,12 @@ class DDR5RCD01ControlCenter(Module):
         # cw_page_num = CW_PAGE_NUM
         cw_page_num = 6
 
-        self.reg_d = Signal(CW_REG_BIT_SIZE)
-        self.reg_addr = Signal(CW_REG_BIT_SIZE)
-        self.reg_we = Signal()
-        self.reg_q = Signal(CW_REG_BIT_SIZE)
-
         xregisters = DDR5RCD01Registers(
-            d=self.reg_d,
-            addr=self.reg_addr,
-            we=self.reg_we,
-            q=self.reg_q,
+
+            d=if_register.reg_d,
+            addr=if_register.reg_addr,
+            we=if_register.reg_we,
+            q=if_register.reg_q,
             cw_page_num=cw_page_num
         )
         self.submodules.xregisters = xregisters

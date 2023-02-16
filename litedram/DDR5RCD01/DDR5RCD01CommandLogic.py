@@ -17,6 +17,7 @@ from litedram.DDR5RCD01.RCD_utils import *
 # Submodules
 from litedram.DDR5RCD01.DDR5RCD01Decoder import DDR5RCD01Decoder
 from litedram.DDR5RCD01.DDR5RCD01Error import DDR5RCD01Error
+from litedram.DDR5RCD01.DDR5RCD01ActorMRW import DDR5RCD01ActorMRW
 
 
 class DDR5RCD01CommandLogic(Module):
@@ -44,6 +45,7 @@ class DDR5RCD01CommandLogic(Module):
                  if_ctrl_lbuf_rank_A_row_B,
                  if_ctrl_lbuf_rank_B_row_A,
                  if_ctrl_lbuf_rank_B_row_B,
+                 if_register,
                  rw_is_output_inversion_enabled,
                  rw_is_parity_checking_enabled,
                  parity_error,
@@ -76,6 +78,27 @@ class DDR5RCD01CommandLogic(Module):
             is_cw_bit_set=is_cw_bit_set,
         )
 
+        if_csca_o_actor = If_ibuf()
+        if_csca_o_actor_rank_A = If_ibuf()
+        if_csca_o_actor_rank_B = If_ibuf()
+
+        self.submodules.xactor = DDR5RCD01ActorMRW(
+            if_csca_i=if_csca_o_int,
+            if_csca_i_rank_A=if_csca_o_rank_A_int,
+            if_csca_i_rank_B=if_csca_o_rank_B_int,
+            if_csca_o=if_csca_o_actor,
+            if_csca_o_rank_A=if_csca_o_actor_rank_A,
+            if_csca_o_rank_B=if_csca_o_actor_rank_B,
+            valid=qvalid,
+            is_this_ui_odd=is_this_ui_odd_int,
+            is_cmd_beginning=is_cmd_beginning_int,
+            is_cw_bit_set=is_cw_bit_set,
+            reg_d=if_register.q,
+            reg_addr=if_register.addr,
+            reg_we=if_register.we,
+            reg_q=if_register.d,
+        )
+
         """
             Parity Error checking
         """
@@ -86,9 +109,9 @@ class DDR5RCD01CommandLogic(Module):
         qis_cmd_beginning = Signal()
 
         self.submodules.error = DDR5RCD01Error(
-            if_csca=if_csca_o_int,
-            if_csca_rank_A=if_csca_o_rank_A_int,
-            if_csca_rank_B=if_csca_o_rank_B_int,
+            if_csca=if_csca_o_actor,
+            if_csca_rank_A=if_csca_o_actor_rank_A,
+            if_csca_rank_B=if_csca_o_actor_rank_B,
             if_csca_o=if_csca_o,
             if_csca_o_rank_A=if_csca_o_rank_A,
             if_csca_o_rank_B=if_csca_o_rank_B,

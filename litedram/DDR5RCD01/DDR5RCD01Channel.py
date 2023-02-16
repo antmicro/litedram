@@ -108,7 +108,7 @@ class DDR5RCD01Channel(Module):
         self.comb += tmp_rw_is_parity_checking_enabled.eq(0)
         tmp_parity_error=Signal()
         tmp_reserved_if_mrw_actor=Signal()
-
+        if_register = If_registers()
         xcmd_logic = DDR5RCD01CommandLogic(
             if_ibuf_i=if_ibuf_o,
             if_csca_o=if_csca_o,
@@ -118,6 +118,7 @@ class DDR5RCD01Channel(Module):
             if_ctrl_lbuf_rank_A_row_B=if_ctrl_lbuf_row_B_rankA,
             if_ctrl_lbuf_rank_B_row_A=if_ctrl_lbuf_row_A_rankB,
             if_ctrl_lbuf_rank_B_row_B=if_ctrl_lbuf_row_B_rankB,
+            if_register = if_register,
             rw_is_output_inversion_enabled=tmp_rw_is_output_inversion_enabled,
             rw_is_parity_checking_enabled=tmp_rw_is_parity_checking_enabled,
             parity_error=tmp_parity_error,
@@ -125,10 +126,6 @@ class DDR5RCD01Channel(Module):
         )
         self.submodules += xcmd_logic
 
-        xactor_mrw = DDR5RCD01ActorMRW(
-            if_csca_i=if_csca_o,
-        )
-        self.submodules.xactor_mrw = xactor_mrw
 
         """
              Rank Buffer A
@@ -243,6 +240,7 @@ class DDR5RCD01Channel(Module):
             if_ctrl_obuf_csca_row_B_rankB=if_ctrl_obuf_csca_row_B_rankB,
             if_ctrl_obuf_clks_row_A_rankB=if_ctrl_obuf_clks_row_A_rankB,
             if_ctrl_obuf_clks_row_B_rankB=if_ctrl_obuf_clks_row_B_rankB,
+            if_register = if_register,
             drst_rw04=drst_rw04,
             drst_pon=drst_pon,
             if_ctrl_global=if_ctrl_global,

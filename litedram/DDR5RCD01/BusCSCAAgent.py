@@ -58,7 +58,6 @@ class BusCSCAAgent(Module):
             s = s + "\r\n"
         return s
 
-
     def run_agent(self, seq_collection):
         self.build_sequence(seq_collection)
         yield from self.sequencer.run_sequence(self.sequence)
@@ -142,7 +141,7 @@ class BusCSCAAgent(Module):
                             cs.append(0b10)
                     else:
                         cs.append(0b11)
-        
+
         self.seq_item_cs = cs
 
     def setup_seq_ca(self, datarate="DDR", ui=2, dest_rank="AB", opcode=0x00, payload=None, randomize_payload=False):
@@ -170,57 +169,27 @@ class BusCSCAAgent(Module):
             """
             Non standard
             """
-            if opcode == "NOP":
-                mra_01 = payload.mra & 0b000_0011
-                ui_0 = (opcode | (mra_01 << 5))
-                ui_1 = (payload.mra >> 2)
-                ca = [ui_0, ui_1]
-            else:
-                mra_01 = payload.mra & 0b000_0011
-                ui_0 = (opcode | (mra_01 << 5))
-                ui_1 = (payload.mra >> 2)
-                ca = [ui_0, ui_1]
+            mra_01 = payload.mra & 0b000_0011
+            ui_0 = (opcode | (mra_01 << 5))
+            ui_1 = (payload.mra >> 2)
+            ca = [ui_0, ui_1]
 
         if ui == 2:
-            if opcode == 0b00101:
-                """
-                MRW
-                     | CA0||  CA1||  CA2||  CA3||  CA4||  CA5||  CA6|
-                UI_0 |   H||    L||    H||    L||    L|| MRA0|| MRA1|
-                UI_1 |MRA2|| MRA3|| MRA4|| MRA5|| MRA6|| MRA7||    V|
-                UI_2 | OP0||  OP1||  OP2||  OP3||  OP4||  OP5||  OP6|
-                UI_3 | OP7||    V||    V||   CW||    V||    V||    V|
-                     | CA0||  CA1||  CA2||  CA3||  CA4||  CA5||  CA6|
-                """
-                mra_01 = payload.mra & 0b000_0011
-                ui_0 = (opcode | (mra_01 << 5))
-                ui_1 = (payload.mra >> 1)
-                ui_2 = payload.op & 0b011_1111
-                ui_3 = (payload.op & 0b100_0000 >> 6) | (payload.cw << 3)
-                ca = [ui_0, ui_1, ui_2, ui_3]
-            elif opcode == 0b10101:
-                """
-                MRR
-                     | CA0||  CA1||  CA2||  CA3||  CA4||  CA5||  CA6|
-                UI_0 |   H||    L||    H||    L||    H|| MRA0|| MRA1|
-                UI_1 |MRA2|| MRA3|| MRA4|| MRA5|| MRA6|| MRA7||    V|
-                UI_2 |   L||    L||    V||    V||    V||    V||    V|
-                UI_3 |   V||    V||    V||   CW||    V||    V||    V|
-                     | CA0||  CA1||  CA2||  CA3||  CA4||  CA5||  CA6|
-                """
-                # TODO correct
-                ca = [0x00, 0xFF, 0xFF, 0x00]
-            else:
-                """
-                As in MRW
-                """
-                mra_01 = payload.mra & 0b000_0011
-                ui_0 = (opcode | (mra_01 << 5))
-                ui_1 = (payload.mra >> 1)
-                ui_2 = payload.op & 0b011_1111
-                ui_3 = (payload.op & 0b100_0000 >> 6) | (payload.cw << 3)
-                ca = [ui_0, ui_1, ui_2, ui_3]
-
+            """
+            MRW
+                 | CA0||  CA1||  CA2||  CA3||  CA4||  CA5||  CA6|
+            UI_0 |   H||    L||    H||    L||    L|| MRA0|| MRA1|
+            UI_1 |MRA2|| MRA3|| MRA4|| MRA5|| MRA6|| MRA7||    V|
+            UI_2 | OP0||  OP1||  OP2||  OP3||  OP4||  OP5||  OP6|
+            UI_3 | OP7||    V||    V||   CW||    V||    V||    V|
+                 | CA0||  CA1||  CA2||  CA3||  CA4||  CA5||  CA6|
+            """
+            mra_01 = payload.mra & 0b000_0011
+            ui_0 = (opcode | (mra_01 << 5))
+            ui_1 = (payload.mra >> 2)
+            ui_2 = payload.op & 0b0111_1111
+            ui_3 = ((payload.op & 0b1000_0000) >> 7) | (payload.cw << 3)
+            ca = [ui_0, ui_1, ui_2, ui_3]
 
         self.seq_item_ca = ca
 
@@ -240,7 +209,7 @@ class TestBed(Module):
 def run_test(tb):
     command_queue = [
         {
-            "cs_signalling" : "normal",
+            "cs_signalling": "normal",
             "opcode": 0b00101,
             "payload": Payload(0x10, 0x20, 0x1),
             "randomize_payload": False,
@@ -251,7 +220,7 @@ def run_test(tb):
             "padding_len": 1
         },
         {
-            "cs_signalling" : "normal",
+            "cs_signalling": "normal",
             "opcode": 0b00101,
             "payload": Payload(0x10, 0x20, 0x0),
             "randomize_payload": False,
@@ -262,7 +231,7 @@ def run_test(tb):
             "padding_len": 1
         },
         {
-            "cs_signalling" : "normal",
+            "cs_signalling": "normal",
             "opcode": 0b11111,
             "payload": Payload(0x10, 0x20, 0x0),
             "randomize_payload": True,
