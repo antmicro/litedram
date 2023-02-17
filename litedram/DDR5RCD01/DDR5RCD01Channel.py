@@ -227,10 +227,11 @@ class DDR5RCD01Channel(Module):
         """
             Control Center
         """
-        drst_rw04 = Signal()
-        drst_pon = Signal()
+        drst_rw04 = Signal(reset=~0)
+        drst_pon = Signal(reset=~0)
 
         xcontrol_center = DDR5RCD01ControlCenter(
+            if_ibuf=if_ibuf_o,
             if_ctrl_ibuf=if_ctrl_ibuf,
             if_ctrl_lbuf_row_A_rankA=if_ctrl_lbuf_row_A_rankA,
             if_ctrl_lbuf_row_B_rankA=if_ctrl_lbuf_row_B_rankA,

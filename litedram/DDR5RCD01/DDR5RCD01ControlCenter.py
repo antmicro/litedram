@@ -72,6 +72,7 @@ class DDR5RCD01ControlCenter(Module):
     """
 
     def __init__(self,
+                 if_ibuf,
                  if_ctrl_ibuf,
                  if_ctrl_lbuf_row_A_rankA,
                  if_ctrl_lbuf_row_B_rankA,
@@ -96,7 +97,6 @@ class DDR5RCD01ControlCenter(Module):
                  if_regs,
                  is_channel_A=True,
                  ):
-
         """
             Registers hardware description
         """
@@ -122,10 +122,14 @@ class DDR5RCD01ControlCenter(Module):
 
         """
         # Boot Image
-        boot_image_rw00_rw5f = Array(Signal(CW_REG_BIT_SIZE)
-                                     for y in range(CW_DA_REGS_NUM))
-        DEBUG_NUMBER = 0x39
-        boot_image_rw00_rw5f = [DEBUG_NUMBER]*CW_DA_REGS_NUM
+
+        DEBUG_BOOT_ENABLE = False
+        if DEBUG_BOOT_ENABLE:
+            DEBUG_NUMBER = 0x39
+            boot_image_rw00_rw5f = [DEBUG_NUMBER]*CW_DA_REGS_NUM
+        else:
+            CW_DEFAULT_RESET_STATE = 0x00
+            boot_image_rw00_rw5f = [CW_DEFAULT_RESET_STATE]*CW_DA_REGS_NUM
 
         """ Custom Internal CSR
           Implementation dependent, not constrained by the JEDEC spec.
@@ -133,8 +137,12 @@ class DDR5RCD01ControlCenter(Module):
         """
         rw_custom_csr = Signal(8)  # Expand width as needed
         RW_CUSTOM_INBUF_EN = rw_custom_csr[0]
-        # ------------------------0b76543210
-        rw_custom_csr_boot_word = 0b00000001
+
+        if DEBUG_BOOT_ENABLE:
+            # ------------------------0b76543210
+            rw_custom_csr_boot_word = 0b00000001
+        else:
+            rw_custom_csr_boot_word = 0b00000000
 
         self.comb += if_ctrl_ibuf.en.eq(RW_CUSTOM_INBUF_EN)
 
@@ -169,7 +177,7 @@ class DDR5RCD01ControlCenter(Module):
         ALERT_ASSERTION_MODE = regs[RW_SECONDARY_FEATURES][6]
         ALERT_REENABLE = regs[RW_SECONDARY_FEATURES][7]
         # --------------------------------------------0b76543210
-        boot_image_rw00_rw5f[RW_SECONDARY_FEATURES] = 0b10000010
+        boot_image_rw00_rw5f[RW_SECONDARY_FEATURES] = 0b10000000
 
 
         """ Table 103
@@ -213,13 +221,38 @@ class DDR5RCD01ControlCenter(Module):
             4.important
                 keep qcs high (can be done by disabling cs outputs)
         """
-        self.sync += If(
-            0, # rw04 command 5
-            drst_rw04.eq(1)
-        ).Else(
-            drst_rw04.eq(0)
-        )
-        command = Signal(CW_REG_BIT_SIZE)
+        # self.sync += If(
+        #     0,  # rw04 command 5
+        #     drst_rw04.eq(1)
+        # ).Else(
+        #     drst_rw04.eq(0)
+        # )
+        # command = Signal(CW_REG_BIT_SIZE)
+
+        """ Table 104
+            RW05
+            DIMM Operating Speed Global Control Word
+        """
+        RW_DIMM_SPEED_CONTROL = 0x05
+        DIMM_OPERATING_SPEED = regs[RW_DIMM_SPEED_CONTROL][0:4]
+        # RESERVED = regs[RW_DIMM_SPEED_CONTROL][4]
+        REGISTER_VDD_VOLTAGE = regs[RW_DIMM_SPEED_CONTROL][5]
+        FREQUENCY_CONTEXT = regs[RW_DIMM_SPEED_CONTROL][6]
+        FREQUENCY_BAND = regs[RW_DIMM_SPEED_CONTROL][7]
+        # --------------------------------------------0b76543210
+        boot_image_rw00_rw5f[RW_DIMM_SPEED_CONTROL] = 0b10101111
+
+        """ Table 105
+            RW06
+            Fine Granularity DIMM Operating Speed Global Control Word
+        """
+        RW_FINE_DIMM_SPEED_CONTROL = 0x06
+        FINE_DIMM_OPERATING_SPEED = regs[RW_FINE_DIMM_SPEED_CONTROL][0:5]
+        # RESERVED = regs[RW_FINE_DIMM_SPEED_CONTROL][5]
+        # RESERVED = regs[RW_FINE_DIMM_SPEED_CONTROL][6]
+        # RESERVED = regs[RW_FINE_DIMM_SPEED_CONTROL][7]
+        # -------------------------------------------------0b76543210
+        boot_image_rw00_rw5f[RW_FINE_DIMM_SPEED_CONTROL] = 0b00000000
 
         """ Table 107
             RW08
@@ -369,134 +402,197 @@ class DDR5RCD01ControlCenter(Module):
         boot_image_rw00_rw5f[RW_ERROR_STATUS] = 0b00000000
 
         """
-            CS Logic
+            Main RCD FSM
+            ------------
+            POWERDOWN
+
+            INITIALIZATION
+                PON_DRST_EVENT
+                    all inputs are disabled
+                    qrst is asserted
+                    qcs is asserted
+                STABLE_POWER_RESET
+                    host will keep dcs and drst low
+                    host will start dck
+                POST_PON_DRST_EVENT
+                    host will deassert drst, wait some time
+                    host will deassert dcs
+                SIDEBAND_FREQUENCY_INIT
+                    RW to set frequency registers and set input mode
+                    (good time to also change termination if needed)
+                HOST_IF_TRAINING
+                    DCSTM HOST DCS TRAINING
+                    DCATM HOST DCA TRAINING
+                DRAM_IF_BLOCKED (waiting for command to unblock dram interface)
+                QCS_BLOCKED (waiting for NOP command to RW04)
+
+            NORMAL
+
+            DRST_EVENT
+
         """
 
-        """ TODO Modal FSM
-
-        RESET_HARD - reset after power-up
-
-        RESET_SOFT - reset after drst_n assertion
-
-        INIT_HARD  - initialize after RESET_HARD
-        In the init state a boot image is loaded into the CSRs. It is done
-        via a sequence of writes to the Register Files. The init state
-        should then last approximately (number of directly addressed
-        registers =96 ) cycles. After this initial configuration the RCD model
-        should go into normal operation and be ready to receive commands
-        from the host device.
-
-        INIT_SOFT  - initialize after RESET_SOF
-
-        NORMAL     - normal for RCD means listening for commands
-
-        possible other states
-        PRE_TRAINING, TRAINING, POST_TRAINING (?)
         """
-        xfsm = FSM(reset_state="RESET_HARD")
-        self.submodules += xfsm
+            RESET_HARD state
+            ----------------
+            This state is achieved after a supply voltage ramp. At this time
+            DRST_n must be kept low by the controller.
+        """
+        if not DEBUG_BOOT_ENABLE:
+            xfsm = FSM(reset_state="PON_DRST_EVENT")
+            self.submodules += xfsm
 
-        xfsm.act(
-            "RESET_HARD",
-            drst_pon.eq(1),
-            NextState("INIT_HARD"),
-        )
+            """
+                All inputs are disabled
+                qrst is asserted
+                qcs is asserted
+            """
+            xfsm.act(
+                "PON_DRST_EVENT",
+                NextValue(drst_pon,1),
+                NextValue(if_ctrl_obuf_csca_row_A_rankA.tie_low_cs,1),
+                NextValue(if_ctrl_obuf_csca_row_B_rankA.tie_low_cs,1),
+                NextValue(if_ctrl_obuf_csca_row_A_rankB.tie_low_cs,1),
+                NextValue(if_ctrl_obuf_csca_row_B_rankB.tie_low_cs,1),
+                NextValue(if_ctrl_obuf_csca_row_A_rankA.tie_low_ca,1),
+                NextValue(if_ctrl_obuf_csca_row_B_rankA.tie_low_ca,1),
+                NextValue(if_ctrl_obuf_csca_row_A_rankB.tie_low_ca,1),
+                NextValue(if_ctrl_obuf_csca_row_B_rankB.tie_low_ca,1),
 
-        rw_boot_image_reader_start = Signal()
-        rw_boot_image_reader_finish = Signal()
+                NextValue(if_ctrl_obuf_clks_row_A_rankA.tie_low_ck_t,1),
+                NextValue(if_ctrl_obuf_clks_row_A_rankA.tie_low_ck_c,1),
+                NextValue(if_ctrl_obuf_clks_row_B_rankA.tie_low_ck_t,1),
+                NextValue(if_ctrl_obuf_clks_row_B_rankA.tie_low_ck_c,1),
+                NextValue(if_ctrl_obuf_clks_row_A_rankB.tie_low_ck_t,1),
+                NextValue(if_ctrl_obuf_clks_row_A_rankB.tie_low_ck_c,1),
+                NextValue(if_ctrl_obuf_clks_row_B_rankB.tie_low_ck_t,1),
+                NextValue(if_ctrl_obuf_clks_row_B_rankB.tie_low_ck_c,1),
 
-        xfsm.act(
-            "INIT_HARD",
-            NextValue(rw_custom_csr, rw_custom_csr_boot_word),
-            rw_boot_image_reader_start.eq(1),
-            drst_pon.eq(1),
-            If(
-                rw_boot_image_reader_finish,
+                NextValue(rw_custom_csr,0x01),
+                NextState("STABLE_POWER_RESET"),
+            )
+
+            """
+
+            """
+            xfsm.act(
+                "STABLE_POWER_RESET",
+                If(
+                    if_ibuf.dcs_n == 0b00,
+                    NextState("STABLE_POWER_RESET"),
+                ).Else(
+                    NextState("POST_PON_DRST_EVENT"),
+                )
+            )
+
+            """
+                host will deassert drst, wait some time
+                host will deassert dcs
+            """
+            xfsm.act(
+                "POST_PON_DRST_EVENT",
+                NextState("SIDEBAND_FREQUENCY_INIT")
+            )
+
+            xfsm.act(
+                "SIDEBAND_FREQUENCY_INIT",
+                NextState("DCSTM")
+            )
+
+
+            xfsm.act(
+                "DCSTM",
+                NextState("DCATM")
+            )
+
+            xfsm.act(
+                "DCATM",
+                NextState("DRAM_IF_BLOCKED")
+            )
+
+            xfsm.act(
+                "DRAM_IF_BLOCKED",
+                # This state is probably redundant
+                # MRW to unblock interface do not require a state
+                NextState("QCS_BLOCKED")
+            )
+
+            """
+            if ongoing is qcs blocked and detected command nop
+            """
+            xfsm.act(
+                "QCS_BLOCKED",
+                # Detect NOP to untie outputs
                 NextState("NORMAL")
-            ),
+            )
 
-        )
-        xfsm.act(
-            "NORMAL",
-            If(
-                CA_PASS_THROUGH_MODE_ENABLE,
-                NextState("CA_PASS_THROUGH_MODE")
-            ).Else(
+
+            xfsm.act(
+                "NORMAL",
                 NextState("NORMAL"),
             )
-        )
-        xfsm.act(
-            "CA_PASS_THROUGH_MODE",
-            If(
-                ~CA_PASS_THROUGH_MODE_ENABLE,
-                NextState("NORMAL")
-            )
-        )
 
         """
-            Boot image reader
+            DEBUG States
         """
-        rw_counter = Signal(int(CW_DA_REGS_NUM).bit_length())
-        boot_word = Signal(int(CW_DA_REGS_NUM).bit_length())
-
-        for i in range(CW_DA_REGS_NUM):
-            self.comb += If(
-                rw_counter == i,
-                boot_word.eq(boot_image_rw00_rw5f[i])
+        if DEBUG_BOOT_ENABLE:
+            xfsm = FSM(reset_state="RESET_HARD")
+            self.submodules += xfsm
+            xfsm.act(
+                "RESET_HARD",
+                drst_pon.eq(1),
+                NextState("INIT_HARD"),
             )
 
-        self.sync += If(
-            rw_counter == CW_DA_REGS_NUM,
-            rw_counter.eq(rw_counter),
-            rw_boot_image_reader_finish.eq(1)
-        ).Else(
-            If(
-                rw_boot_image_reader_start,
-                rw_counter.eq(rw_counter+1)
+            rw_boot_image_reader_start = Signal()
+            rw_boot_image_reader_finish = Signal()
+
+            xfsm.act(
+                "INIT_HARD",
+                NextValue(rw_custom_csr, rw_custom_csr_boot_word),
+                rw_boot_image_reader_start.eq(1),
+                drst_pon.eq(1),
+                If(
+                    rw_boot_image_reader_finish,
+                    NextState("NORMAL")
+                ),
             )
-        )
+            xfsm.act(
+                "NORMAL",
+            )
 
-        self.comb += If(rw_boot_image_reader_start &
-                        (rw_counter < CW_DA_REGS_NUM) &
-                        (~rw_boot_image_reader_finish),
-                        if_register.we.eq(1),
-                        if_register.d.eq(boot_word),
-                        if_register.addr.eq(rw_counter),
-                        )
+        """
+            DEBUG Boot image reader
+        """
+        if DEBUG_BOOT_ENABLE:
+            rw_counter = Signal(int(CW_DA_REGS_NUM).bit_length())
+            boot_word = Signal(int(CW_DA_REGS_NUM).bit_length())
 
+            for i in range(CW_DA_REGS_NUM):
+                self.comb += If(
+                    rw_counter == i,
+                    boot_word.eq(boot_image_rw00_rw5f[i])
+                )
 
-class TestBed(Module):
-    def __init__(self):
+            self.sync += If(
+                rw_counter == CW_DA_REGS_NUM,
+                rw_counter.eq(rw_counter),
+                rw_boot_image_reader_finish.eq(1)
+            ).Else(
+                If(
+                    rw_boot_image_reader_start,
+                    rw_counter.eq(rw_counter+1)
+                )
+            )
 
-        self.d = Signal()
-
-        self.submodules.regfile = DDR5RCD01ControlCenter(d=self.d)
-        # print(verilog.convert(self.regfile))
-
-
-def run_test(dut):
-    logging.debug('Write test')
-    yield from behav_write_word(0x0)
-    yield from behav_write_word(0x1)
-    yield from behav_write_word(0x0)
-    yield from behav_write_word(0x1)
-    yield from behav_write_word(0x0)
-
-    logging.debug('Yield from write test.')
-
-
-def behav_write_word(tb):
-    #
-    yield tb.d.eq(1)
-    yield
+            self.comb += If(rw_boot_image_reader_start &
+                            (rw_counter < CW_DA_REGS_NUM) &
+                            (~rw_boot_image_reader_finish),
+                            if_register.we.eq(1),
+                            if_register.d.eq(boot_word),
+                            if_register.addr.eq(rw_counter),
+                            )
 
 
 if __name__ == "__main__":
-    eT = EngTest()
-    raise UnderConstruction
-    logging.info("<- Module called")
-    tb = TestBed()
-    logging.info("<- Module ready")
-    run_simulation(tb, run_test(tb), vcd_name=eT.wave_file_name)
-    logging.info("<- Simulation done")
-    logging.info(str(eT))
+    raise NotSupportedException

@@ -135,6 +135,10 @@ class If_ctrl_obuf_CSCA(Record):
             ('o_inv_en_qcs_n', 1),
             ('oe_qca', 1),
             ('o_inv_en_qca', 1),
+            ('tie_high_cs', 1),
+            ('tie_high_ca', 1),
+            ('tie_low_cs', 1),
+            ('tie_low_ca', 1),
         ]
 
 
@@ -154,6 +158,10 @@ class If_ctrl_obuf_CLKS(Record):
             ('o_inv_en_ck_t', 1),
             ('oe_ck_c', 1),
             ('o_inv_en_ck_c', 1),
+            ('tie_high_ck_t', 1),
+            ('tie_high_ck_c', 1),
+            ('tie_low_ck_t', 1),
+            ('tie_low_ck_c', 1),
         ]
 
 

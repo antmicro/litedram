@@ -141,7 +141,14 @@ class BusCSCAAgent(Module):
                             cs.append(0b10)
                     else:
                         cs.append(0b11)
-
+        elif cs_signalling == "active":
+            if datarate == "DDR":
+                for id in range(2*ui):
+                    cs.append(0b00)
+            elif datarate == "SDR1":
+                cs = []
+            elif datarate == "SDR2":
+                cs = []
         self.seq_item_cs = cs
 
     def setup_seq_ca(self, datarate="DDR", ui=2, dest_rank="AB", opcode=0x00, payload=None, randomize_payload=False):

@@ -49,6 +49,18 @@ class BusCSCACommand():
         s += "-"*20
         return s
 
+class BusCSCAActive(BusCSCACommand):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.cmd["cs_signalling"] = "active"
+        self.cmd["opcode"] = 0b11111
+        self.cmd["payload"] = Payload(0xFF, 0xFF, 0x0)
+        self.cmd["randomize_payload"] = False
+        self.cmd["destination_rank"] = "AB"
+        self.cmd["datarate"] = "DDR"
+        self.cmd["ui"] = 1
+        self.cmd["is_padded"] = False
+        self.cmd["padding_len"] = 0
 
 class BusCSCAInactive(BusCSCACommand):
     def __init__(self, **kwargs):

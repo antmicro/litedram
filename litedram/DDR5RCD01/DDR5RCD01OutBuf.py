@@ -18,16 +18,24 @@ from litedram.DDR5RCD01.RCD_interfaces import *
 class DDR5RCD01OutBuf(Module):
     """ OutBuf is a simple circuit with output enable and output inversion enable.
     The output inversion is a bitwise NOT. The parameter sig_disable_level can be used
-    to select which state is supposed to be presented on the output while the output 
+    to select which state is supposed to be presented on the output while the output
     enable is deasserted.
     """
 
-    def __init__(self, d, q, oe, o_inv_en, sig_disable_level=0):
-        self.comb += If(oe,
-                        If(o_inv_en,
-                           q.eq(~d)
-                           ).Else(q.eq(d))
-                        ).Else(q.eq(sig_disable_level))
+    def __init__(self, d, q, oe, o_inv_en, tie_high, tie_low, sig_disable_level=0):
+        self.comb += If(
+            tie_high,
+            q.eq(~0),
+        ).Elif(
+            tie_low,
+            q.eq(0),
+        ).Else(
+            If(oe,
+               If(o_inv_en,
+                  q.eq(~d)
+                  ).Else(q.eq(d))
+               ).Else(q.eq(sig_disable_level))
+        )
 
 
 class TestBed(Module):

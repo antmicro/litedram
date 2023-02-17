@@ -35,6 +35,8 @@ class DDR5RCD01OutputBuffer_CSCA(Module):
             q=if_o_csca.qcs_n,
             oe=if_ctrl.oe_qcs_n,
             o_inv_en=if_ctrl.o_inv_en_qcs_n,
+            tie_high = if_ctrl.tie_high_cs,
+            tie_low = if_ctrl.tie_low_cs,
             sig_disable_level=sig_disable_level
         )
         self.submodules += xoutbuf_qcs_n
@@ -44,6 +46,8 @@ class DDR5RCD01OutputBuffer_CSCA(Module):
             q=if_o_csca.qca,
             oe=if_ctrl.oe_qca,
             o_inv_en=if_ctrl.o_inv_en_qca,
+            tie_high = if_ctrl.tie_high_ca,
+            tie_low = if_ctrl.tie_low_ca,
             sig_disable_level=sig_disable_level
         )
         self.submodules += xoutbuf_qca

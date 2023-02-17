@@ -35,6 +35,8 @@ class DDR5RCD01OutputBuffer_CLKS(Module):
             q=if_o_clks.ck_t,
             oe=if_ctrl.oe_ck_t,
             o_inv_en=if_ctrl.o_inv_en_ck_t,
+            tie_high = if_ctrl.tie_high_ck_t,
+            tie_low = if_ctrl.tie_low_ck_t,
             sig_disable_level=sig_disable_level
         )
         self.submodules += xoutbuf_qck_t
@@ -44,6 +46,8 @@ class DDR5RCD01OutputBuffer_CLKS(Module):
             q=if_o_clks.ck_c,
             oe=if_ctrl.oe_ck_c,
             o_inv_en=if_ctrl.o_inv_en_ck_c,
+            tie_high = if_ctrl.tie_high_ck_c,
+            tie_low = if_ctrl.tie_low_ck_c,
             sig_disable_level=sig_disable_level
         )
         self.submodules += xoutbuf_qck_c

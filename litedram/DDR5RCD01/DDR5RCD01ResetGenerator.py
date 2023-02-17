@@ -31,13 +31,32 @@ class DDR5RCD01ResetGenerator(Module):
     """
 
     def __init__(self, drst_n, drst_pon, drst_rw04, qrst_n):
-        assert_reset = Signal()
+        assert_reset = Signal(reset=~0)
 
+        # self.sync += If(
+        #     ~drst_n | drst_pon | drst_rw04,
+        #     assert_reset.eq(1)
+        # ).Else(
+        #     assert_reset.eq(0)
+        # )
+        """
+            Priority encoder
+        """
         self.sync += If(
-            ~drst_n | drst_pon | drst_rw04,
+            drst_pon,
             assert_reset.eq(1)
         ).Else(
-            assert_reset.eq(0)
+            If(
+                drst_rw04,
+                assert_reset.eq(1)
+            ).Else(
+                If(
+                    ~drst_n,
+                    assert_reset.eq(1),
+                ).Else(
+                    assert_reset.eq(0),
+                )
+            )
         )
 
         self.comb += If(

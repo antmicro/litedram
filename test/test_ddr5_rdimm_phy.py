@@ -50,6 +50,9 @@ class DDR5RDIMM_PHY(unittest.TestCase):
     BURST_LENGTH = 8
     NPHASES = 4
 
+    def tearDown(self):
+        pass
+
     def setUp(self):
         self.crg = CRG(sim_clocks, 3)
         self.phy = DDR5SimPHY(
@@ -84,13 +87,22 @@ class DDR5RDIMM_PHY(unittest.TestCase):
             ('B_', 1, 1): "B_back_top",
             ('B_', 1, 0): "B_back_bottom",
         }
-
+        # breakpoint()
         for domain in self.RCD_outpads.values():
+            # breakpoint()
             if not hasattr(self.xRCDSystem, domain):
+                continue
+            """
+                TODO dirty hack to filter domains. Properly implement teardown!
+            """
+            _tmp = "cd_"+domain+"_t"
+            _cmp = "cd_"+domain+"_c"
+            if hasattr(self.crg, _tmp) or hasattr(self.crg, _cmp):
                 continue
             pads = getattr(self.xRCDSystem, domain)
             self.crg.add_domain(domain+"_t", sim_clocks["sys4x"], ~pads.reset_n)
             self.crg.add_domain(domain+"_c", sim_clocks["sys4x_n"], ~pads.reset_n)
+            # breakpoint()
 
         sys_clk_freq = int(1e9)//64
         sdram_module = litedram_modules.DDR5SimX4(sys_clk_freq, "1:4")
@@ -227,9 +239,20 @@ class DDR5RDIMM_PHY(unittest.TestCase):
         yield dut._rdimm_mode.storage.eq(_rdimm_mode)
         yield
 
-    def run_test(self, dfi_sequence, pad_checkers: Mapping[str, Mapping[str, str]], pad_generators=None, **kwargs):
+    def controller_generator(self):
+        yield
+
+    def generators_dict(self):
+        return {
+            "sys":
+            [
+               self.controller_generator(),
+            ]
+        }
+
+    def run_test(self, dfi_sequence, pad_checkers: Mapping[str, Mapping[str, str]], pad_generators=None, stimulus_generators = {}, **kwargs):
         # pad_checkers: {clock: {sig: values}}
-        dut = TestSystem()
+        self.dut = dut = TestSystem()
         dut.submodules.crg = self.crg
         dut.submodules.phy = self.phy
         # dut.submodules.xRCDSystem = self.xRCDSystem
@@ -247,26 +270,14 @@ class DDR5RDIMM_PHY(unittest.TestCase):
             gens = gens if isinstance(gens, list) else [gens]
             for gen in gens:
                 generators[clock].append(gen(self.pads))
-
+        for gens in stimulus_generators.values():
+            generators["sys"].extend(gens)
         test.phy_common.run_simulation(dut, generators, clocks=self.crg.clocks, **kwargs)
         # PadChecker.assert_ok(self, checkers)
         # dfi.assert_ok(self)
 
-    def test_ddr5_cs_n_phase_0_1N(self):
+    def test_ddr5_rcd_simple(self):
         # Test that CS_n is serialized correctly when sending command on phase 0
-        self.run_test(
-            dfi_sequence = [
-                *[{} for _ in range(100)],
-                {0: dict(cs_n=0, cas_n=0, ras_n=1, we_n=1)},  # p0: READ
-                *[{} for _ in range(5)],
-            ],
-            pad_checkers = {"sys4x_180": {
-                'cs_n': self.cs_n_latency + '01111111',
-            }},
-            vcd_name="ddr5_rdimm_phy_cs_n_phase_0_1N.vcd"
-        )
-
-    def test_ddr5_seq(self):
         self.run_test(
             dfi_sequence = [
                 *[{} for _ in range(100)],
@@ -284,10 +295,32 @@ class DDR5RDIMM_PHY(unittest.TestCase):
             pad_checkers = {"sys4x_180": {
                 'cs_n': self.cs_n_latency + '01111111',
             }},
-            vcd_name="ddr5_seq.vcd"
+            vcd_name="ddr5_rdimm_phy_cs_n_phase_0_1N.vcd"
         )
 
-    def test_ddr5_stable_power_init(self):
+    def test_ddr5_rcd_initialization(self):
+        self.run_test(
+            dfi_sequence = [
+                *[{} for _ in range(100)],
+                {0: self.read_0, 1: self.read_1},
+                {0: self.write_0, 1: self.write_1},
+                {0: self.activate_0, 1: self.activate_1},
+                {0: self.refresh_ab},
+                {0: self.precharge_ab},
+                {0: self.mrw_0, 1: self.mrw_1},
+                {0: self.zqc_start},
+                {0: self.zqc_latch},
+                {0: self.mrr_0, 1: self.mrr_1},
+                *[{} for _ in range(5)],
+            ],
+            pad_checkers = {"sys4x_180": {
+                'cs_n': self.cs_n_latency + '01111111',
+            }},
+            stimulus_generators=self.generators_dict(),
+            vcd_name="test_ddr5_rcd_initialization.vcd"
+        )
+
+    def test_ddr5_rcd_stable_power_init(self):
         self.run_test(
             dfi_sequence = [
                 *[{} for _ in range(5)],
@@ -308,6 +341,6 @@ class DDR5RDIMM_PHY(unittest.TestCase):
             pad_checkers = {"sys4x_180": {
                 'cs_n': self.cs_n_latency + '01111111',
             }},
-            vcd_name="ddr5_seq.vcd"
+            vcd_name="ddr5_stable_power_init.vcd"
         )
 

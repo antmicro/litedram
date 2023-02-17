@@ -19,6 +19,7 @@ from litedram.DDR5RCD01.RCD_interfaces_external import *
 from litedram.DDR5RCD01.RCD_utils import *
 from litedram.DDR5RCD01.BusCSCAAgent import BusCSCAAgent
 from litedram.DDR5RCD01.BusCSCACommand import *
+from litedram.DDR5RCD01.RCD_sim_timings import RCD_SIM_TIMINGS, t_sum
 # from test.CRG import CRG
 
 
@@ -34,6 +35,7 @@ class EnvironmentScenarios(enum.IntEnum):
     DECODER_MCA = 4
     DOUBLE_ONLY = 5
     TEST_ALL = 6
+    INITIALIZATION_TEST = 7
 
 
 class BusCSCAEnvironment(Module):
@@ -120,6 +122,13 @@ class BusCSCAEnvironment(Module):
                 inactive_post_len=1,
                 pattern_len=2
             )
+        elif scenario_select == EnvironmentScenarios.INITIALIZATION_TEST:
+            self.queue = self.test_init(
+                inactive_pre_len=12,
+                inactive_inter_len=0,
+                inactive_post_len=1,
+                pattern_len=2
+            )
         else:
             self.queue = []
 
@@ -143,12 +152,90 @@ class BusCSCAEnvironment(Module):
 
         return scenario
 
+    @staticmethod
+    def extend_inactive(scenario, len):
+        for i in range(len):
+            scenario += [BusCSCAInactive().cmd]
+        return scenario
+
+    @staticmethod
+    def extend_mrw(scenario, payload):
+        scenario += [BusCSCAMRW(payload=payload, is_padded=False).cmd]
+        return scenario
+
+    def test_init(self,
+                  inactive_pre_len=5,
+                  inactive_inter_len=1,
+                  inactive_post_len=1,
+                  pattern_len=2
+                  ):
+        scenario = []
+        t_rst = t_sum(["t_r_init_1", "t_r_init_3"])
+        for i in range(t_rst):
+            scenario += [BusCSCAActive().cmd]
+
+        t_lock = t_sum(["t_stab_01"])
+        scenario = self.extend_inactive(scenario, t_lock)
+
+        """
+            Give up control for sideband until t_J ???
+            Right now, let host do MRWs
+        """
+        # scenario = self.extend_inactive(scenario, 13)
+
+        """
+            Write to frequency registers
+            RW_05
+        """
+        scenario = self.extend_inactive(scenario, 3)
+        scenario = self.extend_mrw(scenario,
+                                   payload=Payload(mra=0x05, op=0x0F, cw=0x1))
+
+        """
+            Write to mode registers
+            RW_00 RW_01
+        """
+        scenario = self.extend_inactive(scenario, 3)
+        scenario = self.extend_mrw(scenario,
+                                   payload=Payload(mra=0x00, op=0b00100011, cw=0x1))
+        scenario = self.extend_inactive(scenario, 3)
+        scenario = self.extend_mrw(scenario,
+                                   payload=Payload(mra=0x01, op=0b10000000, cw=0x1))
+
+        """
+            Enable QRST
+            Write CMD6 and CMD8 to RW04 to clear QRST
+        """
+        scenario = self.extend_inactive(scenario, 3)
+        scenario = self.extend_mrw(scenario,
+                                   payload=Payload(mra=0x04, op=0x06, cw=0x1))
+        scenario = self.extend_inactive(scenario, 3)
+        scenario = self.extend_mrw(scenario,
+                                   payload=Payload(mra=0x04, op=0x08, cw=0x1))
+
+        """
+            DRAM Interface Blocking
+            RW_01.1
+            0b00000010
+        """
+        scenario = self.extend_inactive(scenario, 3)
+        scenario = self.extend_mrw(scenario,
+                                   payload=Payload(mra=0x01, op=0b10000010, cw=0x1))
+
+        scenario = self.extend_inactive(scenario, 10)
+        for i in range(pattern_len):
+            scenario += self.all_mix()
+            scenario = self.extend_inactive(scenario, inactive_inter_len)
+
+        scenario = self.extend_inactive(scenario, inactive_post_len)
+        return scenario
+
     def test_all(self,
-                       inactive_pre_len=5,
-                       inactive_inter_len=1,
-                       inactive_post_len=1,
-                       pattern_len=2
-                       ):
+                 inactive_pre_len=5,
+                 inactive_inter_len=1,
+                 inactive_post_len=1,
+                 pattern_len=2
+                 ):
         scenario = []
         for i in range(inactive_pre_len):
             scenario += [BusCSCAInactive().cmd]
@@ -164,11 +251,11 @@ class BusCSCAEnvironment(Module):
         return scenario
 
     def simple_double(self,
-                       inactive_pre_len=5,
-                       inactive_inter_len=1,
-                       inactive_post_len=1,
-                       pattern_len=2
-                       ):
+                      inactive_pre_len=5,
+                      inactive_inter_len=1,
+                      inactive_post_len=1,
+                      pattern_len=2
+                      ):
         scenario = []
         for i in range(inactive_pre_len):
             scenario += [BusCSCAInactive().cmd]
