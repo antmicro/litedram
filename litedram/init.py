@@ -995,6 +995,9 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
         ("Assert CS in reset", prefixes, all_cs, 0, 2**4-1, dfii_control_2n, ck(10e-9)),
         ("Release reset", prefixes, all_cs, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N",ck(4e-3)),
         ("Release CS", prefixes, 0, 0x3FFF, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(2e-6)),
+    ]
+
+    setup_dram_mrs_sequence = [
         ("NOPs", prefixes, all_cs, 0x1F, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 3),
         ("NOPs end", prefixes, 0, 0x1F, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 3),
         ("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(1e-6)),
@@ -1019,13 +1022,13 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
         ("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1),
         ("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", max(8, ck(30e-9))),
     ]
-    reset_sequence.extend(cmd_vca())
-    reset_sequence.extend(cmd_vcs())
-    reset_sequence.extend(cmd_ck_odt())
-    reset_sequence.extend(cmd_cs_odt())
-    reset_sequence.extend(cmd_ca_odt())
-    reset_sequence.extend(cmd_load_vref_odt())
-    reset_sequence.extend(cmd_dqs_odt())
+    setup_dram_mrs_sequence.extend(cmd_vca())
+    setup_dram_mrs_sequence.extend(cmd_vcs())
+    setup_dram_mrs_sequence.extend(cmd_ck_odt())
+    setup_dram_mrs_sequence.extend(cmd_cs_odt())
+    setup_dram_mrs_sequence.extend(cmd_ca_odt())
+    setup_dram_mrs_sequence.extend(cmd_load_vref_odt())
+    setup_dram_mrs_sequence.extend(cmd_dqs_odt())
 
     # comment, prefixes, cs, ca, phases, cmd, delay/single
     init_sequence_2n = []
@@ -1036,7 +1039,7 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
     for cmds in (cmd_mr_1n(ma) for ma in sorted(mr.keys()) if ma not in [11, 12, 13, 32, 33]):
         init_sequence_1n.extend(cmds)
 
-    return reset_sequence, (init_sequence_1n, init_sequence_2n), mr
+    return reset_sequence, setup_dram_mrs_sequence, (init_sequence_1n, init_sequence_2n), mr
 
 # Init Sequence ------------------------------------------------------------------------------------
 
@@ -1247,10 +1250,11 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
         r.newline()
 
     reset_sequence = []
+    setup_dram_mrs_sequence = []
     if phy_settings.memtype != "DDR5":
         init_sequence, mr = get_sdram_phy_init_sequence(phy_settings, timing_settings)
     else:
-        reset_sequence, init_sequence, mr = get_sdram_phy_init_sequence(phy_settings, timing_settings)
+        reset_sequence, setup_dram_mrs_sequence, init_sequence, mr = get_sdram_phy_init_sequence(phy_settings, timing_settings)
 
     if phy_settings.memtype in ["DDR3", "DDR4"]:
         # The value of MR1[7] needs to be modified during write leveling
@@ -1271,61 +1275,65 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
         r.define("DDRX_MR_WRLVL_BIT", 6)
         r.newline()
 
-    with r.block("static inline void reset_sequence(void)") as b:
-        if phy_settings.memtype != "DDR5":
-            for comment, a, ba, cmd, delay in reset_sequence:
-                invert_masks = [(0, 0), ]
-                if phy_settings.is_rdimm:
-                    assert phy_settings.memtype == "DDR4"
-                    # JESD82-31A page 38
-                    #
-                    # B-side chips have certain usually-inconsequential address and BA
-                    # bits inverted by the RCD to reduce SSO current. For mode register
-                    # writes, however, we must compensate for this. BG[1] also directs
-                    # writes either to the A side (BG[1]=0) or B side (BG[1]=1)
-                    #
-                    # The 'ba != 7' is because we don't do this to writes to the RCD
-                    # itself.
-                    if ba != 7:
-                        invert_masks.append((0b10101111111000, 0b1111))
+    for signature, sequence in [
+        ("static inline void reset_sequence(void)", reset_sequence),
+        ("static inline void setup_dram_mrs_sequence(void)", setup_dram_mrs_sequence),
+    ]:
+        with r.block(signature) as b:
+            if phy_settings.memtype != "DDR5":
+                for comment, a, ba, cmd, delay in sequence:
+                    invert_masks = [(0, 0), ]
+                    if phy_settings.is_rdimm:
+                        assert phy_settings.memtype == "DDR4"
+                        # JESD82-31A page 38
+                        #
+                        # B-side chips have certain usually-inconsequential address and BA
+                        # bits inverted by the RCD to reduce SSO current. For mode register
+                        # writes, however, we must compensate for this. BG[1] also directs
+                        # writes either to the A side (BG[1]=0) or B side (BG[1]=1)
+                        #
+                        # The 'ba != 7' is because we don't do this to writes to the RCD
+                        # itself.
+                        if ba != 7:
+                            invert_masks.append((0b10101111111000, 0b1111))
 
-                for a_inv, ba_inv in invert_masks:
+                    for a_inv, ba_inv in invert_masks:
+                        b += f"/* {comment} */"
+                        b += f"sdram_dfii_pi0_address_write({a ^ a_inv:#x});"
+                        b += f"sdram_dfii_pi0_baddress_write({ba ^ ba_inv:d});"
+                        if cmd.startswith("DFII_CONTROL"):
+                            b += f"sdram_dfii_control_write({cmd});"
+                        else:
+                            b += f"command_p0({cmd});"
+                        if delay:
+                            b += f"cdelay({delay});\n"
+                        b.newline()
+            else:
+                for comment, prefixes, cs, ca, phases, cmd, delay in sequence:
                     b += f"/* {comment} */"
-                    b += f"sdram_dfii_pi0_address_write({a ^ a_inv:#x});"
-                    b += f"sdram_dfii_pi0_baddress_write({ba ^ ba_inv:d});"
-                    if cmd.startswith("DFII_CONTROL"):
-                        b += f"sdram_dfii_control_write({cmd});"
+                    if delay > -1:
+                        for prefix in prefixes:
+                            b += f"sdram_dfii_{prefix}cmdinjector_command_storage_write(" \
+                                 f"{cs} << CSR_SDRAM_DFII_{prefix.upper()}CMDINJECTOR_COMMAND_STORAGE_CS_OFFSET " \
+                                 f"| {ca} << CSR_SDRAM_DFII_{prefix.upper()}CMDINJECTOR_COMMAND_STORAGE_CA_OFFSET);"
+                            b += f"sdram_dfii_{prefix}cmdinjector_phase_addr_write({phases});"
+                            b += f"sdram_dfii_{prefix}cmdinjector_store_continuous_cmd_write(1);"
+                            b += f"sdram_dfii_{prefix}cmdinjector_issue_command_write(1);"
                     else:
-                        b += f"command_p0({cmd});"
-                    if delay:
+                        for prefix in prefixes:
+                            b += f"sdram_dfii_{prefix}cmdinjector_command_storage_write(" \
+                                 f"{cs} << CSR_SDRAM_DFII_{prefix.upper()}CMDINJECTOR_COMMAND_STORAGE_CS_OFFSET " \
+                                 f"| {ca} << CSR_SDRAM_DFII_{prefix.upper()}CMDINJECTOR_COMMAND_STORAGE_CA_OFFSET);"
+                            b += f"sdram_dfii_{prefix}cmdinjector_phase_addr_write({phases});"
+                            b += f"sdram_dfii_{prefix}cmdinjector_store_singleshot_cmd_write(1);"
+                            if delay == -2:
+                                b += f"sdram_dfii_{prefix}cmdinjector_single_shot_write(1);"
+                                b += f"sdram_dfii_{prefix}cmdinjector_issue_command_write(1);"
+                                b += f"sdram_dfii_{prefix}cmdinjector_single_shot_write(0);"
+                    b += f"sdram_dfii_control_write({cmd});"
+                    if delay > 0:
                         b += f"cdelay({delay});\n"
                     b.newline()
-        else:
-            for comment, prefixes, cs, ca, phases, cmd, delay in reset_sequence:
-                b += f"/* {comment} */"
-                if delay > -1:
-                    for prefix in prefixes:
-                        b += f"sdram_dfii_{prefix}cmdinjector_command_storage_write(" \
-                             f"{cs} << CSR_SDRAM_DFII_{prefix.upper()}CMDINJECTOR_COMMAND_STORAGE_CS_OFFSET " \
-                             f"| {ca} << CSR_SDRAM_DFII_{prefix.upper()}CMDINJECTOR_COMMAND_STORAGE_CA_OFFSET);"
-                        b += f"sdram_dfii_{prefix}cmdinjector_phase_addr_write({phases});"
-                        b += f"sdram_dfii_{prefix}cmdinjector_store_continuous_cmd_write(1);"
-                        b += f"sdram_dfii_{prefix}cmdinjector_issue_command_write(1);"
-                else:
-                    for prefix in prefixes:
-                        b += f"sdram_dfii_{prefix}cmdinjector_command_storage_write(" \
-                             f"{cs} << CSR_SDRAM_DFII_{prefix.upper()}CMDINJECTOR_COMMAND_STORAGE_CS_OFFSET " \
-                             f"| {ca} << CSR_SDRAM_DFII_{prefix.upper()}CMDINJECTOR_COMMAND_STORAGE_CA_OFFSET);"
-                        b += f"sdram_dfii_{prefix}cmdinjector_phase_addr_write({phases});"
-                        b += f"sdram_dfii_{prefix}cmdinjector_store_singleshot_cmd_write(1);"
-                        if delay == -2:
-                            b += f"sdram_dfii_{prefix}cmdinjector_single_shot_write(1);"
-                            b += f"sdram_dfii_{prefix}cmdinjector_issue_command_write(1);"
-                            b += f"sdram_dfii_{prefix}cmdinjector_single_shot_write(0);"
-                b += f"sdram_dfii_control_write({cmd});"
-                if delay > 0:
-                    b += f"cdelay({delay});\n"
-                b.newline()
 
     if isinstance(init_sequence, tuple):
         for i in range(2):
@@ -1434,10 +1442,11 @@ def get_sdram_phy_py_header(phy_settings, timing_settings):
         r += "\n"
 
     reset_sequence = []
+    setup_dram_mrs_sequence = []
     if phy_settings.memtype != "DDR5":
         init_sequence, mr = get_sdram_phy_init_sequence(phy_settings, timing_settings)
     else:
-        reset_sequence, init_sequence, mr = get_sdram_phy_init_sequence(phy_settings, timing_settings)
+        reset_sequence, setup_dram_mrs_sequence, init_sequence, mr = get_sdram_phy_init_sequence(phy_settings, timing_settings)
 
     if mr is not None and 1 in mr:
         r += "ddrx_mr1 = 0x{:x}\n".format(mr[1])
