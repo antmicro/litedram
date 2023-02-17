@@ -108,6 +108,7 @@ class DDR5PHY(Module, AutoCSR):
             with_idelay,
             with_odelay,
             with_per_dq_idelay,
+            databits,
             dq_dqs_ratio,
         )
         self.CSRs = CSRs = self.CSRModule.CSR_to_dict()

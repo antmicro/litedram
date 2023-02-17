@@ -13,10 +13,13 @@ class BasePHYCSR(Module, AutoCSR):
     def __init__(self, prefixes, nphases, nranks, strobes,
                  with_clock_odelay, with_address_odelay,
                  with_idelay, with_odelay,
-                 with_per_dq_idelay, dq_dqs_ratio):
+                 with_per_dq_idelay, databits, dq_dqs_ratio):
+        self._enable_fifos = CSRStorage(reset=0)
         self._rst           = CSRStorage()
         self._rst.storage.attr.add("slow_ff")
         self._rdimm_mode    = CSRStorage()
+        self._rdimm_mode.storage.attr.add("slow_ff")
+        self._rdimm_mode.storage.attr.add("keep")
 
         self._rdphase = CSRStorage(nphases.bit_length()-1, reset=0)
         self._wrphase = CSRStorage(nphases.bit_length()-1, reset=0)
@@ -30,10 +33,15 @@ class BasePHYCSR(Module, AutoCSR):
 
         for prefix in prefixes:
             setattr(self, prefix+'preamble', CSRStatus(2*2, name=prefix+'preamble'))
+            getattr(self, prefix+'preamble').status.attr.add("slow_in")
+            getattr(self, prefix+'preamble').status.attr.add("keep")
 
             setattr(self, prefix+'wlevel_en', CSRStorage(name=prefix+'wlevel_en'))
+            getattr(self, prefix+'wlevel_en').storage.attr.add("slow_ff")
+            getattr(self, prefix+'wlevel_en').storage.attr.add("keep")
 
-            setattr(self, prefix+'dly_sel', CSRStorage(max(strobes, 14, nranks), name=prefix+'dly_sel'))
+            setattr(self, prefix+'dly_sel', CSRStorage(
+                max(strobes, 14, nranks, databits//4), name=prefix+'dly_sel'))
             getattr(self, prefix+'dly_sel').storage.attr.add("slow_ff")
             getattr(self, prefix+'dly_sel').storage.attr.add("keep")
 
