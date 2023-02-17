@@ -15,6 +15,7 @@ from typing import Union, Optional
 
 from migen import *
 from migen import Signal
+from migen.genlib.fifo import _FIFOInterface
 
 from litex.soc.interconnect import stream
 
@@ -166,6 +167,56 @@ class TappedDelayLine(Module):
         for i in range(ntaps):
             self.sync += self.taps[i].eq(self.input if i == 0 else self.taps[i-1])
         self.output = self.taps[-1]
+
+# SimplerFIFO --------------------------------------------------------------------------------------
+
+class SimpleSyncFIFO(Module, _FIFOInterface):
+    def __init__(self, width, depth, fwft=True):
+        _FIFOInterface.__init__(self, width, depth)
+
+        cnt_bits = (depth-1).bit_length()
+
+        w_cnt = Signal(cnt_bits+1)
+        r_cnt = Signal(cnt_bits+1)
+        ###
+
+        produce = Signal(max=depth)
+        consume = Signal(max=depth)
+        storage = Memory(self.width, 2**cnt_bits)
+        self.specials += storage
+
+        wrport = storage.get_port(write_capable=True, has_re=True, mode=READ_FIRST)
+        self.specials += wrport
+        self.comb += [
+            wrport.adr.eq(w_cnt),
+            wrport.dat_w.eq(self.din),
+            wrport.we.eq(self.we & self.writable),
+            wrport.re.eq(0),
+        ]
+        self.sync += If(self.we & self.writable,
+            w_cnt.eq(w_cnt+1))
+
+        do_read = Signal()
+        self.comb += do_read.eq(self.readable & self.re)
+
+        rdport = storage.get_port(async_read=fwft, has_re=not fwft, mode=READ_FIRST)
+        self.specials += rdport
+        self.comb += [
+            rdport.adr.eq(r_cnt),
+            self.dout.eq(rdport.dat_r)
+        ]
+        if not fwft:
+            self.comb += rdport.re.eq(do_read)
+        self.sync += If(do_read, r_cnt.eq(r_cnt+1))
+
+        half_way = Signal()
+        self.comb += half_way.eq(w_cnt[:-1] == r_cnt[:-1])
+
+        self.comb += [
+            self.writable.eq(~(half_way & (w_cnt[-1] != r_cnt[-1]))),
+            self.readable.eq(~(half_way & (w_cnt[-1] == r_cnt[-1]))),
+        ]
+
 
 # ShiftRegister ------------------------------------------------------------------------------------
 

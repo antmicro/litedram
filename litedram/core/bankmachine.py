@@ -111,7 +111,9 @@ class BankMachine(Module):
         cmd_buffer_layout    = [("we", 1), ("addr", len(req.addr))]
         cmd_buffer_lookahead = stream.SyncFIFO(
             cmd_buffer_layout, settings.cmd_buffer_depth,
-            buffered=settings.cmd_buffer_buffered)
+            buffered=settings.cmd_buffer_buffered,
+            custom_fifo_cls=SimpleSyncFIFO
+        )
         cmd_buffer = stream.Buffer(cmd_buffer_layout)       # 1 depth buffer to sync row_hit
         self.submodules += cmd_buffer_lookahead, cmd_buffer
         self.comb += [
