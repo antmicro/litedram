@@ -65,7 +65,7 @@ class DDR5RCD01CommandLogic(Module):
         if_csca_o_rank_A_int = If_ibuf()
         if_csca_o_rank_B_int = If_ibuf()
 
-        self.submodules.decoder = DDR5RCD01Decoder(
+        xdecoder = DDR5RCD01Decoder(
             if_ibuf=if_ibuf_i,
             if_csca_o=if_csca_o_int,
             if_csca_o_rank_A=if_csca_o_rank_A_int,
@@ -77,12 +77,13 @@ class DDR5RCD01CommandLogic(Module):
             is_cmd_beginning=is_cmd_beginning_int,
             is_cw_bit_set=is_cw_bit_set,
         )
+        self.submodules.xdecoder = xdecoder
 
         if_csca_o_actor = If_ibuf()
         if_csca_o_actor_rank_A = If_ibuf()
         if_csca_o_actor_rank_B = If_ibuf()
 
-        self.submodules.xactor = DDR5RCD01ActorMRW(
+        xactor = DDR5RCD01ActorMRW(
             if_csca_i=if_csca_o_int,
             if_csca_i_rank_A=if_csca_o_rank_A_int,
             if_csca_i_rank_B=if_csca_o_rank_B_int,
@@ -98,6 +99,7 @@ class DDR5RCD01CommandLogic(Module):
             reg_we=if_register.we,
             reg_q=if_register.d,
         )
+        self.submodules.xactor = xactor
 
         """
             Parity Error checking
@@ -108,7 +110,7 @@ class DDR5RCD01CommandLogic(Module):
         qis_this_ui_odd = Signal()
         qis_cmd_beginning = Signal()
 
-        self.submodules.error = DDR5RCD01Error(
+        xerror = DDR5RCD01Error(
             if_csca=if_csca_o_actor,
             if_csca_rank_A=if_csca_o_actor_rank_A,
             if_csca_rank_B=if_csca_o_actor_rank_B,
@@ -128,6 +130,7 @@ class DDR5RCD01CommandLogic(Module):
             rw_is_parity_checking_enabled=rw_is_parity_checking_enabled,
             parity_error=parity_error,
         )
+        self.submodules.xerror = xerror
 
         """
             Output inversion enable

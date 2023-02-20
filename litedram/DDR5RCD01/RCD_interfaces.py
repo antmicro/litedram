@@ -307,7 +307,7 @@ class If_ctrl_common(Record):
             ('lb_sel_phase_ab', 1),
             ('lb_sel_int_bit', 3),
             ('lb_sel_channel_A_B', 1),
-            ('alert_n_mode',1),
+            ('alert_n_mode', 1),
         ]
 
 
@@ -327,6 +327,52 @@ class If_registers(Record):
             ('d', CW_REG_BIT_SIZE),
             ('q', CW_REG_BIT_SIZE),
         ]
+
+
+class If_ctrl_blocker(Record):
+    """
+    Block interface
+    """
+
+    def __init__(self):
+        layout = self.description()
+        Record.__init__(self, layout)
+
+    def description(self,):
+        return [
+            ('block', 1),
+        ]
+
+class If_ctrl_dcstm_agent(Record):
+    """
+    DCSTM
+    """
+
+    def __init__(self):
+        layout = self.description()
+        Record.__init__(self, layout)
+
+    def description(self,):
+        return [
+            ('enable', 1),
+            ('select_dcs_n', 1),
+        ]
+
+class If_ctrl_dcatm_agent(Record):
+    """
+    DCATM
+    """
+
+    def __init__(self):
+        layout = self.description()
+        Record.__init__(self, layout)
+
+    def description(self,):
+        return [
+            ('enable', 1),
+            ('exit_dcatm', 1),
+        ]
+
 
 
 if __name__ == "__main__":

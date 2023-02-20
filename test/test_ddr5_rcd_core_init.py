@@ -192,7 +192,7 @@ class DDR5RCD01CoreTests_SingleChannel(unittest.TestCase):
     def tearDown(self):
         del self.tb
 
-    def test_ddr5_mode_normal_rank_A(self):
+    def test_ddr5_rdimm_init(self):
         logger = logging.getLogger('root')
 
         """

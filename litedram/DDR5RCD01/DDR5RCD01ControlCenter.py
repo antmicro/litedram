@@ -21,6 +21,14 @@ from litedram.DDR5RCD01.DDR5RCD01CSLogic import DDR5RCD01CSLogic
 from litedram.DDR5RCD01.DDR5RCD01Error import DDR5RCD01Error
 
 
+@enum.unique
+class HOST_IF_TM_ENCODING(enum.IntEnum):
+    NORMAL_MODE = 0
+    DCATM = 1
+    DCSTM_0 = 2
+    DCSTM_1 = 3
+
+
 class DDR5RCD01ControlCenter(Module):
     """DDR5 RCD01 Control Center
     TODO Documentation
@@ -94,7 +102,12 @@ class DDR5RCD01ControlCenter(Module):
                  if_common,
                  if_ctrl_common,
                  if_config_common,
-                 if_regs,
+                #  if_regs,
+                 if_ctrl_rx_block,
+                 if_ctrl_fwd_block_A,
+                 if_ctrl_fwd_block_B,
+                 if_ctrl_dcstm_agent,
+                 if_ctrl_dcatm_agent,
                  is_channel_A=True,
                  ):
         """
@@ -179,6 +192,18 @@ class DDR5RCD01ControlCenter(Module):
         # --------------------------------------------0b76543210
         boot_image_rw00_rw5f[RW_SECONDARY_FEATURES] = 0b10000000
 
+        """ Table 101
+            RW02
+            Host Interface Training Mode Global Control Word
+        """
+        RW_HOST_IF_TRAINING = 0x02
+        HOST_IF_TM_CH_A = regs[RW_HOST_IF_TRAINING][0:2]
+        HOST_IF_TM_CH_B = regs[RW_HOST_IF_TRAINING][2:4]
+        DCATM_XOR_SAMPLING_EDGE = regs[RW_HOST_IF_TRAINING][4:6]
+        VREF_CA_BROADCAST_EN = regs[RW_HOST_IF_TRAINING][6]
+        # RESERVED = regs[RW_HOST_IF_TRAINING][7]
+        # ------------------------------------------0b76543210
+        boot_image_rw00_rw5f[RW_HOST_IF_TRAINING] = 0b00000000
 
         """ Table 103
             RW04
@@ -221,13 +246,57 @@ class DDR5RCD01ControlCenter(Module):
             4.important
                 keep qcs high (can be done by disabling cs outputs)
         """
+        # Detect write to RW04
+        execute_command = Signal()
+        command = Signal(CW_REG_BIT_SIZE)
+
+        b = Signal()
+        c = Signal()
+        self.comb += If(
+            (if_register.we) &
+            (if_register.addr == RW_CMD_SPACE_GLOBAL_CONTROL),
+            execute_command.eq(1),
+            command.eq(if_register.d),
+        )
         # self.sync += If(
         #     0,  # rw04 command 5
         #     drst_rw04.eq(1)
         # ).Else(
         #     drst_rw04.eq(0)
         # )
-        # command = Signal(CW_REG_BIT_SIZE)
+        self.sync += Case(
+            command,{
+                CMD_0_NOP: [],
+                CMD_5_CH_A_DRAM_RST: [
+                        drst_rw04.eq(1)
+                    ],
+                CMD_6_CH_A_DRAM_RST_CLEAR: [
+                        drst_rw04.eq(0)
+                    ],
+                CMD_7_CH_B_DRAM_RST: [
+                        # drst_rw04.eq(1)
+                    ],
+                CMD_8_CH_B_DRAM_RST_CLEAR: [
+                        # drst_rw04.eq(0)
+                    ],
+                CMD_9_CH_A_PARITY_ERR_CLEAR: [
+                        b.eq(1)
+                    ],
+                CMD_A_CH_B_PARITY_ERR_CLEAR: [
+                        b.eq(1)
+                    ],
+                CMD_D_ALERT_N_TOGGLE: [
+                        b.eq(1)
+                    ],
+                CMD_E_CH_A_QCS_HIGH: [
+                        b.eq(1)
+                    ],
+                CMD_F_CH_B_QCS_HIGH: [
+                        b.eq(1)
+                    ],
+                "default": []
+            }
+        )
 
         """ Table 104
             RW05
@@ -260,28 +329,28 @@ class DDR5RCD01ControlCenter(Module):
             regs[0x08]
             """
         RW_CLOCK_OUTPUT_CONTROL = 0x08
-        QACK_CLK_ENABLE = regs[RW_CLOCK_OUTPUT_CONTROL][0]
-        QBCK_CLK_ENABLE = regs[RW_CLOCK_OUTPUT_CONTROL][1]
-        QCCK_CLK_ENABLE = regs[RW_CLOCK_OUTPUT_CONTROL][2]
-        QDCK_CLK_ENABLE = regs[RW_CLOCK_OUTPUT_CONTROL][3]
+        QACK_CLK_ENABLE_N = regs[RW_CLOCK_OUTPUT_CONTROL][0]
+        QBCK_CLK_ENABLE_N = regs[RW_CLOCK_OUTPUT_CONTROL][1]
+        QCCK_CLK_ENABLE_N = regs[RW_CLOCK_OUTPUT_CONTROL][2]
+        QDCK_CLK_ENABLE_N = regs[RW_CLOCK_OUTPUT_CONTROL][3]
         # RESERVED = regs[RW_CLOCK_OUTPUT_CONTROL][4]
-        BCK_CLK_ENABLE = regs[RW_CLOCK_OUTPUT_CONTROL][5]
+        BCK_CLK_ENABLE_N = regs[RW_CLOCK_OUTPUT_CONTROL][5]
         # RESERVED = regs[RW_CLOCK_OUTPUT_CONTROL][6]
         # RESERVED = regs[RW_CLOCK_OUTPUT_CONTROL][7]
         # ----------------------------------------------0b76543210
-        boot_image_rw00_rw5f[RW_CLOCK_OUTPUT_CONTROL] = 0b11000101
+        boot_image_rw00_rw5f[RW_CLOCK_OUTPUT_CONTROL] = 0b00111010
 
-        self.comb += if_ctrl_obuf_clks_row_A_rankA.oe_ck_t.eq(QACK_CLK_ENABLE)
-        self.comb += if_ctrl_obuf_clks_row_A_rankA.oe_ck_c.eq(QACK_CLK_ENABLE)
+        self.comb += if_ctrl_obuf_clks_row_A_rankA.oe_ck_t.eq(~QACK_CLK_ENABLE_N)
+        self.comb += if_ctrl_obuf_clks_row_A_rankA.oe_ck_c.eq(~QACK_CLK_ENABLE_N)
 
-        self.comb += if_ctrl_obuf_clks_row_B_rankA.oe_ck_t.eq(QBCK_CLK_ENABLE)
-        self.comb += if_ctrl_obuf_clks_row_B_rankA.oe_ck_c.eq(QBCK_CLK_ENABLE)
+        self.comb += if_ctrl_obuf_clks_row_B_rankA.oe_ck_t.eq(~QBCK_CLK_ENABLE_N)
+        self.comb += if_ctrl_obuf_clks_row_B_rankA.oe_ck_c.eq(~QBCK_CLK_ENABLE_N)
 
-        self.comb += if_ctrl_obuf_clks_row_A_rankB.oe_ck_t.eq(QCCK_CLK_ENABLE)
-        self.comb += if_ctrl_obuf_clks_row_A_rankB.oe_ck_c.eq(QCCK_CLK_ENABLE)
+        self.comb += if_ctrl_obuf_clks_row_A_rankB.oe_ck_t.eq(~QCCK_CLK_ENABLE_N)
+        self.comb += if_ctrl_obuf_clks_row_A_rankB.oe_ck_c.eq(~QCCK_CLK_ENABLE_N)
 
-        self.comb += if_ctrl_obuf_clks_row_B_rankB.oe_ck_t.eq(QDCK_CLK_ENABLE)
-        self.comb += if_ctrl_obuf_clks_row_B_rankB.oe_ck_c.eq(QDCK_CLK_ENABLE)
+        self.comb += if_ctrl_obuf_clks_row_B_rankB.oe_ck_t.eq(~QDCK_CLK_ENABLE_N)
+        self.comb += if_ctrl_obuf_clks_row_B_rankB.oe_ck_c.eq(~QDCK_CLK_ENABLE_N)
 
         """ Table 108
             RW09
@@ -289,26 +358,26 @@ class DDR5RCD01ControlCenter(Module):
             regs[0x09]
             """
         RW_OUTPUT_CONTROL = 0x09
-        QACA_OUTPUT_ENABLE = regs[RW_OUTPUT_CONTROL][0]
-        QBCA_OUTPUT_ENABLE = regs[RW_OUTPUT_CONTROL][1]
-        DCS_N_AND_QCS_N_ENABLE = regs[RW_OUTPUT_CONTROL][2]
-        BCS_BCOM_BRST_ENABLE = regs[RW_OUTPUT_CONTROL][3]
-        QBACA13_OUTPUT_ENABLE = regs[RW_OUTPUT_CONTROL][4]
-        QACS_N_ENABLE = regs[RW_OUTPUT_CONTROL][5]
-        QBCS_N_ENABLE = regs[RW_OUTPUT_CONTROL][6]
+        QACA_OUTPUT_ENABLE_N = regs[RW_OUTPUT_CONTROL][0]
+        QBCA_OUTPUT_ENABLE_N = regs[RW_OUTPUT_CONTROL][1]
+        DCS_N_AND_QCS_N_ENABLE_N = regs[RW_OUTPUT_CONTROL][2]
+        BCS_BCOM_BRST_ENABLE_N = regs[RW_OUTPUT_CONTROL][3]
+        QBACA13_OUTPUT_ENABLE_N = regs[RW_OUTPUT_CONTROL][4]
+        QACS_N_ENABLE_N = regs[RW_OUTPUT_CONTROL][5]
+        QBCS_N_ENABLE_N = regs[RW_OUTPUT_CONTROL][6]
         # RESERVED = regs[RW_OUTPUT_CONTROL][7]
         # ----------------------------------------0b76543210
-        boot_image_rw00_rw5f[RW_OUTPUT_CONTROL] = 0b01100111
+        boot_image_rw00_rw5f[RW_OUTPUT_CONTROL] = 0b10011000
 
         # Output enable
         self.comb += if_ctrl_obuf_csca_row_A_rankA.oe_qca.eq(
-            QACA_OUTPUT_ENABLE)
+            ~QACA_OUTPUT_ENABLE_N)
         self.comb += if_ctrl_obuf_csca_row_B_rankA.oe_qca.eq(
-            QACA_OUTPUT_ENABLE)
+            ~QACA_OUTPUT_ENABLE_N)
         self.comb += if_ctrl_obuf_csca_row_A_rankB.oe_qca.eq(
-            QBCA_OUTPUT_ENABLE)
+            ~QBCA_OUTPUT_ENABLE_N)
         self.comb += if_ctrl_obuf_csca_row_B_rankB.oe_qca.eq(
-            QBCA_OUTPUT_ENABLE)
+            ~QBCA_OUTPUT_ENABLE_N)
 
         """
             TODO priority encoder
@@ -316,10 +385,10 @@ class DDR5RCD01ControlCenter(Module):
             2. QCS_ENABLE
             3.
         """
-        self.comb += if_ctrl_obuf_csca_row_A_rankA.oe_qcs_n.eq(QACS_N_ENABLE)
-        self.comb += if_ctrl_obuf_csca_row_B_rankA.oe_qcs_n.eq(QACS_N_ENABLE)
-        self.comb += if_ctrl_obuf_csca_row_A_rankB.oe_qcs_n.eq(QBCS_N_ENABLE)
-        self.comb += if_ctrl_obuf_csca_row_B_rankB.oe_qcs_n.eq(QBCS_N_ENABLE)
+        self.comb += if_ctrl_obuf_csca_row_A_rankA.oe_qcs_n.eq(~QACS_N_ENABLE_N)
+        self.comb += if_ctrl_obuf_csca_row_B_rankA.oe_qcs_n.eq(~QACS_N_ENABLE_N)
+        self.comb += if_ctrl_obuf_csca_row_A_rankB.oe_qcs_n.eq(~QBCS_N_ENABLE_N)
+        self.comb += if_ctrl_obuf_csca_row_B_rankB.oe_qcs_n.eq(~QBCS_N_ENABLE_N)
 
         # DCS, DCA Output inversion
         self.comb += if_ctrl_obuf_csca_row_A_rankA.o_inv_en_qcs_n.eq(0)
@@ -449,26 +518,27 @@ class DDR5RCD01ControlCenter(Module):
             """
             xfsm.act(
                 "PON_DRST_EVENT",
-                NextValue(drst_pon,1),
-                NextValue(if_ctrl_obuf_csca_row_A_rankA.tie_low_cs,1),
-                NextValue(if_ctrl_obuf_csca_row_B_rankA.tie_low_cs,1),
-                NextValue(if_ctrl_obuf_csca_row_A_rankB.tie_low_cs,1),
-                NextValue(if_ctrl_obuf_csca_row_B_rankB.tie_low_cs,1),
-                NextValue(if_ctrl_obuf_csca_row_A_rankA.tie_low_ca,1),
-                NextValue(if_ctrl_obuf_csca_row_B_rankA.tie_low_ca,1),
-                NextValue(if_ctrl_obuf_csca_row_A_rankB.tie_low_ca,1),
-                NextValue(if_ctrl_obuf_csca_row_B_rankB.tie_low_ca,1),
+                NextValue(drst_pon, 1),
+                NextValue(drst_rw04, 1),
+                NextValue(if_ctrl_obuf_csca_row_A_rankA.tie_low_cs, 1),
+                NextValue(if_ctrl_obuf_csca_row_B_rankA.tie_low_cs, 1),
+                NextValue(if_ctrl_obuf_csca_row_A_rankB.tie_low_cs, 1),
+                NextValue(if_ctrl_obuf_csca_row_B_rankB.tie_low_cs, 1),
+                NextValue(if_ctrl_obuf_csca_row_A_rankA.tie_low_ca, 1),
+                NextValue(if_ctrl_obuf_csca_row_B_rankA.tie_low_ca, 1),
+                NextValue(if_ctrl_obuf_csca_row_A_rankB.tie_low_ca, 1),
+                NextValue(if_ctrl_obuf_csca_row_B_rankB.tie_low_ca, 1),
 
-                NextValue(if_ctrl_obuf_clks_row_A_rankA.tie_low_ck_t,1),
-                NextValue(if_ctrl_obuf_clks_row_A_rankA.tie_low_ck_c,1),
-                NextValue(if_ctrl_obuf_clks_row_B_rankA.tie_low_ck_t,1),
-                NextValue(if_ctrl_obuf_clks_row_B_rankA.tie_low_ck_c,1),
-                NextValue(if_ctrl_obuf_clks_row_A_rankB.tie_low_ck_t,1),
-                NextValue(if_ctrl_obuf_clks_row_A_rankB.tie_low_ck_c,1),
-                NextValue(if_ctrl_obuf_clks_row_B_rankB.tie_low_ck_t,1),
-                NextValue(if_ctrl_obuf_clks_row_B_rankB.tie_low_ck_c,1),
+                NextValue(if_ctrl_obuf_clks_row_A_rankA.tie_low_ck_t, 1),
+                NextValue(if_ctrl_obuf_clks_row_A_rankA.tie_low_ck_c, 1),
+                NextValue(if_ctrl_obuf_clks_row_B_rankA.tie_low_ck_t, 1),
+                NextValue(if_ctrl_obuf_clks_row_B_rankA.tie_low_ck_c, 1),
+                NextValue(if_ctrl_obuf_clks_row_A_rankB.tie_low_ck_t, 1),
+                NextValue(if_ctrl_obuf_clks_row_A_rankB.tie_low_ck_c, 1),
+                NextValue(if_ctrl_obuf_clks_row_B_rankB.tie_low_ck_t, 1),
+                NextValue(if_ctrl_obuf_clks_row_B_rankB.tie_low_ck_c, 1),
 
-                NextValue(rw_custom_csr,0x01),
+                NextValue(rw_custom_csr, 0x01),
                 NextState("STABLE_POWER_RESET"),
             )
 
@@ -489,46 +559,126 @@ class DDR5RCD01ControlCenter(Module):
                 host will deassert drst, wait some time
                 host will deassert dcs
             """
+
+            """
+                Enable command receiving,
+                block command forwarding
+            """
             xfsm.act(
                 "POST_PON_DRST_EVENT",
-                NextState("SIDEBAND_FREQUENCY_INIT")
+                NextValue(drst_pon,0),
+                NextValue(if_ctrl_rx_block.block,0),
+                NextValue(if_ctrl_fwd_block_A.block,1),
+                NextValue(if_ctrl_fwd_block_B.block,1),
+                NextState("INIT_IDLE")
             )
 
-            xfsm.act(
-                "SIDEBAND_FREQUENCY_INIT",
-                NextState("DCSTM")
-            )
+            """
+                In this state:
+                    - sideband update frequency settings
+                Enter DCSTM:
+                    - if rw02[3:0], go to dcstm
+                Enter DCATM:
+                    - if rw02[3:0], go to dcatm
+                """
+            if is_channel_A:
+                xfsm.act(
+                    "INIT_IDLE",
+                    If(
+                        (HOST_IF_TM_CH_A == HOST_IF_TM_ENCODING.DCSTM_0) |
+                        (HOST_IF_TM_CH_A == HOST_IF_TM_ENCODING.DCSTM_1),
+                        NextState("DCSTM"),
+                    ).Elif(
+                        HOST_IF_TM_CH_A == HOST_IF_TM_ENCODING.DCATM,
+                        NextState("DCATM"),
+                    ).Else(
+                        NextState("INIT_IDLE"),
+                    )
+                )
+            else:
+                xfsm.act(
+                    "INIT_IDLE",
+                    If(
+                        (HOST_IF_TM_CH_B == HOST_IF_TM_ENCODING.DCSTM_0) |
+                        (HOST_IF_TM_CH_B == HOST_IF_TM_ENCODING.DCSTM_1),
+                        NextState("DCSTM"),
+                    ).Elif(
+                        (HOST_IF_TM_CH_B == HOST_IF_TM_ENCODING.DCATM),
+                        NextState("DCATM"),
+                    ).Else(
+                        NextState("INIT_IDLE"),
+                    )
+                )
 
-
+            """
+                if rw02[3:0], enter/exit
+            """
             xfsm.act(
                 "DCSTM",
-                NextState("DCATM")
+                # TRAIN DCS
+                If(
+                    (HOST_IF_TM_CH_A == HOST_IF_TM_ENCODING.NORMAL_MODE),
+                    NextState("INIT_IDLE"),
+                ).Elif(
+                    (HOST_IF_TM_CH_A == HOST_IF_TM_ENCODING.DCATM),
+                    NextState("DCATM"),
+                ).Else(
+                    NextState("DCSTM"),
+                )
             )
 
+            """
+                if rw02[3:0], enter/exit
+            """
             xfsm.act(
                 "DCATM",
-                NextState("DRAM_IF_BLOCKED")
-            )
-
-            xfsm.act(
-                "DRAM_IF_BLOCKED",
-                # This state is probably redundant
-                # MRW to unblock interface do not require a state
-                NextState("QCS_BLOCKED")
+                # TRAIN DCA
+                If(
+                    HOST_IF_TM_CH_A == HOST_IF_TM_ENCODING.NORMAL_MODE,
+                    NextState("POST_TM_INIT_IDLE"),
+                ).Else(
+                    NextState("DCATM"),
+                )
             )
 
             """
-            if ongoing is qcs blocked and detected command nop
+            unblock command forwarding
             """
             xfsm.act(
-                "QCS_BLOCKED",
-                # Detect NOP to untie outputs
-                NextState("NORMAL")
-            )
+                "POST_TM_INIT_IDLE",
+                If(
+                    execute_command & (command == CMD_0_NOP),
+                    NextValue(if_ctrl_fwd_block_A.block,0),
+                    NextValue(if_ctrl_fwd_block_B.block,0),
+                    NextValue(if_ctrl_rx_block.block,0),
+                    NextValue(if_ctrl_obuf_csca_row_A_rankA.tie_low_cs, 0),
+                    NextValue(if_ctrl_obuf_csca_row_B_rankA.tie_low_cs, 0),
+                    NextValue(if_ctrl_obuf_csca_row_A_rankB.tie_low_cs, 0),
+                    NextValue(if_ctrl_obuf_csca_row_B_rankB.tie_low_cs, 0),
+                    NextValue(if_ctrl_obuf_csca_row_A_rankA.tie_low_ca, 0),
+                    NextValue(if_ctrl_obuf_csca_row_B_rankA.tie_low_ca, 0),
+                    NextValue(if_ctrl_obuf_csca_row_A_rankB.tie_low_ca, 0),
+                    NextValue(if_ctrl_obuf_csca_row_B_rankB.tie_low_ca, 0),
 
+                    NextValue(if_ctrl_obuf_clks_row_A_rankA.tie_low_ck_t, 0),
+                    NextValue(if_ctrl_obuf_clks_row_A_rankA.tie_low_ck_c, 0),
+                    NextValue(if_ctrl_obuf_clks_row_B_rankA.tie_low_ck_t, 0),
+                    NextValue(if_ctrl_obuf_clks_row_B_rankA.tie_low_ck_c, 0),
+                    NextValue(if_ctrl_obuf_clks_row_A_rankB.tie_low_ck_t, 0),
+                    NextValue(if_ctrl_obuf_clks_row_A_rankB.tie_low_ck_c, 0),
+                    NextValue(if_ctrl_obuf_clks_row_B_rankB.tie_low_ck_t, 0),
+                    NextValue(if_ctrl_obuf_clks_row_B_rankB.tie_low_ck_c, 0),
+                    NextState("NORMAL"),
+                ).Else(
+                    NextState("POST_TM_INIT_IDLE")
+                )
+            )
 
             xfsm.act(
                 "NORMAL",
+                NextValue(if_ctrl_rx_block.block,0),
+                NextValue(if_ctrl_fwd_block_A.block,0),
+                NextValue(if_ctrl_fwd_block_B.block,0),
                 NextState("NORMAL"),
             )
 

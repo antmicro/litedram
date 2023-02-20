@@ -21,6 +21,11 @@ from litedram.DDR5RCD01.DDR5RCD01ActorMRW import DDR5RCD01ActorMRW
 # from litedram.DDR5RCD01.DDR5RCD01Error import DDR5RCD01Error
 from litedram.DDR5RCD01.DDR5RCD01InputBuffer import DDR5RCD01InputBuffer
 from litedram.DDR5RCD01.DDR5RCD01RankBuffer import DDR5RCD01RankBuffer
+from litedram.DDR5RCD01.DDR5RCD01CommandReceiveBlocker import DDR5RCD01CommandReceiveBlocker
+from litedram.DDR5RCD01.DDR5RCD01CommandForwardBlocker import DDR5RCD01CommandForwardBlocker
+from litedram.DDR5RCD01.DDR5RCD01DCATMAgent import DDR5RCD01DCATMAgent
+from litedram.DDR5RCD01.DDR5RCD01DCSTMAgent import DDR5RCD01DCSTMAgent
+
 
 
 class DDR5RCD01Channel(Module):
@@ -80,8 +85,6 @@ class DDR5RCD01Channel(Module):
         """
         if_ctrl_ibuf = If_ctrl_ibuf()
         if_ibuf_o = If_ibuf()
-
-
         xibuf = DDR5RCD01InputBuffer(
             if_ib_i=if_ibuf,
             if_ib_o=if_ibuf_o,
@@ -89,6 +92,17 @@ class DDR5RCD01Channel(Module):
         )
         self.submodules += xibuf
 
+        """
+            Receive commands blocker
+        """
+        if_ibuf_rx_blocker_o = If_ibuf()
+        if_ctrl_rx_block = If_ctrl_blocker()
+        xreceive_blocker = DDR5RCD01CommandReceiveBlocker(
+            if_ibuf=if_ibuf_o,
+            if_ibuf_o=if_ibuf_rx_blocker_o,
+            if_ctrl=if_ctrl_rx_block,
+        )
+        self.submodules.xreceive_blocker = xreceive_blocker
         """
             Command Logic : Rank A
         """
@@ -114,7 +128,7 @@ class DDR5RCD01Channel(Module):
 
 
         xcmd_logic = DDR5RCD01CommandLogic(
-            if_ibuf_i=if_ibuf_o,
+            if_ibuf_i=if_ibuf_rx_blocker_o,
             if_csca_o=if_csca_o,
             if_csca_o_rank_A=if_csca_o_rank_A,
             if_csca_o_rank_B=if_csca_o_rank_B,
@@ -128,7 +142,7 @@ class DDR5RCD01Channel(Module):
             parity_error=tmp_parity_error,
             reserved_if_mrw_actor=tmp_reserved_if_mrw_actor,
         )
-        self.submodules += xcmd_logic
+        self.submodules.xcmd_logic = xcmd_logic
 
 
         """
@@ -146,13 +160,30 @@ class DDR5RCD01Channel(Module):
         if_obuf_clks_row_B_rankA = If_ck()
 
         if_csca_rank_A = If_bus_csca()
+
         self.comb += if_csca_rank_A.cs_n.eq(if_csca_o_rank_A.dcs_n)
         self.comb += if_csca_rank_A.ca.eq(if_csca_o_rank_A.dca)
 
-        xrankA = DDR5RCD01RankBuffer(
+        if_csca_rank_A_o = If_bus_csca()
+        if_ctrl_fwd_block_A = If_ctrl_blocker()
+        if_clk_rowA_rankA_o = If_ck()
+        if_clk_rowB_rankA_o = If_ck()
+
+        xfwd_blocker_A = DDR5RCD01CommandForwardBlocker(
             if_ibuf=if_csca_rank_A,
             if_clk_row_A=if_clk_rowA_rankA,
             if_clk_row_B=if_clk_rowB_rankA,
+            if_ibuf_o=if_csca_rank_A_o,
+            if_clk_row_A_o=if_clk_rowA_rankA_o,
+            if_clk_row_B_o=if_clk_rowB_rankA_o,
+            if_ctrl = if_ctrl_fwd_block_A,
+        )
+        self.submodules.xfwd_blocker_A = xfwd_blocker_A
+
+        xrankA = DDR5RCD01RankBuffer(
+            if_ibuf=if_csca_rank_A_o,
+            if_clk_row_A=if_clk_rowA_rankA_o,
+            if_clk_row_B=if_clk_rowB_rankA_o,
             if_obuf_csca_row_A=if_obuf_csca_row_A_rankA,
             if_obuf_csca_row_B=if_obuf_csca_row_B_rankA,
             if_obuf_clks_row_A=if_obuf_clks_row_A_rankA,
@@ -164,7 +195,7 @@ class DDR5RCD01Channel(Module):
             if_ctrl_obuf_clks_row_A=if_ctrl_obuf_clks_row_A_rankA,
             if_ctrl_obuf_clks_row_B=if_ctrl_obuf_clks_row_B_rankA,
         )
-        self.submodules += xrankA
+        self.submodules.xrankA = xrankA
 
         self.comb += if_obuf.qacs_a_n.eq(if_obuf_csca_row_A_rankA.qcs_n)
         self.comb += if_obuf.qaca_a.eq(if_obuf_csca_row_A_rankA.qca)
@@ -196,10 +227,26 @@ class DDR5RCD01Channel(Module):
         self.comb += if_csca_rank_B.cs_n.eq(if_csca_o_rank_B.dcs_n)
         self.comb += if_csca_rank_B.ca.eq(if_csca_o_rank_B.dca)
 
-        xrankB = DDR5RCD01RankBuffer(
+        if_csca_rank_B_o = If_bus_csca()
+        if_ctrl_fwd_block_B = If_ctrl_blocker()
+        if_clk_rowA_rankB_o = If_ck()
+        if_clk_rowB_rankB_o = If_ck()
+
+        xfwd_blocker_B = DDR5RCD01CommandForwardBlocker(
             if_ibuf=if_csca_rank_B,
             if_clk_row_A=if_clk_rowA_rankB,
             if_clk_row_B=if_clk_rowB_rankB,
+            if_ibuf_o=if_csca_rank_B_o,
+            if_clk_row_A_o=if_clk_rowA_rankB_o,
+            if_clk_row_B_o=if_clk_rowB_rankB_o,
+            if_ctrl = if_ctrl_fwd_block_B,
+        )
+        self.submodules += xfwd_blocker_B
+
+        xrankB = DDR5RCD01RankBuffer(
+            if_ibuf=if_csca_rank_B_o,
+            if_clk_row_A=if_clk_rowA_rankB_o,
+            if_clk_row_B=if_clk_rowB_rankB_o,
             if_obuf_csca_row_A=if_obuf_csca_row_A_rankB,
             if_obuf_csca_row_B=if_obuf_csca_row_B_rankB,
             if_obuf_clks_row_A=if_obuf_clks_row_A_rankB,
@@ -223,6 +270,31 @@ class DDR5RCD01Channel(Module):
 
         self.comb += if_obuf.qdck_t.eq(if_obuf_clks_row_B_rankB.ck_t)
         self.comb += if_obuf.qdck_c.eq(if_obuf_clks_row_B_rankB.ck_c)
+
+        """
+            DCSTM Agent
+        """
+        dcstm_sample_o = Signal()
+        if_ctrl_dcstm_agent = If_ctrl_dcstm_agent()
+        xdcstm_agent = DDR5RCD01DCSTMAgent(
+        if_ibuf=if_ibuf_o,
+        sample_o=dcstm_sample_o,
+        if_ctrl=if_ctrl_dcstm_agent,
+        )
+        self.submodules += xdcstm_agent
+
+        """
+            DCATM Agent
+        """
+        dcatm_sample_o = Signal()
+        if_ctrl_dcatm_agent = If_ctrl_dcatm_agent()
+
+        xdcatm_agent = DDR5RCD01DCATMAgent(
+            if_ibuf=if_ibuf_o,
+            sample_o=dcatm_sample_o,
+            if_ctrl=if_ctrl_dcatm_agent,
+        )
+        self.submodules += xdcatm_agent
 
         """
             Control Center
@@ -253,11 +325,15 @@ class DDR5RCD01Channel(Module):
             if_common=if_common,
             if_ctrl_common=if_ctrl_common,
             if_config_common=if_config_common,
-            if_regs=if_regs,
+            # if_regs=if_regs,
+            if_ctrl_rx_block=if_ctrl_rx_block,
+            if_ctrl_fwd_block_A=if_ctrl_fwd_block_A,
+            if_ctrl_fwd_block_B=if_ctrl_fwd_block_B,
+            if_ctrl_dcstm_agent=if_ctrl_dcstm_agent,
+            if_ctrl_dcatm_agent=if_ctrl_dcatm_agent,
             is_channel_A=is_master,
         )
-
-        self.submodules += xcontrol_center
+        self.submodules.xcontrol_center = xcontrol_center
 
         xreset_generator = DDR5RCD01ResetGenerator(
             drst_n=if_common.qrst_n,
@@ -266,7 +342,6 @@ class DDR5RCD01Channel(Module):
             qrst_n=if_sdram.qrst_n,
         )
         self.submodules += xreset_generator
-
 
 
 class TestBed(Module):

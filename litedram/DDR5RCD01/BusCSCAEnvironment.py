@@ -203,6 +203,26 @@ class BusCSCAEnvironment(Module):
                                    payload=Payload(mra=0x01, op=0b10000000, cw=0x1))
 
         """
+            DCSTM
+        """
+        scenario = self.extend_inactive(scenario, 1)
+        scenario = self.extend_mrw(scenario,
+                                   payload=Payload(mra=0x02, op=0b00000010, cw=0x1))
+        scenario = self.extend_inactive(scenario, 3)
+        scenario = self.extend_mrw(scenario,
+                                   payload=Payload(mra=0x02, op=0b00000011, cw=0x1))
+        scenario = self.extend_inactive(scenario, 3)
+
+        """
+            DCATM
+        """
+        scenario = self.extend_mrw(scenario,
+                                   payload=Payload(mra=0x02, op=0b00000001, cw=0x1))
+        scenario = self.extend_inactive(scenario, 3)
+        scenario = self.extend_mrw(scenario,
+                                   payload=Payload(mra=0x02, op=0b00000000, cw=0x1))
+
+        """
             Enable QRST
             Write CMD6 and CMD8 to RW04 to clear QRST
         """
@@ -221,6 +241,14 @@ class BusCSCAEnvironment(Module):
         scenario = self.extend_inactive(scenario, 3)
         scenario = self.extend_mrw(scenario,
                                    payload=Payload(mra=0x01, op=0b10000010, cw=0x1))
+
+
+        """
+            NOP to RW04 to release QCS
+        """
+        scenario = self.extend_inactive(scenario, 3)
+        scenario = self.extend_mrw(scenario,
+                                   payload=Payload(mra=0x04, op=0x00, cw=0x1))
 
         scenario = self.extend_inactive(scenario, 10)
         for i in range(pattern_len):
