@@ -277,7 +277,8 @@ class DDR5PHY(Module, AutoCSR):
 
         self.pads        = pads
         self.memtype     = memtype     = "DDR5"
-        self.nranks      = nranks      = len(pads.cs_n) if hasattr(pads, "cs_n") else len(pads.A_cs_n) if hasattr(pads, "A_cs_n") else 1
+        self.nranks      = nranks      = 1 # no support for multiple ranks
+        #self.nranks      = nranks      = len(pads.cs_n) if hasattr(pads, "cs_n") else len(pads.A_cs_n) if hasattr(pads, "A_cs_n") else 1
         self.databits    = databits    = len(pads.dq) if hasattr(pads, "dq") else len(pads.A_dq)
         self.strobes     = strobes     = len(pads.dqs_t) if hasattr(pads, "dqs_t") else len(pads.A_dqs_t)
         self.addressbits = addressbits = 18 # for activate row address
