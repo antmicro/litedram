@@ -70,6 +70,39 @@ class RCDStatePS(Module):
         self.sim_states = sim_states
 
 
+class RCDDCSTMPS(Module):
+    def __init__(self, sig_list, config):
+        self.sig_list = sig_list
+        self.config = config
+        self.state_list = None
+
+    def sanitize_list(self, L):
+        L = [l.tolist() for l in L]
+        L = list(filter(None, L))
+        return L
+
+    def post_process(self):
+        self.trim_states()
+
+    def trim_states(self):
+        """
+            Remove states other than dcstm
+        """
+
+        pass
+
+    def prep(self):
+        """
+            Prepare alert extraction
+        """
+        pass
+
+    def reference(self):
+        """
+            Prepare reference data
+        """
+        pass
+
 class TestBed(Module):
     def __init__(self, is_dual_channel=False):
         RESET_TIME = RCD_SIM_TIMINGS["RESET"]
@@ -142,6 +175,7 @@ class TestBed(Module):
                 is_dual_channel=self.is_dual_channel,
             )
         )
+
         """
             Monitor Channel A Rank A Row A
         """
@@ -206,6 +240,28 @@ class TestBed(Module):
         self.submodules.xmonitor_rcd = xmonitor_rcd
 
         """
+            Monitor DCSTM
+        """
+        self.config_monitor_dcstm = {}
+        xmonitor_dcstm = Monitor(
+            [
+                self.xrcd_core.xchannel_A.xcontrol_center.xfsm.ongoing(
+                    "DCSTM"),
+                self.if_ibuf_A.dcs_n,
+                self.if_ibuf_A.dca,
+                self.if_ibuf_A.dpar,
+                self.if_alert_n.alert_n,
+            ],
+            is_sim_finished=self.xenvironment.agent.sequencer.is_sim_finished,
+            config=self.config_monitor_dcstm
+        )
+        self.submodules.xmonitor_dcstm = xmonitor_dcstm
+
+        """
+            Monitor DCATM
+        """
+        # TODO
+        """
             Generators
         """
         self.add_generators(
@@ -229,6 +285,7 @@ class TestBed(Module):
                 self.xmonitor_ingress.monitor(),
                 self.xmonitor_egress.monitor(),
                 self.xmonitor_rcd.monitor(),
+                self.xmonitor_dcstm.monitor(),
             ]
         }
 
@@ -297,6 +354,12 @@ class DDR5RCD01CoreTests_SingleChannel(unittest.TestCase):
         )
         self.tb.processor_rcd.post_process()
 
+        self.tb.processor_dcstm = RCDDCSTMPS(
+            sig_list=self.tb.xmonitor_dcstm.signal_list,
+            config=self.tb.xmonitor_dcstm.config,
+        )
+        self.tb.processor_dcstm.post_process()
+
         self.tb.processor_ingress = BusCSCAMonitorPostProcessor(
             signal_list=self.tb.xmonitor_ingress.signal_list,
             config=self.tb.xmonitor_ingress.config,
@@ -345,12 +408,10 @@ class DDR5RCD01CoreTests_SingleChannel(unittest.TestCase):
         expected_sim_state_list = ['PON_DRST_EVENT', 'STABLE_POWER_RESET', 'POST_PON_DRST_EVENT',
                                    'INIT_IDLE', 'DCSTM', 'DCATM', 'POST_TM_INIT_IDLE', 'NORMAL']
         assert sim_state_list == expected_sim_state_list, "RCD main FSM states are not as expected"
-        # breakpoint()
+
         self.tb.scoreboard = BusCSCAScoreboard(
             p=self.tb.processor_ingress,
             p_other=self.tb.processor_egress,
-
-
         )
 
         assert 1 == 1
