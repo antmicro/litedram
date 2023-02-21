@@ -247,7 +247,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
             "ck_t":    ((CDCCSRs["ckdly_inc"],      CDCCSRs["ckdly_rst"]),      None),
         }
         for prefix in prefixes:
-            pin_csr_mapping |= {
+            pin_csr_mapping.update({
                 f"{prefix}par":   (
                     (CDCCSRs[f"{prefix}pardly_inc"],   CDCCSRs[f"{prefix}pardly_rst"]),
                      None),
@@ -263,7 +263,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                 f"{prefix}dqs_t": (
                     (CDCCSRs[f"{prefix}wdly_dqs_inc"], CDCCSRs[f"{prefix}wdly_dqs_rst"]),
                     (CDCCSRs[f"{prefix}rdly_dqs_inc"], CDCCSRs[f"{prefix}rdly_dqs_rst"])),
-            }
+            })
 
         SimpleCDC.set_register()
         if pin_domains is not None and with_sub_channels:
