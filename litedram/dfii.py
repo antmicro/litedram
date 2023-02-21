@@ -71,19 +71,28 @@ class CmdInjector(Module, AutoCSR):
             CSRField("ca",          size=14,        description="Command/Address bus"),
             CSRField("cs",          size=cs_width,  description="DFI chip select bus"),
             CSRField("wrdata_en",   size=1),
-            CSRField("wrdata_mask", size=wrdata_mask_width),
             CSRField("rddata_en",   size=1),
         ], description="DDR5 command and control signals")
+        self._command_storage_wr_mask = CSRStorage(fields=[
+            CSRField("wrdata_mask", size=wrdata_mask_width),
+        ], description="DDR5 wrdata mask control signals")
         self._phase_addr = CSRStorage(8)
         self._store_continuous_cmd = CSR()
         self._store_singleshot_cmd = CSR()
         self._single_shot = CSRStorage(reset=0b0)
         self._issue_command = CSR() # Issues command when in single shot, loads to _continuous_phase_signals when in continuous mode
 
-        self._continuous_intermediate_store = Array(Signal(16 + cs_width + wrdata_mask_width, reset=0b11111) for _ in range(4))
-        self._continuous_phase_signals = Array(Signal(16 + cs_width + wrdata_mask_width, reset=0b11111) for _ in range(4))
+        ca_start = 0
+        cs_start = ca_end = 0 + 14
+        wr_en_start = cs_end = cs_start + cs_width
+        rd_en_start = wr_en_end = wr_en_start + 1
+        wr_mask_start = rd_en_end = rd_en_start + 1
+        wr_mask_end = wr_mask_start + wrdata_mask_width
+
+        self._continuous_intermediate_store = Array(Signal(14 + cs_width + 2 + wrdata_mask_width, reset=0b11111) for _ in range(4))
+        self._continuous_phase_signals = Array(Signal(14 + cs_width + 2 + wrdata_mask_width, reset=0b11111) for _ in range(4))
         # There are limited number of commands that make sens to be emitted continuously: DES, NOP. MPC, CS training pattern,
-        self._singleshot_phase_signals = Array(Signal(16 + cs_width + wrdata_mask_width) for _ in range(8)) # BL 16 needs at most 8 DFI transactions (2 for command and 8 for wrdata/rddata)
+        self._singleshot_phase_signals = Array(Signal(14 + cs_width + 2 + wrdata_mask_width) for _ in range(8)) # BL 16 needs at most 8 DFI transactions (2 for command and 8 for wrdata/rddata)
 
         self.sync += [
             If(self._issue_command.re & ~self._single_shot.storage,
@@ -125,7 +134,9 @@ class CmdInjector(Module, AutoCSR):
             self.sync += [
                 If(self._store_continuous_cmd.re,
                     If(self._phase_addr.storage[i],
-                        self._continuous_intermediate_store[i].eq(self._command_storage.storage),
+                        self._continuous_intermediate_store[i].eq(
+                            Cat(self._command_storage.storage,
+                                self._command_storage_wr_mask.storage)),
                     ),
                 ),
             ]
@@ -134,17 +145,12 @@ class CmdInjector(Module, AutoCSR):
             self.sync += [
                 If(self._store_singleshot_cmd.re,
                     If(self._phase_addr.storage[i],
-                        self._singleshot_phase_signals[i].eq(self._command_storage.storage),
+                        self._singleshot_phase_signals[i].eq(
+                            Cat(self._command_storage.storage,
+                                self._command_storage_wr_mask.storage)),
                     ),
                 ),
             ]
-
-        ca_start = 0
-        cs_start = ca_end = 0 + 14
-        wr_en_start = cs_end = cs_start + cs_width
-        wr_mask_start = wr_en_end = wr_en_start + 1
-        rd_en_start = wr_mask_end = wr_mask_start + wrdata_mask_width
-        rd_en_end = rd_en_start + 1
 
         for phase in phases:
             self.comb += [
