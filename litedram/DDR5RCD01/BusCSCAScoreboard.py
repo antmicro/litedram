@@ -6,6 +6,7 @@
 
 # Python
 import logging
+import numpy as np
 from operator import xor
 from dataclasses import dataclass
 # migen
@@ -55,13 +56,16 @@ class BusCSCAScoreboard(Module):
         self.validate_input()
 
         if p_other.config["rank"] == "A":
-            self.q = self.filter_q_by_dest(self.q_ddr, CommandDestination.RANK_A)
+            self.q = self.filter_q_by_dest(
+                self.q_ddr, CommandDestination.RANK_A)
         if p_other.config["rank"] == "B":
-            self.q = self.filter_q_by_dest(self.q_ddr, CommandDestination.RANK_B)
+            self.q = self.filter_q_by_dest(
+                self.q_ddr, CommandDestination.RANK_B)
         self.q_other = self.q_one_n
 
         self.q = self.filter_q_by_type(self.q, MonitorCommandType.DESELECT)
-        self.q_other = self.filter_q_by_type(self.q_other, MonitorCommandType.DESELECT)
+        self.q_other = self.filter_q_by_type(
+            self.q_other, MonitorCommandType.DESELECT)
         self.compare(self.q, self.q_other)
 
     def filter_q_by_dest(self, q, destination):
@@ -146,23 +150,26 @@ class BusCSCAScoreboard(Module):
                 Command type should match
             """
             assert q[id].command_type == q_other[id].command_type
-            logging.info("Command " + str(id) + " type match " + str(q[id].command_type))
+            logging.info("Command " + str(id) + " type match " +
+                         str(q[id].command_type))
             """
                 2x7-bit CA Values should match the 14 bit output
             """
-            if q[id].command_type in [MonitorCommandType.SINGLE_UI,MonitorCommandType.DOUBLE_UI]:
+            if q[id].command_type in [MonitorCommandType.SINGLE_UI, MonitorCommandType.DOUBLE_UI]:
                 ui0 = q[id].dca[0]
                 ui1 = q[id].dca[1]
                 ui_o = BusCSCAScoreboard.deserialize(ui0, ui1)
                 assert ui_o == q_other[id].dca[0]
-                logging.info("DCA value " + "("+str(ui1)+","+str(ui0)+")" + " match " + str(ui_o))
+                logging.info("DCA value " + "("+str(ui1)+"," +
+                             str(ui0)+")" + " match " + str(ui_o))
 
             if q[id].command_type == MonitorCommandType.DOUBLE_UI:
                 ui0 = q[id].dca[2]
                 ui1 = q[id].dca[3]
                 ui_o = BusCSCAScoreboard.deserialize(ui0, ui1)
                 assert ui_o == q_other[id].dca[2]
-                logging.info("DCA value " + "("+str(ui1)+","+str(ui0)+")" + " match " + str(ui_o))
+                logging.info("DCA value " + "("+str(ui1)+"," +
+                             str(ui0)+")" + " match " + str(ui_o))
 
 
 class TestBed(Module):

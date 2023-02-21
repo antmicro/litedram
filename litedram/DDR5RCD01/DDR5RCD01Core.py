@@ -77,7 +77,7 @@ class DDR5RCD01Core(Module):
             if_regs=if_regs_A,
             is_master=is_channel_A_master,
         )
-        self.submodules += xchannel_A
+        self.submodules.xchannel_A = xchannel_A
 
         """
             Channel B
@@ -98,7 +98,7 @@ class DDR5RCD01Core(Module):
                 if_regs=if_regs_B,
                 is_master=is_channel_B_master,
             )
-            self.submodules += xchannel_B
+            self.submodules.xchannel_B = xchannel_B
 
         """
             Common
@@ -113,7 +113,7 @@ class DDR5RCD01Core(Module):
             if_ctrl_common=if_ctrl_common,
             if_config_common=if_config_common,
         )
-        self.submodules += xcommon
+        self.submodules.xcommon = xcommon
 
         """
             Sideband

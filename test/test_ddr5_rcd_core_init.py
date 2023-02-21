@@ -7,6 +7,7 @@
 # Python
 import unittest
 import logging
+import numpy as np
 # migen
 from migen import *
 from migen.fhdl import verilog
@@ -24,9 +25,49 @@ from litedram.DDR5RCD01.BusCSCAMonitorDev import BusCSCAMonitorDev
 from litedram.DDR5RCD01.BusCSCAMonitorDefinitions import *
 from litedram.DDR5RCD01.BusCSCAScoreboard import BusCSCAScoreboard
 from litedram.DDR5RCD01.BusCSCAMonitorPostProcessor import BusCSCAMonitorPostProcessor
+from litedram.DDR5RCD01.Monitor import Monitor
 from litedram.DDR5RCD01.CRG import CRG
 from litedram.DDR5RCD01.RCD_sim_timings import RCD_SIM_TIMINGS, t_sum
 # from test.CRG import CRG
+
+
+class RCDStatePS(Module):
+    def __init__(self, sig_list, config):
+        self.sig_list = sig_list
+        self.config = config
+        self.state_list = self.remove_duplicate()
+
+    def sanitize_list(self, L):
+        L = [l.tolist() for l in L]
+        L = list(filter(None, L))
+        return L
+
+    def post_process(self):
+        self.decode_states()
+
+    def remove_duplicate(self):
+        sig_list_np = np.array(self.sig_list)
+        sig_list_np_uniq, sig_list_np_ind = np.unique(
+            sig_list_np, return_inverse=True, axis=0)
+        diff = np.diff(sig_list_np_ind)
+        diff_indices = np.where(diff)[0]+1
+
+        sig_list_split = np.array_split(self.sig_list, diff_indices)
+
+        non_dp_sig_list = []
+        for arr in sig_list_split:
+            arr_uniq = np.unique(arr, axis=0)
+            arr_uniq = self.sanitize_list(arr_uniq)
+            non_dp_sig_list.append(arr_uniq[0])
+        return non_dp_sig_list
+
+    def decode_states(self):
+        sim_states = []
+        for state in self.state_list:
+            state = np.array(state)
+            state_num = np.where(state == 1)[0][0]
+            sim_states.append((self.config["state_name_list"])[state_num])
+        self.sim_states = sim_states
 
 
 class TestBed(Module):
@@ -125,6 +166,46 @@ class TestBed(Module):
         )
 
         """
+            Monitor RCD State
+        """
+        self.config_monitor_rcd = {
+            "state_name_list": [
+                "PON_DRST_EVENT",
+                "STABLE_POWER_RESET",
+                "POST_PON_DRST_EVENT",
+                "INIT_IDLE",
+                "DCSTM",
+                "DCATM",
+                "POST_TM_INIT_IDLE",
+                "NORMAL",
+            ]
+        }
+
+        xmonitor_rcd = Monitor(
+            [
+                self.xrcd_core.xchannel_A.xcontrol_center.xfsm.ongoing(
+                    "PON_DRST_EVENT"),
+                self.xrcd_core.xchannel_A.xcontrol_center.xfsm.ongoing(
+                    "STABLE_POWER_RESET"),
+                self.xrcd_core.xchannel_A.xcontrol_center.xfsm.ongoing(
+                    "POST_PON_DRST_EVENT"),
+                self.xrcd_core.xchannel_A.xcontrol_center.xfsm.ongoing(
+                    "INIT_IDLE"),
+                self.xrcd_core.xchannel_A.xcontrol_center.xfsm.ongoing(
+                    "DCSTM"),
+                self.xrcd_core.xchannel_A.xcontrol_center.xfsm.ongoing(
+                    "DCATM"),
+                self.xrcd_core.xchannel_A.xcontrol_center.xfsm.ongoing(
+                    "POST_TM_INIT_IDLE"),
+                self.xrcd_core.xchannel_A.xcontrol_center.xfsm.ongoing(
+                    "NORMAL"),
+            ],
+            is_sim_finished=self.xenvironment.agent.sequencer.is_sim_finished,
+            config=self.config_monitor_rcd
+        )
+        self.submodules.xmonitor_rcd = xmonitor_rcd
+
+        """
             Generators
         """
         self.add_generators(
@@ -133,7 +214,7 @@ class TestBed(Module):
 
     def tb_run(self):
         yield self.if_ck_rst.drst_n.eq(0)
-        t = t_sum(["RESET","t_r_init_1"])
+        t = t_sum(["RESET", "t_r_init_1"])
         for _ in range(t):
             yield
         yield self.if_ck_rst.drst_n.eq(1)
@@ -147,6 +228,7 @@ class TestBed(Module):
                 self.tb_run(),
                 self.xmonitor_ingress.monitor(),
                 self.xmonitor_egress.monitor(),
+                self.xmonitor_rcd.monitor(),
             ]
         }
 
@@ -188,6 +270,7 @@ class DDR5RCD01CoreTests_SingleChannel(unittest.TestCase):
         logger.addHandler(fileHandler)
         logger.addHandler(streamHandler)
         logger.setLevel(logging.DEBUG)
+        # logger.setLevel(logging.ERROR)
 
     def tearDown(self):
         del self.tb
@@ -208,15 +291,25 @@ class DDR5RCD01CoreTests_SingleChannel(unittest.TestCase):
         """
             Post-processing validation modules
         """
+        self.tb.processor_rcd = RCDStatePS(
+            sig_list=self.tb.xmonitor_rcd.signal_list,
+            config=self.tb.xmonitor_rcd.config,
+        )
+        self.tb.processor_rcd.post_process()
+
         self.tb.processor_ingress = BusCSCAMonitorPostProcessor(
             signal_list=self.tb.xmonitor_ingress.signal_list,
-            config=self.tb.xmonitor_ingress.config
+            config=self.tb.xmonitor_ingress.config,
+            sim_state_list=self.tb.processor_rcd.sig_list,
+            sim_state_config=self.tb.xmonitor_rcd.config["state_name_list"],
         )
         self.tb.processor_ingress.post_process()
 
         self.tb.processor_egress = BusCSCAMonitorPostProcessor(
             signal_list=self.tb.xmonitor_egress.signal_list,
-            config=self.tb.xmonitor_egress.config
+            config=self.tb.xmonitor_egress.config,
+            sim_state_list=self.tb.processor_rcd.sig_list,
+            sim_state_config=self.tb.xmonitor_rcd.config["state_name_list"],
         )
         self.tb.processor_egress.post_process()
 
@@ -248,9 +341,16 @@ class DDR5RCD01CoreTests_SingleChannel(unittest.TestCase):
         """
             Validation
         """
+        sim_state_list = self.tb.processor_rcd.sim_states
+        expected_sim_state_list = ['PON_DRST_EVENT', 'STABLE_POWER_RESET', 'POST_PON_DRST_EVENT',
+                                   'INIT_IDLE', 'DCSTM', 'DCATM', 'POST_TM_INIT_IDLE', 'NORMAL']
+        assert sim_state_list == expected_sim_state_list, "RCD main FSM states are not as expected"
+        # breakpoint()
         self.tb.scoreboard = BusCSCAScoreboard(
             p=self.tb.processor_ingress,
-            p_other=self.tb.processor_egress
+            p_other=self.tb.processor_egress,
+
+
         )
 
         assert 1 == 1

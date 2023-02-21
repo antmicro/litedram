@@ -528,7 +528,7 @@ class DDR5RCD01ControlCenter(Module):
         """
         if not DEBUG_BOOT_ENABLE:
             xfsm = FSM(reset_state="PON_DRST_EVENT")
-            self.submodules += xfsm
+            self.submodules.xfsm = xfsm
 
             """
                 All inputs are disabled
@@ -718,7 +718,7 @@ class DDR5RCD01ControlCenter(Module):
         """
         if DEBUG_BOOT_ENABLE:
             xfsm = FSM(reset_state="RESET_HARD")
-            self.submodules += xfsm
+            self.submodules.xfsm = xfsm
             xfsm.act(
                 "RESET_HARD",
                 drst_pon.eq(1),

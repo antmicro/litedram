@@ -68,18 +68,23 @@ class BusCSCAMonitorPostProcessor(Module):
     """
         BusCSCAMonitorPostProcessor
         ---------------------------
-        This impementation operates in DDR
+        This implementation operates in DDR
     """
 
     def __init__(self,
                  signal_list,
-                 config
+                 config,
+                 sim_state_list,
+                 sim_state_config,
                  ):
         self.signal_list = signal_list
         self.config = config
+        self.sim_state_list = sim_state_list
+        self.sim_state_config = sim_state_config
         self.commands = []
 
     def post_process(self):
+        self.trim_abnormal_states()
         command_groups = self.convert_to_command_groups()
         cmds = []
         for command_group in command_groups:
@@ -94,6 +99,30 @@ class BusCSCAMonitorPostProcessor(Module):
             logging.debug("-"*20)
             logging.debug("\r\n")
         self.commands = cmds
+
+    def trim_abnormal_states(self):
+        """
+            {dcs_n,dca} order by convention
+        """
+        dcs_n = self.signal_list[0]
+        dca = self.signal_list[1]
+        dca_np = np.array(dca)
+        dcs_n_np = np.array(dcs_n)
+
+        id_normal = self.sim_state_config.index('NORMAL')
+        normal_mask = []
+        for state in self.sim_state_list:
+            normal_mask.append(state[id_normal])
+        normal_mask_np = np.array(normal_mask)
+        id = np.where(normal_mask_np == 1)[0]
+        q_dcs = np.array(dcs_n_np)[id]
+        q_dca = np.array(dca_np)[id]
+
+        q_dcs = q_dcs.tolist()
+        q_dca = q_dca.tolist()
+        self.signal_list[0] = q_dcs
+        self.signal_list[1] = q_dca
+
 
     def split_multicommands(self, command_group):
         dcs_n = command_group[0]
