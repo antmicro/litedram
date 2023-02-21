@@ -10,7 +10,8 @@ from litex.soc.interconnect.csr import CSR
 
 from litedram.phy.utils import delayed, Serializer, Deserializer, Latency, SimpleCDC
 from litedram.phy.sim_utils import SimPad, SimulationPads, SimSerDesMixin
-from litedram.phy.ddr5.basephy import DDR5PHY, DDR5Output
+from litedram.phy.ddr5.basephy import DDR5PHY
+from litedram.phy.ddr5.BasePHYOutput import BasePHYOutput
 
 
 class DDR5SimulationPads(SimulationPads):

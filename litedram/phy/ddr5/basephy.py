@@ -21,41 +21,8 @@ from litedram.phy.utils import (bitpattern, delayed, Serializer, Deserializer, L
     CommandsPipeline)
 from litedram.phy.ddr5.commands import DFIPhaseAdapter
 
+from litedram.phy.ddr5.BasePHYOutput import BasePHYOutput
 from litedram.phy.ddr5.BasePHYPatternGenerators import DQOePattern, DQSPattern
-
-class DDR5Output:
-    """
-        Unserialized output of DDR5PHY.
-        Has to be serialized by concrete implementation.
-    """
-    def __init__(self, nphases, databits, nranks, nstrobes, with_sub_channels=False, name=None):
-        self.ck_t   = Signal(2*nphases)
-        self.ck_c   = Signal(2*nphases)
-        self.reset_n = Signal(2*nphases, reset=~0) # Serializer will work in ddr mode
-        self.alert_n = Signal(2*nphases)           # Deserializer will work in ddr mode
-
-        prefixes = [""] if not with_sub_channels else ["A_", "B_"]
-
-        for prefix in prefixes:
-            setattr(self, prefix+'cs_n', [Signal(2*nphases, reset=2**(2*nphases)-1, name=name and f"{name}_{i}_cs_n") for i in range(nranks)])
-            setattr(self, prefix+'ca',   [Signal(2*nphases, name=name and f"{name}_{i}_ca") for i in range(14)])
-            # 2*nphases, as phy will run in ddr mode
-
-            setattr(self, prefix+'par',  Signal(2*nphases, name=name and name+"par_n"))
-
-            setattr(self, prefix+'dq_o',  [Signal(2*nphases, name=name and f"{name}_{i}_dq_o") for i in range(databits)])
-            setattr(self, prefix+'dq_oe', [Signal(2*nphases, name=name and f"{name}_{i}_dq_oe") for i in range(nstrobes)])
-            setattr(self, prefix+'dq_i',  [Signal(2*nphases, name=name and f"{name}_{i}_dq_i") for i in range(databits)])
-
-            setattr(self, prefix+'dm_n_o',  [Signal(2*nphases, name=name and f"{name}_{i}_dm_n_o") for i in range(nstrobes)])
-            setattr(self, prefix+'dm_n_i',  [Signal(2*nphases, name=name and f"{name}_{i}_dm_i_o") for i in range(nstrobes)])
-
-            setattr(self, prefix+'dqs_t_o',  [Signal(2*nphases, name=name and f"{name}_{i}_dqs_t_o") for i in range(nstrobes)])
-            setattr(self, prefix+'dqs_t_i',  [Signal(2*nphases, name=name and f"{name}_{i}_dqs_t_i") for i in range(nstrobes)])
-            setattr(self, prefix+'dqs_oe',   [Signal(2*nphases, name=name and f"{name}_{i}_dqs_oe") for i in range(nstrobes)])
-            setattr(self, prefix+'dqs_c_o',  [Signal(2*nphases, name=name and f"{name}_{i}_dqs_c_o") for i in range(nstrobes)])
-            setattr(self, prefix+'dqs_c_i',  [Signal(2*nphases, name=name and f"{name}_{i}_dqs_c_i") for i in range(nstrobes)])
-
 
 class DDR5PHYAddress(Module):
     def __init__(self, out, dfi, rdimm_mode, prefix):
@@ -185,8 +152,8 @@ class DDR5PHY(Module, AutoCSR):
 
     This class implements all the logic required to convert DFI to/from pads.
     It works in a single clock domain. Signals for DRAM pads are stored in
-    DDR5Output (self.out). Concrete implementations of DDR5 PHYs derive
-    from this class and perform (de-)serialization of DDR5Output to pads.
+    BasePHYOutput (self.out). Concrete implementations of DDR5 PHYs derive
+    from this class and perform (de-)serialization of BasePHYOutput to pads.
 
     DFI commands
     ------------
@@ -459,7 +426,7 @@ class DDR5PHY(Module, AutoCSR):
         # Now prepare the data by converting the sequences on adapters into sequences on the pads.
         # We have to ignore overlapping commands, and module timings have to ensure that there are
         # no overlapping commands anyway.
-        self.out = DDR5Output(nphases, databits, nranks, strobes, with_sub_channels, name="basephy")
+        self.out = BasePHYOutput(nphases, databits, nranks, strobes, with_sub_channels, name="basephy")
 
         # Clocks -----------------------------------------------------------------------------------
         self.comb += self.out.ck_t.eq(bitpattern("-_-_-_-_"))
