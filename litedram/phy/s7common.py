@@ -150,7 +150,7 @@ class S7Common(Module):
 
     def iserdese2_ddr(self, *, din, dout, clk, clkdiv="sys2x", rst_sig=None):
         data_width = len(dout)
-        assert data_width == 8, (data_width, dout)
+        assert data_width in [4, 8], (data_width, dout)
 
         rst_sig = self._rst.storage if rst_sig is None else rst_sig
         params = dict(
