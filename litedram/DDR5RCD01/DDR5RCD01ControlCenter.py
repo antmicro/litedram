@@ -102,12 +102,14 @@ class DDR5RCD01ControlCenter(Module):
                  if_common,
                  if_ctrl_common,
                  if_config_common,
-                #  if_regs,
+                 #  if_regs,
                  if_ctrl_rx_block,
                  if_ctrl_fwd_block_A,
                  if_ctrl_fwd_block_B,
                  if_ctrl_dcstm_agent,
                  if_ctrl_dcatm_agent,
+                 if_ctrl_error_arbiter,
+                 if_ctrl_cmd_logic,
                  is_channel_A=True,
                  ):
         """
@@ -175,6 +177,8 @@ class DDR5RCD01ControlCenter(Module):
         # -----------------------------------------0b76543210
         boot_image_rw00_rw5f[RW_GLOBAL_FEATURES] = 0b00100011
 
+        self.comb += if_ctrl_cmd_logic.is_output_inversion_en.eq(
+            OUTPUT_INVERSION_ENABLE)
         """ Table 99
             RW01
             Parity, CMD Blocking and Alert Global Control Word
@@ -191,6 +195,9 @@ class DDR5RCD01ControlCenter(Module):
         ALERT_REENABLE = regs[RW_SECONDARY_FEATURES][7]
         # --------------------------------------------0b76543210
         boot_image_rw00_rw5f[RW_SECONDARY_FEATURES] = 0b10000000
+
+        self.comb += if_ctrl_cmd_logic.is_parity_checking_en.eq(
+            PARITY_CHECKING_ENABLE)
 
         """ Table 101
             RW02
@@ -265,35 +272,35 @@ class DDR5RCD01ControlCenter(Module):
         #     drst_rw04.eq(0)
         # )
         self.sync += Case(
-            command,{
+            command, {
                 CMD_0_NOP: [],
                 CMD_5_CH_A_DRAM_RST: [
-                        drst_rw04.eq(1)
-                    ],
+                    drst_rw04.eq(1)
+                ],
                 CMD_6_CH_A_DRAM_RST_CLEAR: [
-                        drst_rw04.eq(0)
-                    ],
+                    drst_rw04.eq(0)
+                ],
                 CMD_7_CH_B_DRAM_RST: [
-                        # drst_rw04.eq(1)
-                    ],
+                    # drst_rw04.eq(1)
+                ],
                 CMD_8_CH_B_DRAM_RST_CLEAR: [
-                        # drst_rw04.eq(0)
-                    ],
+                    # drst_rw04.eq(0)
+                ],
                 CMD_9_CH_A_PARITY_ERR_CLEAR: [
-                        b.eq(1)
-                    ],
+                    b.eq(1)
+                ],
                 CMD_A_CH_B_PARITY_ERR_CLEAR: [
-                        b.eq(1)
-                    ],
+                    b.eq(1)
+                ],
                 CMD_D_ALERT_N_TOGGLE: [
-                        b.eq(1)
-                    ],
+                    b.eq(1)
+                ],
                 CMD_E_CH_A_QCS_HIGH: [
-                        b.eq(1)
-                    ],
+                    b.eq(1)
+                ],
                 CMD_F_CH_B_QCS_HIGH: [
-                        b.eq(1)
-                    ],
+                    b.eq(1)
+                ],
                 "default": []
             }
         )
@@ -340,17 +347,25 @@ class DDR5RCD01ControlCenter(Module):
         # ----------------------------------------------0b76543210
         boot_image_rw00_rw5f[RW_CLOCK_OUTPUT_CONTROL] = 0b00111010
 
-        self.comb += if_ctrl_obuf_clks_row_A_rankA.oe_ck_t.eq(~QACK_CLK_ENABLE_N)
-        self.comb += if_ctrl_obuf_clks_row_A_rankA.oe_ck_c.eq(~QACK_CLK_ENABLE_N)
+        self.comb += if_ctrl_obuf_clks_row_A_rankA.oe_ck_t.eq(
+            ~QACK_CLK_ENABLE_N)
+        self.comb += if_ctrl_obuf_clks_row_A_rankA.oe_ck_c.eq(
+            ~QACK_CLK_ENABLE_N)
 
-        self.comb += if_ctrl_obuf_clks_row_B_rankA.oe_ck_t.eq(~QBCK_CLK_ENABLE_N)
-        self.comb += if_ctrl_obuf_clks_row_B_rankA.oe_ck_c.eq(~QBCK_CLK_ENABLE_N)
+        self.comb += if_ctrl_obuf_clks_row_B_rankA.oe_ck_t.eq(
+            ~QBCK_CLK_ENABLE_N)
+        self.comb += if_ctrl_obuf_clks_row_B_rankA.oe_ck_c.eq(
+            ~QBCK_CLK_ENABLE_N)
 
-        self.comb += if_ctrl_obuf_clks_row_A_rankB.oe_ck_t.eq(~QCCK_CLK_ENABLE_N)
-        self.comb += if_ctrl_obuf_clks_row_A_rankB.oe_ck_c.eq(~QCCK_CLK_ENABLE_N)
+        self.comb += if_ctrl_obuf_clks_row_A_rankB.oe_ck_t.eq(
+            ~QCCK_CLK_ENABLE_N)
+        self.comb += if_ctrl_obuf_clks_row_A_rankB.oe_ck_c.eq(
+            ~QCCK_CLK_ENABLE_N)
 
-        self.comb += if_ctrl_obuf_clks_row_B_rankB.oe_ck_t.eq(~QDCK_CLK_ENABLE_N)
-        self.comb += if_ctrl_obuf_clks_row_B_rankB.oe_ck_c.eq(~QDCK_CLK_ENABLE_N)
+        self.comb += if_ctrl_obuf_clks_row_B_rankB.oe_ck_t.eq(
+            ~QDCK_CLK_ENABLE_N)
+        self.comb += if_ctrl_obuf_clks_row_B_rankB.oe_ck_c.eq(
+            ~QDCK_CLK_ENABLE_N)
 
         """ Table 108
             RW09
@@ -385,10 +400,14 @@ class DDR5RCD01ControlCenter(Module):
             2. QCS_ENABLE
             3.
         """
-        self.comb += if_ctrl_obuf_csca_row_A_rankA.oe_qcs_n.eq(~QACS_N_ENABLE_N)
-        self.comb += if_ctrl_obuf_csca_row_B_rankA.oe_qcs_n.eq(~QACS_N_ENABLE_N)
-        self.comb += if_ctrl_obuf_csca_row_A_rankB.oe_qcs_n.eq(~QBCS_N_ENABLE_N)
-        self.comb += if_ctrl_obuf_csca_row_B_rankB.oe_qcs_n.eq(~QBCS_N_ENABLE_N)
+        self.comb += if_ctrl_obuf_csca_row_A_rankA.oe_qcs_n.eq(
+            ~QACS_N_ENABLE_N)
+        self.comb += if_ctrl_obuf_csca_row_B_rankA.oe_qcs_n.eq(
+            ~QACS_N_ENABLE_N)
+        self.comb += if_ctrl_obuf_csca_row_A_rankB.oe_qcs_n.eq(
+            ~QBCS_N_ENABLE_N)
+        self.comb += if_ctrl_obuf_csca_row_B_rankB.oe_qcs_n.eq(
+            ~QBCS_N_ENABLE_N)
 
         # DCS, DCA Output inversion
         self.comb += if_ctrl_obuf_csca_row_A_rankA.o_inv_en_qcs_n.eq(0)
@@ -566,10 +585,10 @@ class DDR5RCD01ControlCenter(Module):
             """
             xfsm.act(
                 "POST_PON_DRST_EVENT",
-                NextValue(drst_pon,0),
-                NextValue(if_ctrl_rx_block.block,0),
-                NextValue(if_ctrl_fwd_block_A.block,1),
-                NextValue(if_ctrl_fwd_block_B.block,1),
+                NextValue(drst_pon, 0),
+                NextValue(if_ctrl_rx_block.block, 0),
+                NextValue(if_ctrl_fwd_block_A.block, 1),
+                NextValue(if_ctrl_fwd_block_B.block, 1),
                 NextState("INIT_IDLE")
             )
 
@@ -616,6 +635,16 @@ class DDR5RCD01ControlCenter(Module):
             xfsm.act(
                 "DCSTM",
                 # TRAIN DCS
+                if_ctrl_dcstm_agent.enable.eq(1),
+                if_ctrl_error_arbiter.is_dcstm_en.eq(1),
+                If(
+                    (HOST_IF_TM_CH_A == HOST_IF_TM_ENCODING.DCSTM_0),
+                    if_ctrl_dcstm_agent.select_dcs_n.eq(0)
+                ),
+                If(
+                    (HOST_IF_TM_CH_A == HOST_IF_TM_ENCODING.DCSTM_1),
+                    if_ctrl_dcstm_agent.select_dcs_n.eq(1)
+                ),
                 If(
                     (HOST_IF_TM_CH_A == HOST_IF_TM_ENCODING.NORMAL_MODE),
                     NextState("INIT_IDLE"),
@@ -632,6 +661,8 @@ class DDR5RCD01ControlCenter(Module):
             """
             xfsm.act(
                 "DCATM",
+                if_ctrl_dcatm_agent.enable.eq(1),
+                if_ctrl_error_arbiter.is_dcatm_en.eq(1),
                 # TRAIN DCA
                 If(
                     HOST_IF_TM_CH_A == HOST_IF_TM_ENCODING.NORMAL_MODE,
@@ -648,9 +679,9 @@ class DDR5RCD01ControlCenter(Module):
                 "POST_TM_INIT_IDLE",
                 If(
                     execute_command & (command == CMD_0_NOP),
-                    NextValue(if_ctrl_fwd_block_A.block,0),
-                    NextValue(if_ctrl_fwd_block_B.block,0),
-                    NextValue(if_ctrl_rx_block.block,0),
+                    NextValue(if_ctrl_fwd_block_A.block, 0),
+                    NextValue(if_ctrl_fwd_block_B.block, 0),
+                    NextValue(if_ctrl_rx_block.block, 0),
                     NextValue(if_ctrl_obuf_csca_row_A_rankA.tie_low_cs, 0),
                     NextValue(if_ctrl_obuf_csca_row_B_rankA.tie_low_cs, 0),
                     NextValue(if_ctrl_obuf_csca_row_A_rankB.tie_low_cs, 0),
@@ -676,9 +707,9 @@ class DDR5RCD01ControlCenter(Module):
 
             xfsm.act(
                 "NORMAL",
-                NextValue(if_ctrl_rx_block.block,0),
-                NextValue(if_ctrl_fwd_block_A.block,0),
-                NextValue(if_ctrl_fwd_block_B.block,0),
+                NextValue(if_ctrl_rx_block.block, 0),
+                NextValue(if_ctrl_fwd_block_A.block, 0),
+                NextValue(if_ctrl_fwd_block_B.block, 0),
                 NextState("NORMAL"),
             )
 

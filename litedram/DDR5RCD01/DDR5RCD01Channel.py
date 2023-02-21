@@ -25,7 +25,7 @@ from litedram.DDR5RCD01.DDR5RCD01CommandReceiveBlocker import DDR5RCD01CommandRe
 from litedram.DDR5RCD01.DDR5RCD01CommandForwardBlocker import DDR5RCD01CommandForwardBlocker
 from litedram.DDR5RCD01.DDR5RCD01DCATMAgent import DDR5RCD01DCATMAgent
 from litedram.DDR5RCD01.DDR5RCD01DCSTMAgent import DDR5RCD01DCSTMAgent
-
+from litedram.DDR5RCD01.DDR5RCD01ErrorArbiter import DDR5RCD01ErrorArbiter
 
 
 class DDR5RCD01Channel(Module):
@@ -118,14 +118,8 @@ class DDR5RCD01Channel(Module):
 
         if_register = If_registers()
 
-        tmp_rw_is_output_inversion_enabled=Signal()
-        self.comb += tmp_rw_is_output_inversion_enabled.eq(1)
-
-        tmp_rw_is_parity_checking_enabled=Signal()
-        self.comb += tmp_rw_is_parity_checking_enabled.eq(0)
-        tmp_parity_error=Signal()
-        tmp_reserved_if_mrw_actor=Signal()
-
+        parity_error_o = Signal()
+        if_ctrl_cmd_logic = If_ctrl_cmd_logic()
 
         xcmd_logic = DDR5RCD01CommandLogic(
             if_ibuf_i=if_ibuf_rx_blocker_o,
@@ -136,14 +130,12 @@ class DDR5RCD01Channel(Module):
             if_ctrl_lbuf_rank_A_row_B=if_ctrl_lbuf_row_B_rankA,
             if_ctrl_lbuf_rank_B_row_A=if_ctrl_lbuf_row_A_rankB,
             if_ctrl_lbuf_rank_B_row_B=if_ctrl_lbuf_row_B_rankB,
-            if_register = if_register,
-            rw_is_output_inversion_enabled=tmp_rw_is_output_inversion_enabled,
-            rw_is_parity_checking_enabled=tmp_rw_is_parity_checking_enabled,
-            parity_error=tmp_parity_error,
-            reserved_if_mrw_actor=tmp_reserved_if_mrw_actor,
+            if_register=if_register,
+            rw_is_output_inversion_enabled=if_ctrl_cmd_logic.is_output_inversion_en,
+            rw_is_parity_checking_enabled=if_ctrl_cmd_logic.is_parity_checking_en,
+            parity_error=parity_error_o,
         )
         self.submodules.xcmd_logic = xcmd_logic
-
 
         """
              Rank Buffer A
@@ -176,7 +168,7 @@ class DDR5RCD01Channel(Module):
             if_ibuf_o=if_csca_rank_A_o,
             if_clk_row_A_o=if_clk_rowA_rankA_o,
             if_clk_row_B_o=if_clk_rowB_rankA_o,
-            if_ctrl = if_ctrl_fwd_block_A,
+            if_ctrl=if_ctrl_fwd_block_A,
         )
         self.submodules.xfwd_blocker_A = xfwd_blocker_A
 
@@ -239,7 +231,7 @@ class DDR5RCD01Channel(Module):
             if_ibuf_o=if_csca_rank_B_o,
             if_clk_row_A_o=if_clk_rowA_rankB_o,
             if_clk_row_B_o=if_clk_rowB_rankB_o,
-            if_ctrl = if_ctrl_fwd_block_B,
+            if_ctrl=if_ctrl_fwd_block_B,
         )
         self.submodules += xfwd_blocker_B
 
@@ -277,9 +269,9 @@ class DDR5RCD01Channel(Module):
         dcstm_sample_o = Signal()
         if_ctrl_dcstm_agent = If_ctrl_dcstm_agent()
         xdcstm_agent = DDR5RCD01DCSTMAgent(
-        if_ibuf=if_ibuf_o,
-        sample_o=dcstm_sample_o,
-        if_ctrl=if_ctrl_dcstm_agent,
+            if_ibuf=if_ibuf_o,
+            sample_o=dcstm_sample_o,
+            if_ctrl=if_ctrl_dcstm_agent,
         )
         self.submodules += xdcstm_agent
 
@@ -295,6 +287,22 @@ class DDR5RCD01Channel(Module):
             if_ctrl=if_ctrl_dcatm_agent,
         )
         self.submodules += xdcatm_agent
+
+        """
+            This is hard-connected to alert, which means that
+            host training can only be done through the ALERT_n pin
+            TODO reconnect to allow loopback, if needed
+        """
+        if_ctrl_error_arbiter = If_ctrl_error_arbiter()
+        xerror_arbiter = DDR5RCD01ErrorArbiter(
+            parity_error=parity_error_o,
+            sdram_error=if_sdram.derror_in_n,
+            dcstm_sample=dcstm_sample_o,
+            dcatm_sample=dcatm_sample_o,
+            error_o=if_common.derror_in_n,
+            if_ctrl=if_ctrl_error_arbiter,
+        )
+        self.submodules += xerror_arbiter
 
         """
             Control Center
@@ -317,7 +325,7 @@ class DDR5RCD01Channel(Module):
             if_ctrl_obuf_csca_row_B_rankB=if_ctrl_obuf_csca_row_B_rankB,
             if_ctrl_obuf_clks_row_A_rankB=if_ctrl_obuf_clks_row_A_rankB,
             if_ctrl_obuf_clks_row_B_rankB=if_ctrl_obuf_clks_row_B_rankB,
-            if_register = if_register,
+            if_register=if_register,
             drst_rw04=drst_rw04,
             drst_pon=drst_pon,
             if_ctrl_global=if_ctrl_global,
@@ -331,6 +339,8 @@ class DDR5RCD01Channel(Module):
             if_ctrl_fwd_block_B=if_ctrl_fwd_block_B,
             if_ctrl_dcstm_agent=if_ctrl_dcstm_agent,
             if_ctrl_dcatm_agent=if_ctrl_dcatm_agent,
+            if_ctrl_error_arbiter=if_ctrl_error_arbiter,
+            if_ctrl_cmd_logic=if_ctrl_cmd_logic,
             is_channel_A=is_master,
         )
         self.submodules.xcontrol_center = xcontrol_center

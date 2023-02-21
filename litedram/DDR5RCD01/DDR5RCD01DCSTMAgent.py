@@ -6,6 +6,7 @@
 
 # Python
 import logging
+import math
 # migen
 from migen import *
 from migen.fhdl import verilog
@@ -22,7 +23,11 @@ class DDR5RCD01DCSTMAgent(Module):
 
         Module
         ------
+        DDR
 
+        The RCD model runs on a clock with doubled frequency, therefore the
+        DCSTM Agent will count 8 samples instead of 4 and produce output
+        based on {0,2,4,6}-th samples
 
         Parameters
         ------
@@ -48,7 +53,7 @@ class DDR5RCD01DCSTMAgent(Module):
         """
             Hold 4 last samples
         """
-        DCSTM_SAMPLE_NUM = 4
+        DCSTM_SAMPLE_NUM = 8
         dcs_n_samples = Array(Signal() for _ in range(DCSTM_SAMPLE_NUM-1))
         for i in range(DCSTM_SAMPLE_NUM-1):
             if i == 0:
@@ -58,7 +63,8 @@ class DDR5RCD01DCSTMAgent(Module):
         """
             Count to 4 samples
         """
-        ui_counter = Signal(2, reset=0)
+        ui_counter_w = math.ceil(math.log2(DCSTM_SAMPLE_NUM))
+        ui_counter = Signal(ui_counter_w, reset=0)
         self.sync += If(
             if_ctrl.enable,
             ui_counter.eq(ui_counter+1)
@@ -72,12 +78,12 @@ class DDR5RCD01DCSTMAgent(Module):
         """
         sample = Signal()
         self.sync += If(
-            ui_counter == 3,
+            ui_counter == DCSTM_SAMPLE_NUM-1,
             If(
                 (dcs_n == 0) &
-                (dcs_n_samples[0] == 1) &
-                (dcs_n_samples[1] == 0) &
-                (dcs_n_samples[2] == 1),
+                (dcs_n_samples[1] == 1) &
+                (dcs_n_samples[3] == 0) &
+                (dcs_n_samples[5] == 1),
                 sample.eq(0)
             ).Else(
                 sample.eq(1)

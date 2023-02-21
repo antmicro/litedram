@@ -343,6 +343,7 @@ class If_ctrl_blocker(Record):
             ('block', 1),
         ]
 
+
 class If_ctrl_dcstm_agent(Record):
     """
     DCSTM
@@ -357,6 +358,7 @@ class If_ctrl_dcstm_agent(Record):
             ('enable', 1),
             ('select_dcs_n', 1),
         ]
+
 
 class If_ctrl_dcatm_agent(Record):
     """
@@ -373,6 +375,39 @@ class If_ctrl_dcatm_agent(Record):
             ('exit_dcatm', 1),
         ]
 
+
+class If_ctrl_error_arbiter(Record):
+    """
+    DCATM
+    """
+
+    def __init__(self):
+        layout = self.description()
+        Record.__init__(self, layout)
+
+    def description(self,):
+        return [
+            ('is_dcstm_en', 1),
+            ('is_dcatm_en', 1),
+            ('is_normal_en', 1),
+            ('is_parity_checking_en', 1),
+        ]
+
+
+class If_ctrl_cmd_logic(Record):
+    """
+    DCATM
+    """
+
+    def __init__(self):
+        layout = self.description()
+        Record.__init__(self, layout)
+
+    def description(self,):
+        return [
+            ('is_output_inversion_en', 1),
+            ('is_parity_checking_en', 1),
+        ]
 
 
 if __name__ == "__main__":

@@ -21,6 +21,8 @@ class DDR5RCD01DCATMAgent(Module):
     """
         DDR5 RCD DCA Training Mode Agent
 
+        RCD model operates with doubled frequency (DDR mode by default).
+        This implementation of the DCATM is meant for XOR of both edges
         Module
         ------
 
@@ -34,21 +36,36 @@ class DDR5RCD01DCATMAgent(Module):
                  sample_o: Signal,
                  if_ctrl: If_ctrl_dcatm_agent):
         """
-           IN DCATM, always DCS_n[0] is used
+           TODO confirm: in DCATM, always DCS_n[0] is used?
         """
-        dca_w = len(if_ibuf.dca)
         dcs_n = Signal()
         self.comb += dcs_n.eq(if_ibuf.dcs_n[0])
+        dcs_n_d = Signal()
+        self.sync += dcs_n_d.eq(dcs_n)
+
+
+        dca_w = len(if_ibuf.dca)
+        dca = Signal(dca_w)
+        self.comb += dca.eq(if_ibuf.dca)
+        dca_d = Signal(dca_w)
+        self.sync += dca_d.eq(dca)
+
+        dpar_w = len(if_ibuf.dpar)
+        dpar = Signal(dpar_w)
+        self.comb += dpar.eq(if_ibuf.dpar)
+        dpar_d = Signal(dpar_w)
+        self.sync += dpar_d.eq(dpar)
 
         """
             If DCS_n[0] is asserted, capture the XOR value
             Output sample calculation logic
         """
         sample = Signal()
+        # If both edges are used
         self.sync += If(
-            dcs_n == 0,
-            sample.eq(reduce(xor, [if_ibuf.dca[bit]
-                      for bit in range(dca_w)]) ^ if_ibuf.dpar)
+            (dcs_n == 0) &
+            (dcs_n_d == 0),
+            sample.eq(reduce(xor, Cat(dpar,dca,dpar_d,dca_d)))
         )
 
         """
@@ -64,19 +81,22 @@ class DDR5RCD01DCATMAgent(Module):
         )
 
         """
-            If dcs is asserted for 2 or more cycles, exit the mode.
+            "If dcs is asserted for 2 or more cycles, exit the mode."
+            4 clocks of DDR in the simulation.
             Model ignores "limited to 8 cycles" behavior
         """
-        dcs_n_d = Signal()
-        exit_dcatm_mode = Signal()
-        self.sync += dcs_n_d.eq(dcs_n)
-        self.comb += If(
-            (dcs_n == 0) &
-            (dcs_n_d == 0),
-            exit_dcatm_mode.eq(1)
-        ).Else(
-            exit_dcatm_mode.eq(0)
-        )
+        # TODO re-enable
+        # dcs_n_d = Signal()
+        # exit_dcatm_mode = Signal()
+        # self.sync += dcs_n_d.eq(dcs_n)
+        # self.comb += If(
+        #     (dcs_n == 0) &
+        #     (dcs_n_d == 0),
+        #     exit_dcatm_mode.eq(1)
+        # ).Else(
+        #     exit_dcatm_mode.eq(0)
+        # )
+        self.comb += if_ctrl.exit_dcatm.eq(0)
 
 
 class TestBed(Module):

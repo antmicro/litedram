@@ -163,6 +163,22 @@ class BusCSCAEnvironment(Module):
         scenario += [BusCSCAMRW(payload=payload, is_padded=False).cmd]
         return scenario
 
+    @staticmethod
+    def extend_dcstm(scenario, len):
+        for _ in range(len):
+            scenario += [BusCSCANOP().cmd]
+            scenario += [BusCSCAInactive().cmd]
+        return scenario
+
+    @staticmethod
+    def extend_dcatm(scenario, len):
+        for _ in range(len):
+            scenario += [BusCSCADCATM().cmd]
+            for _ in range(3):
+                scenario += [BusCSCAInactive().cmd]
+
+        return scenario
+
     def test_init(self,
                   inactive_pre_len=5,
                   inactive_inter_len=1,
@@ -209,8 +225,12 @@ class BusCSCAEnvironment(Module):
         scenario = self.extend_mrw(scenario,
                                    payload=Payload(mra=0x02, op=0b00000010, cw=0x1))
         scenario = self.extend_inactive(scenario, 3)
+        scenario = self.extend_dcstm(scenario, 8)
+        scenario = self.extend_inactive(scenario, 3)
         scenario = self.extend_mrw(scenario,
                                    payload=Payload(mra=0x02, op=0b00000011, cw=0x1))
+        scenario = self.extend_inactive(scenario, 3)
+        scenario = self.extend_dcstm(scenario, 8)
         scenario = self.extend_inactive(scenario, 3)
 
         """
@@ -219,6 +239,7 @@ class BusCSCAEnvironment(Module):
         scenario = self.extend_mrw(scenario,
                                    payload=Payload(mra=0x02, op=0b00000001, cw=0x1))
         scenario = self.extend_inactive(scenario, 3)
+        scenario = self.extend_dcatm(scenario, 4)
         scenario = self.extend_mrw(scenario,
                                    payload=Payload(mra=0x02, op=0b00000000, cw=0x1))
 

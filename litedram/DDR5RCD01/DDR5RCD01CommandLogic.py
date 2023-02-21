@@ -49,7 +49,6 @@ class DDR5RCD01CommandLogic(Module):
                  rw_is_output_inversion_enabled,
                  rw_is_parity_checking_enabled,
                  parity_error,
-                 reserved_if_mrw_actor,
                  ):
         """
             Decoder
