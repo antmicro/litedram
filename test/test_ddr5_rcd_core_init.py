@@ -71,6 +71,16 @@ class RCDStatePS(Module):
 
 
 class RCDDCSTMPS(Module):
+    """
+    Signal list:
+    0 : xfsm.ongoing("DCSTM")
+    1 : RW02
+    2 : dcs_n
+    3 : dca
+    4 : dpar
+    5 : alert_n
+    """
+
     def __init__(self, sig_list, config):
         self.sig_list = sig_list
         self.config = config
@@ -83,13 +93,41 @@ class RCDDCSTMPS(Module):
 
     def post_process(self):
         self.trim_states()
+        self.split_dcs_n_x_training()
+        self.validate(cs_training_bit=0)
+        self.validate(cs_training_bit=1)
+        breakpoint()
+
+    def split_dcs_n_x_training(self):
+        """
+            Split the data into dcs0 and dcs1 training sets
+
+            RW02 has index '1' and contains either value '2' or '3'
+            2 if training bit 0
+            3 if training bit 1
+        """
+        sig_np = np.array(self.sig_list)
+        indices_dcs_n_0 = np.where(sig_np[1, :] == 2)[0]
+        indices_dcs_n_1 = np.where(sig_np[1, :] == 3)[0]
+
+        dcs_n_0 = np.bitwise_and(sig_np[2, indices_dcs_n_0], 0x01)
+        dcs_n_1 = np.right_shift(np.bitwise_and(
+            sig_np[2, indices_dcs_n_1], 0x02), 1)
+        self.dcstm_0 = [dcs_n_0.tolist(), sig_np[5, indices_dcs_n_0].tolist()]
+        self.dcstm_1 = [dcs_n_1.tolist(), sig_np[5, indices_dcs_n_1].tolist()]
 
     def trim_states(self):
         """
-            Remove states other than dcstm
+            Remove captured signals in states other than DCSTM
         """
-
-        pass
+        sig_np = np.array(self.sig_list)
+        indices = np.where(sig_np[:, 0] == 1)[0]
+        sig_list = []
+        for i in range(sig_np.shape[1]):
+            sig = sig_np[:, i]
+            sig = sig[indices].tolist()
+            sig_list.append(sig)
+        self.sig_list = sig_list
 
     def prep(self):
         """
@@ -97,11 +135,53 @@ class RCDDCSTMPS(Module):
         """
         pass
 
-    def reference(self):
+    def validate(self, cs_training_bit=0):
         """
             Prepare reference data
+
+            Take every 4 samples (8 in ddr)
+            Calculate output
+            In first sample, the alert_n remains high
+            If the total number of samples is not divisible by 4, alert should be as in last state
+            dcs_n = None
         """
-        pass
+
+        sig_list_np = np.array((self.dcstm_0, self.dcstm_1)[
+                               bool(cs_training_bit)])
+
+        dcs_n_np = sig_list_np[0, :]
+        alert_n_np = sig_list_np[1, :]
+
+        WINDOW_LEN = 8
+        window = [(WINDOW_LEN)*i+(WINDOW_LEN-1)
+                  for i in range(int(dcs_n_np.shape[0]/WINDOW_LEN))]
+        window_np = np.array(window)+1
+
+        samples_dcs_n = np.split(dcs_n_np, window_np)
+        samples_alert_n = np.split(alert_n_np, window_np)
+        samples_dcs_n_len = len(samples_dcs_n)
+        for id, sample in enumerate(samples_dcs_n):
+            if id == (samples_dcs_n_len):
+                continue
+            expected_alert_n = self.reference(sample)
+            sim_alert_n = samples_alert_n[id+1].tolist()
+            breakpoint()
+            assert sim_alert_n == expected_alert_n
+
+    @staticmethod
+    def reference(dcs_n):
+        """
+            Reference implementation
+            JEDEC 82-511 Page 43
+        """
+        WINDOW_LEN = 8
+        breakpoint()
+        if (dcs_n[0] == 0) & (dcs_n[2] == 0) & (dcs_n[4] == 1) & (dcs_n[6] == 1):
+            alert_n = [0]*WINDOW_LEN
+        else:
+            alert_n = [1]*WINDOW_LEN
+        return alert_n
+
 
 class TestBed(Module):
     def __init__(self, is_dual_channel=False):
@@ -247,6 +327,7 @@ class TestBed(Module):
             [
                 self.xrcd_core.xchannel_A.xcontrol_center.xfsm.ongoing(
                     "DCSTM"),
+                self.xrcd_core.xchannel_A.xcontrol_center.xregisters.xreg_file.registers[2],
                 self.if_ibuf_A.dcs_n,
                 self.if_ibuf_A.dca,
                 self.if_ibuf_A.dpar,

@@ -165,9 +165,13 @@ class BusCSCAEnvironment(Module):
 
     @staticmethod
     def extend_dcstm(scenario, len):
-        for _ in range(len):
+        for i in range(len):
             scenario += [BusCSCANOP().cmd]
             scenario += [BusCSCAInactive().cmd]
+        for i in range(len):
+            scenario += [BusCSCAInactive().cmd]
+            scenario += [BusCSCAInactive().cmd]
+
         return scenario
 
     @staticmethod
@@ -224,12 +228,12 @@ class BusCSCAEnvironment(Module):
         scenario = self.extend_inactive(scenario, 1)
         scenario = self.extend_mrw(scenario,
                                    payload=Payload(mra=0x02, op=0b00000010, cw=0x1))
-        scenario = self.extend_inactive(scenario, 3)
+        scenario = self.extend_inactive(scenario, 10)
         scenario = self.extend_dcstm(scenario, 8)
         scenario = self.extend_inactive(scenario, 3)
         scenario = self.extend_mrw(scenario,
                                    payload=Payload(mra=0x02, op=0b00000011, cw=0x1))
-        scenario = self.extend_inactive(scenario, 3)
+        scenario = self.extend_inactive(scenario, 10)
         scenario = self.extend_dcstm(scenario, 8)
         scenario = self.extend_inactive(scenario, 3)
 
