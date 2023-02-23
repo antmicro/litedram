@@ -43,7 +43,6 @@ class DDR5RCD01DCATMAgent(Module):
         dcs_n_d = Signal()
         self.sync += dcs_n_d.eq(dcs_n)
 
-
         dca_w = len(if_ibuf.dca)
         dca = Signal(dca_w)
         self.comb += dca.eq(if_ibuf.dca)
@@ -62,10 +61,10 @@ class DDR5RCD01DCATMAgent(Module):
         """
         sample = Signal()
         # If both edges are used
-        self.sync += If(
+        self.comb += If(
             (dcs_n == 0) &
             (dcs_n_d == 0),
-            sample.eq(reduce(xor, Cat(dpar,dca,dpar_d,dca_d)))
+            sample.eq(reduce(xor, Cat(dpar, dca, dpar_d, dca_d)))
         )
 
         """
@@ -73,9 +72,15 @@ class DDR5RCD01DCATMAgent(Module):
             It is expected that Alert block is configured in static mode.
             The alert block expects positive logic.
         """
-        self.comb += If(
+        self.sync += If(
             if_ctrl.enable,
-            sample_o.eq(~sample),
+            If(
+                (dcs_n == 0) &
+                (dcs_n_d == 0),
+                sample_o.eq(sample),)
+            .Else(
+                sample_o.eq(sample_o)
+            )
         ).Else(
             sample_o.eq(0),
         )

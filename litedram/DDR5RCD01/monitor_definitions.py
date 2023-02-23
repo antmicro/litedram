@@ -117,7 +117,7 @@ class MonitorQueue:
         self.q_filter_inactive = []
         for cmd_item in self.q:
             if cmd_item.cmd[0].cmd_type != MonitorCommandType.INACTIVE:
-                self.q_filter_inactive.append(cmd_item)            
+                self.q_filter_inactive.append(cmd_item)
         self.set_statistics()
 
     def set_statistics(self):

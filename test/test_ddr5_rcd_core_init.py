@@ -70,6 +70,81 @@ class RCDStatePS(Module):
         self.sim_states = sim_states
 
 
+class RCDDCATMPS(Module):
+    """
+    Signal list:
+    0 : xfsm.ongoing("DCATM")
+    1 : RW02
+    2 : dcs_n
+    3 : dca
+    4 : dpar
+    5 : alert_n
+    """
+
+    def __init__(self, sig_list, config):
+        self.sig_list = sig_list
+        self.config = config
+        self.state_list = None
+
+    def post_process(self):
+        self.trim_states()
+        self.validate()
+
+    def trim_states(self):
+        """
+            Remove captured signals in states other than DCATM
+        """
+        sig_np = np.array(self.sig_list)
+        indices = np.where(sig_np[:, 0] == 1)[0]
+        sig_list = []
+        for i in range(sig_np.shape[1]):
+            sig = sig_np[:, i]
+            sig = sig[indices].tolist()
+            sig_list.append(sig)
+        self.sig_list = sig_list
+
+    def validate(self):
+        dcs_n = np.array(self.sig_list[2])
+        dca = np.array(self.sig_list[3])
+        dpar = np.array(self.sig_list[4])
+        alert_n = np.array(self.sig_list[5])
+
+        # Mask DCS0 bit
+        dcs_n = np.bitwise_and(dcs_n, 0x01)
+
+        # Expect to find "0011111" sequences in the training patterns (DDR)
+        dcs_n_id = np.where(dcs_n == 0)[0]
+        dcs_n_split = np.array_split(dcs_n, dcs_n_id[::2])
+        dca_split = np.array_split(dca, dcs_n_id[::2])
+        dpar_split = np.array_split(dpar, dcs_n_id[::2])
+
+        alert_n_split = np.array_split(alert_n, dcs_n_id[::2]+3)
+        # breakpoint()
+        for id, dcs in enumerate(dcs_n_split):
+            if id == (len(dcs_n_split)-2):
+                break
+            if id == 0:
+                expected_alert_n = [1]*len(alert_n_split[0]) # or dcs_n + 3, the rcd delay of 3 should be auto-calculated, but isnt
+                simulated_alert_n = alert_n_split[0].tolist()
+                assert expected_alert_n == simulated_alert_n, "DCATM Alert signal is wrong (initial)"
+                continue
+            if dcs[0:1] == 0:
+                expected_alert_n = [self.reference(
+                    dca_split[id][0:2], dpar_split[id][0:2])]*len(dcs)
+                simulated_alert_n = alert_n_split[id].tolist()
+                # breakpoint()
+                assert expected_alert_n == simulated_alert_n, "DCATM Alert signal is wrong"
+            else:
+                raise AssertionError("DCATM Error")
+
+    @staticmethod
+    def reference(dca, dpar):
+        output = np.bitwise_xor.reduce(np.concatenate((dca, dpar)))
+        output = int(output)
+        xor = bin(output).count('1') & 1
+        return xor
+
+
 class RCDDCSTMPS(Module):
     """
     Signal list:
@@ -179,7 +254,7 @@ class RCDDCSTMPS(Module):
             expected_alert_n = self.reference(sample)
             sim_alert_n = samples_alert_n[id+1].tolist()
             # breakpoint()
-            assert sim_alert_n == expected_alert_n
+            assert sim_alert_n == expected_alert_n, "DCSTM Alert signal is wrong"
 
     @staticmethod
     def reference(dcs_n):
@@ -232,6 +307,13 @@ class TestBed(Module):
                 if_ibuf_o=self.if_ibuf_A,
             )
         )
+        """
+            TODO Hack to disable dpar generation
+        """
+        self.if_ibuf_A_2 = If_ibuf()
+
+        self.comb += self.if_ibuf_A_2.dcs_n.eq(self.if_ibuf_A.dcs_n)
+        self.comb += self.if_ibuf_A_2.dca.eq(self.if_ibuf_A.dca)
 
         self.config_monitor_ingress = {
             "monitor_type": MonitorType.DDR,
@@ -243,7 +325,7 @@ class TestBed(Module):
 
         self.submodules.xmonitor_ingress = ClockDomainsRenamer("sys")(
             BusCSCAMonitorDev(
-                if_ibuf_i=self.if_ibuf_A,
+                if_ibuf_i=self.if_ibuf_A_2,
                 is_sim_finished=self.xenvironment.agent.sequencer.is_sim_finished,
                 config=self.config_monitor_ingress
             )
@@ -255,7 +337,7 @@ class TestBed(Module):
                 if_sdram_A=self.if_sdram_A,
                 if_sdram_B=self.if_sdram_B,
                 if_alert_n=self.if_alert_n,
-                if_ibuf_A=self.if_ibuf_A,
+                if_ibuf_A=self.if_ibuf_A_2,
                 if_ibuf_B=self.if_ibuf_B,
                 if_obuf_A=self.if_obuf_A,
                 if_obuf_B=self.if_obuf_B,
@@ -353,7 +435,31 @@ class TestBed(Module):
         """
             Monitor DCATM
         """
-        # TODO
+        self.config_monitor_dcatm = {}
+        xmonitor_dcatm = Monitor(
+            [
+                self.xrcd_core.xchannel_A.xcontrol_center.xfsm.ongoing(
+                    "DCATM"),
+                self.xrcd_core.xchannel_A.xcontrol_center.xregisters.xreg_file.registers[2],
+                self.if_ibuf_A.dcs_n,
+                self.if_ibuf_A.dca,
+                self.if_ibuf_A_2.dpar,
+                self.if_alert_n.alert_n,
+            ],
+            is_sim_finished=self.xenvironment.agent.sequencer.is_sim_finished,
+            config=self.config_monitor_dcatm
+        )
+        self.submodules.xmonitor_dcatm = xmonitor_dcatm
+
+        """
+        TODO Hack
+        """
+        self.comb += If(
+            self.xrcd_core.xchannel_A.xcontrol_center.xfsm.ongoing("DCATM"),
+            self.if_ibuf_A_2.dpar.eq(0)
+        ).Else(
+            self.if_ibuf_A_2.dpar.eq(self.if_ibuf_A.dpar)
+        )
         """
             Generators
         """
@@ -379,6 +485,7 @@ class TestBed(Module):
                 self.xmonitor_egress.monitor(),
                 self.xmonitor_rcd.monitor(),
                 self.xmonitor_dcstm.monitor(),
+                self.xmonitor_dcatm.monitor(),
             ]
         }
 
@@ -453,6 +560,12 @@ class DDR5RCD01CoreTests_SingleChannel(unittest.TestCase):
         )
         self.tb.processor_dcstm.post_process()
 
+        self.tb.processor_dcatm = RCDDCATMPS(
+            sig_list=self.tb.xmonitor_dcatm.signal_list,
+            config=self.tb.xmonitor_dcatm.config,
+        )
+        self.tb.processor_dcatm.post_process()
+
         self.tb.processor_ingress = BusCSCAMonitorPostProcessor(
             signal_list=self.tb.xmonitor_ingress.signal_list,
             config=self.tb.xmonitor_ingress.config,
@@ -499,19 +612,13 @@ class DDR5RCD01CoreTests_SingleChannel(unittest.TestCase):
         """
         sim_state_list = self.tb.processor_rcd.sim_states
         expected_sim_state_list = ['PON_DRST_EVENT', 'STABLE_POWER_RESET', 'POST_PON_DRST_EVENT',
-                                   'INIT_IDLE', 'DCSTM','INIT_IDLE', 'DCSTM', 'DCATM', 'POST_TM_INIT_IDLE', 'NORMAL']
+                                   'INIT_IDLE', 'DCSTM', 'INIT_IDLE', 'DCSTM', 'DCATM', 'POST_TM_INIT_IDLE', 'NORMAL']
         assert sim_state_list == expected_sim_state_list, "RCD main FSM states are not as expected"
 
         self.tb.scoreboard = BusCSCAScoreboard(
             p=self.tb.processor_ingress,
             p_other=self.tb.processor_egress,
         )
-
-        assert 1 == 1
-
-    # def test_core2(self):
-    #     logger = logging.getLogger('root')
-    #     logger.debug("-"*80)
 
 
 if __name__ == '__main__':

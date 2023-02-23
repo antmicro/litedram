@@ -1,15 +1,15 @@
 [*]
 [*] GTKWave Analyzer v3.3.104 (w)1999-2020 BSI
-[*] Thu Feb 23 09:02:46 2023
+[*] Thu Feb 23 14:50:33 2023
 [*]
 [dumpfile] "/home/mczyz/workspace/rowhammer-tester/third_party/litedram/test/wave_ut/test_ddr5_rdimm_init.vcd"
-[dumpfile_mtime] "Wed Feb 22 15:25:53 2023"
-[dumpfile_size] 390518
+[dumpfile_mtime] "Thu Feb 23 14:49:28 2023"
+[dumpfile_size] 270429
 [savefile] "/home/mczyz/workspace/rowhammer-tester/third_party/litedram/test/test_ddr5_rdimm_init.gtkw"
-[timestart] 8164
+[timestart] 35722
 [size] 2048 1051
-[pos] -2561 -1
-*-10.355880 12161 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[pos] -1 -1
+*-9.466627 37633 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
 [sst_width] 315
 [signals_width] 429
 [sst_expanded] 1
@@ -131,5 +131,27 @@ xdcstm_agent_dcs_n_samples5
 xdcstm_agent_dcs_n_samples6
 @1000200
 -DCSTM
+@800200
+-DCATM
+@820
+state[151:0]
+@29
+if_alert_n_alert_n
+@28
+xdcatm_agent_sample
+dcatm_sample_o
+if_ctrl_dcatm_agent_enable
+if_ctrl_dcatm_agent_exit_dcatm
+if_ctrl_error_arbiter_is_dcatm_en
+@22
+xdcatm_agent_dca[6:0]
+xdcatm_agent_dca_d[6:0]
+@28
+xdcatm_agent_dcs_n
+xdcatm_agent_dcs_n_d
+xdcatm_agent_dpar
+xdcatm_agent_dpar_d
+@1000200
+-DCATM
 [pattern_trace] 1
 [pattern_trace] 0

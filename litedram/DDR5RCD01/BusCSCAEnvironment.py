@@ -244,8 +244,9 @@ class BusCSCAEnvironment(Module):
         """
         scenario = self.extend_mrw(scenario,
                                    payload=Payload(mra=0x02, op=0b00000001, cw=0x1))
-        scenario = self.extend_inactive(scenario, 3)
+        scenario = self.extend_inactive(scenario, 7)
         scenario = self.extend_dcatm(scenario, 4)
+        scenario = self.extend_inactive(scenario, 2)
         scenario = self.extend_mrw(scenario,
                                    payload=Payload(mra=0x02, op=0b00000000, cw=0x1))
 
