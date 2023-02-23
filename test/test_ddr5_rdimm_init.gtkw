@@ -1,19 +1,19 @@
 [*]
 [*] GTKWave Analyzer v3.3.104 (w)1999-2020 BSI
-[*] Wed Feb 22 14:57:42 2023
+[*] Thu Feb 23 09:02:46 2023
 [*]
 [dumpfile] "/home/mczyz/workspace/rowhammer-tester/third_party/litedram/test/wave_ut/test_ddr5_rdimm_init.vcd"
-[dumpfile_mtime] "Wed Feb 22 14:57:25 2023"
-[dumpfile_size] 370180
+[dumpfile_mtime] "Wed Feb 22 15:25:53 2023"
+[dumpfile_size] 390518
 [savefile] "/home/mczyz/workspace/rowhammer-tester/third_party/litedram/test/test_ddr5_rdimm_init.gtkw"
-[timestart] 8188
+[timestart] 8164
 [size] 2048 1051
-[pos] -1 -1
-*-10.443606 10095 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[pos] -2561 -1
+*-10.355880 12161 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
 [sst_width] 315
 [signals_width] 429
 [sst_expanded] 1
-[sst_vpaned_height] 353
+[sst_vpaned_height] 373
 @800200
 -System CLK RST
 @28
@@ -113,12 +113,14 @@ drst_rw04
 assert_reset
 @800200
 -DCSTM
-@29
-xdcstm_agent_is_consecutive_grouping_en
+@820
+state[151:0]
 @28
+xdcstm_agent_is_consecutive_grouping_en
 xdcstm_agent_sample
 dcstm_sample_o
 if_alert_n_alert_n
+xdcstm_agent_ui_counter[2:0]
 if_ibuf_A_dcs_n[1:0]
 xdcstm_agent_dcs_n_samples0
 xdcstm_agent_dcs_n_samples1

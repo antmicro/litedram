@@ -96,7 +96,6 @@ class RCDDCSTMPS(Module):
         self.split_dcs_n_x_training()
         self.validate(cs_training_bit=0)
         self.validate(cs_training_bit=1)
-        breakpoint()
 
     def split_dcs_n_x_training(self):
         """
@@ -129,11 +128,20 @@ class RCDDCSTMPS(Module):
             sig_list.append(sig)
         self.sig_list = sig_list
 
-    def prep(self):
-        """
-            Prepare alert extraction
-        """
-        pass
+    @staticmethod
+    def detect_start_sequence(dcs_n_np, alert_n_np):
+        first_zero = np.where(alert_n_np == 0)[0][0]
+        # search_seq = [1, 1, 0, 0, 1, 1, 0, 0]
+        search_seq = [0, 0, 1, 1, 0, 0, 1, 1]
+        counter = first_zero
+        while counter:
+            sub_seq = dcs_n_np[counter-8:counter]
+            if all(sub_seq == search_seq):
+                break
+            counter += -1
+        rcd_latency = first_zero - counter
+        start_seq = counter - 8
+        return start_seq, rcd_latency
 
     def validate(self, cs_training_bit=0):
         """
@@ -151,21 +159,26 @@ class RCDDCSTMPS(Module):
 
         dcs_n_np = sig_list_np[0, :]
         alert_n_np = sig_list_np[1, :]
+        # Detect start sequence
+        start_sequence_id, rcd_latency = self.detect_start_sequence(
+            dcs_n_np, alert_n_np)
 
         WINDOW_LEN = 8
+        dcs_n_np = dcs_n_np[start_sequence_id:]
+        alert_n_np = alert_n_np[start_sequence_id:]
         window = [(WINDOW_LEN)*i+(WINDOW_LEN-1)
                   for i in range(int(dcs_n_np.shape[0]/WINDOW_LEN))]
         window_np = np.array(window)+1
 
         samples_dcs_n = np.split(dcs_n_np, window_np)
-        samples_alert_n = np.split(alert_n_np, window_np)
+        samples_alert_n = np.split(alert_n_np, window_np+rcd_latency)
         samples_dcs_n_len = len(samples_dcs_n)
         for id, sample in enumerate(samples_dcs_n):
-            if id == (samples_dcs_n_len):
-                continue
+            if id == (samples_dcs_n_len-2):
+                break
             expected_alert_n = self.reference(sample)
             sim_alert_n = samples_alert_n[id+1].tolist()
-            breakpoint()
+            # breakpoint()
             assert sim_alert_n == expected_alert_n
 
     @staticmethod
@@ -175,8 +188,7 @@ class RCDDCSTMPS(Module):
             JEDEC 82-511 Page 43
         """
         WINDOW_LEN = 8
-        breakpoint()
-        if (dcs_n[0] == 0) & (dcs_n[2] == 0) & (dcs_n[4] == 1) & (dcs_n[6] == 1):
+        if (dcs_n[0] == 0) & (dcs_n[2] == 1) & (dcs_n[4] == 0) & (dcs_n[6] == 1):
             alert_n = [0]*WINDOW_LEN
         else:
             alert_n = [1]*WINDOW_LEN
@@ -487,7 +499,7 @@ class DDR5RCD01CoreTests_SingleChannel(unittest.TestCase):
         """
         sim_state_list = self.tb.processor_rcd.sim_states
         expected_sim_state_list = ['PON_DRST_EVENT', 'STABLE_POWER_RESET', 'POST_PON_DRST_EVENT',
-                                   'INIT_IDLE', 'DCSTM', 'DCATM', 'POST_TM_INIT_IDLE', 'NORMAL']
+                                   'INIT_IDLE', 'DCSTM','INIT_IDLE', 'DCSTM', 'DCATM', 'POST_TM_INIT_IDLE', 'NORMAL']
         assert sim_state_list == expected_sim_state_list, "RCD main FSM states are not as expected"
 
         self.tb.scoreboard = BusCSCAScoreboard(
