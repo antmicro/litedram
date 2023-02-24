@@ -77,7 +77,7 @@ class DDR5RCD01DCATMAgent(Module):
             If(
                 (dcs_n == 0) &
                 (dcs_n_d == 0),
-                sample_o.eq(sample),)
+                sample_o.eq(~sample),)
             .Else(
                 sample_o.eq(sample_o)
             )

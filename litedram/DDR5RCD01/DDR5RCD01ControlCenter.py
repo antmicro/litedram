@@ -257,20 +257,16 @@ class DDR5RCD01ControlCenter(Module):
         execute_command = Signal()
         command = Signal(CW_REG_BIT_SIZE)
 
+        # TODO placeholder signal
         b = Signal()
-        c = Signal()
+
         self.comb += If(
             (if_register.we) &
             (if_register.addr == RW_CMD_SPACE_GLOBAL_CONTROL),
             execute_command.eq(1),
             command.eq(if_register.d),
         )
-        # self.sync += If(
-        #     0,  # rw04 command 5
-        #     drst_rw04.eq(1)
-        # ).Else(
-        #     drst_rw04.eq(0)
-        # )
+
         self.sync += Case(
             command, {
                 CMD_0_NOP: [],

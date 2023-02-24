@@ -118,24 +118,26 @@ class RCDDCATMPS(Module):
         dca_split = np.array_split(dca, dcs_n_id[::2])
         dpar_split = np.array_split(dpar, dcs_n_id[::2])
 
+        # latency: dcs_n + 3, the rcd delay of 3 should be auto-calculated in the future
         alert_n_split = np.array_split(alert_n, dcs_n_id[::2]+3)
+
         # breakpoint()
         for id, dcs in enumerate(dcs_n_split):
             if id == (len(dcs_n_split)-2):
                 break
             if id == 0:
-                expected_alert_n = [1]*len(alert_n_split[0]) # or dcs_n + 3, the rcd delay of 3 should be auto-calculated, but isnt
+                expected_alert_n = [1]*len(alert_n_split[0])
                 simulated_alert_n = alert_n_split[0].tolist()
-                assert expected_alert_n == simulated_alert_n, "DCATM Alert signal is wrong (initial)"
+                assert expected_alert_n == simulated_alert_n, "DCATM Alert_n incorrrect initial sequence"
                 continue
             if dcs[0:1] == 0:
                 expected_alert_n = [self.reference(
                     dca_split[id][0:2], dpar_split[id][0:2])]*len(dcs)
                 simulated_alert_n = alert_n_split[id].tolist()
                 # breakpoint()
-                assert expected_alert_n == simulated_alert_n, "DCATM Alert signal is wrong"
+                assert expected_alert_n == simulated_alert_n, "DCATM Alert_n incorrrect sequence"
             else:
-                raise AssertionError("DCATM Error")
+                raise AssertionError("Unexpected DCATM Error")
 
     @staticmethod
     def reference(dca, dpar):
@@ -526,8 +528,8 @@ class DDR5RCD01CoreTests_SingleChannel(unittest.TestCase):
         logger = logging.getLogger('root')
         logger.addHandler(fileHandler)
         logger.addHandler(streamHandler)
-        logger.setLevel(logging.DEBUG)
-        # logger.setLevel(logging.ERROR)
+        # logger.setLevel(logging.DEBUG)
+        logger.setLevel(logging.ERROR)
 
     def tearDown(self):
         del self.tb

@@ -127,8 +127,13 @@ class DDR5RCD01Error(Module):
             disable_future_cmds.eq(0),
         ).Else(
             If(
-                is_blocking_future_cmds & (~valid),
-                disable_future_cmds.eq(1)
+                rw_is_parity_checking_enabled,
+                If(
+                    is_blocking_future_cmds & (~valid),
+                    disable_future_cmds.eq(1)
+                )
+            ).Else(
+                disable_future_cmds.eq(0)
             )
         )
 
