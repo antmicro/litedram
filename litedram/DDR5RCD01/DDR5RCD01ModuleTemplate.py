@@ -18,14 +18,24 @@ from litedram.DDR5RCD01.RCD_utils import *
 
 class DDR5RCD01ModuleTemplate(Module):
     """
-        DDR5 RCD01 Module Template
+    # DDR5 RCD01 Module Template
 
-        Module
-        ------
+    ## Module
+    if_ibuf If_ibuf this interface blah blah
+
+    if_ibuf If_ibuf this interface blah blah
+
+    if_ibuf If_ibuf this interface blah blah
+
+    ## Parameters
+
+    par_1 controls XYX
+
+    par_1 controls XYX
+
+    par_1 controls XYX
 
 
-        Parameters
-        ------
     """
 
     def __init__(self):

@@ -333,7 +333,7 @@ class DDR5RCD01Channel(Module):
             if_common=if_common,
             if_ctrl_common=if_ctrl_common,
             if_config_common=if_config_common,
-            # if_regs=if_regs,
+            if_regs=if_regs,
             if_ctrl_rx_block=if_ctrl_rx_block,
             if_ctrl_fwd_block_A=if_ctrl_fwd_block_A,
             if_ctrl_fwd_block_B=if_ctrl_fwd_block_B,

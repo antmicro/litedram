@@ -102,7 +102,7 @@ class DDR5RCD01ControlCenter(Module):
                  if_common,
                  if_ctrl_common,
                  if_config_common,
-                 #  if_regs,
+                 if_regs,
                  if_ctrl_rx_block,
                  if_ctrl_fwd_block_A,
                  if_ctrl_fwd_block_B,
@@ -119,13 +119,32 @@ class DDR5RCD01ControlCenter(Module):
         # cw_page_num = CW_PAGE_NUM
         cw_page_num = 6
 
+
+        reg_we = Signal(1)
+        reg_addr = Signal(CW_REG_BIT_SIZE)
+        reg_d = Signal(CW_REG_BIT_SIZE)
+        reg_q = Signal(CW_REG_BIT_SIZE)
+
+        self.comb += reg_we.eq(if_register.we | if_regs.we)
+        self.comb += reg_addr.eq(if_register.addr | if_regs.addr)
+        self.comb += reg_d.eq(if_register.d | if_regs.d)
+        self.comb += reg_q.eq(if_register.q | if_regs.q)
+
         xregisters = DDR5RCD01Registers(
-            d=if_register.d,
-            addr=if_register.addr,
-            we=if_register.we,
-            q=if_register.q,
+            we=reg_we,
+            addr=reg_addr,
+            d=reg_d,
+            q=reg_q,
             cw_page_num=cw_page_num
         )
+
+        # xregisters = DDR5RCD01Registers(
+        #     we=if_register.we,
+        #     addr=if_register.addr,
+        #     d=if_register.d,
+        #     q=if_register.q,
+        #     cw_page_num=cw_page_num
+        # )
         self.submodules.xregisters = xregisters
 
         regs = self.xregisters.xreg_file.registers
@@ -535,6 +554,7 @@ class DDR5RCD01ControlCenter(Module):
                 "PON_DRST_EVENT",
                 NextValue(drst_pon, 1),
                 NextValue(drst_rw04, 1),
+                NextValue(if_ctrl_rx_block.block, 1),
                 NextValue(if_ctrl_obuf_csca_row_A_rankA.tie_low_cs, 1),
                 NextValue(if_ctrl_obuf_csca_row_B_rankA.tie_low_cs, 1),
                 NextValue(if_ctrl_obuf_csca_row_A_rankB.tie_low_cs, 1),

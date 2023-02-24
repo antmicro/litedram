@@ -30,8 +30,8 @@ class BusCSCADriver(Module):
     """
 
     def __init__(self, if_ibuf_o, dcs_n_w=2, dca_w=7):
-        # self.dcs_n = Signal(dcs_n_w, reset=~0)
-        self.dcs_n = Signal(dcs_n_w, reset=0)
+        self.dcs_n = Signal(dcs_n_w, reset=~0)
+        # self.dcs_n = Signal(dcs_n_w, reset=0)
         self.dca = Signal(dca_w)
 
         self.dpar = Signal()

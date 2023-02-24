@@ -1,19 +1,19 @@
 [*]
 [*] GTKWave Analyzer v3.3.104 (w)1999-2020 BSI
-[*] Thu Feb 23 14:50:33 2023
+[*] Fri Feb 24 09:44:07 2023
 [*]
 [dumpfile] "/home/mczyz/workspace/rowhammer-tester/third_party/litedram/test/wave_ut/test_ddr5_rdimm_init.vcd"
-[dumpfile_mtime] "Thu Feb 23 14:49:28 2023"
-[dumpfile_size] 270429
+[dumpfile_mtime] "Fri Feb 24 09:43:25 2023"
+[dumpfile_size] 407378
 [savefile] "/home/mczyz/workspace/rowhammer-tester/third_party/litedram/test/test_ddr5_rdimm_init.gtkw"
-[timestart] 35722
+[timestart] 51204
 [size] 2048 1051
 [pos] -1 -1
-*-9.466627 37633 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+*-8.589433 48317 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
 [sst_width] 315
-[signals_width] 429
+[signals_width] 531
 [sst_expanded] 1
-[sst_vpaned_height] 373
+[sst_vpaned_height] 393
 @800200
 -System CLK RST
 @28
@@ -56,7 +56,9 @@ if_obuf_A_qbck_c
 if_obuf_A_qbck_t
 if_obuf_A_qcck_c
 if_obuf_A_qcck_t
+@29
 if_obuf_A_qdck_c
+@28
 if_obuf_A_qdck_t
 if_sdram_A_qrst_n
 if_ctrl_dcstm_agent_select_dcs_n
@@ -135,9 +137,8 @@ xdcstm_agent_dcs_n_samples6
 -DCATM
 @820
 state[151:0]
-@29
-if_alert_n_alert_n
 @28
+if_alert_n_alert_n
 xdcatm_agent_sample
 dcatm_sample_o
 if_ctrl_dcatm_agent_enable

@@ -38,7 +38,7 @@ class DDR5RCD01System(Module):
         - RCD Shell or RCD Chip
         - Data Buffer Shell or Data Buffer Chip
 
-    The "shell" is a view, which only implementes pass-through function. The "chip"
+    The "shell" is a view, which only implements pass-through function. The "chip"
     is a view, which implements the physical function.
 
     TODO enable BCOM support

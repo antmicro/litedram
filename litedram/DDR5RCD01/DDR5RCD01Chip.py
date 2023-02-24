@@ -63,6 +63,7 @@ class DDR5RCD01Chip(Module):
             iXC_slave = I2CMockSlaveWrapper(pads_sideband)
         else:
             raise NotImplementedError("Only i2c and i3c are supported options")
+        self.submodules.iXC_slave = iXC_slave
 
         """
             Core Wrapper
@@ -74,10 +75,10 @@ class DDR5RCD01Chip(Module):
                 pads_ingress_common=pads_ingress_common,
                 pads_registers=iXC_slave.pads_registers,
             )
+            self.submodules.xCore = xCore
         elif dimm_type == dimm_type.LRDIMM:
             raise NotImplementedError("LRDIMM is not supported")
 
-        self.submodules += xCore
         self.pads_egress_A = xCore.pads_egress_A
         if pads_ingress_B is not None:
             self.pads_egress_B = xCore.pads_egress_B

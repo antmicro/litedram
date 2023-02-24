@@ -103,8 +103,8 @@ class BusCSCAEnvironment(Module):
             )
         elif scenario_select == EnvironmentScenarios.DECODER_MCA:
             self.queue = self.decoder_mca(
-                inactive_pre_len=1,
-                inactive_inter_len=0,
+                inactive_pre_len=3,
+                inactive_inter_len=1,
                 inactive_post_len=1,
                 pattern_len=2
             )
