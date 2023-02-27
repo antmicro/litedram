@@ -77,7 +77,8 @@ class S7DDR5PHY(DDR5PHY, S7Common):
 
         max_delay_taps = math.ceil(self.tck/(1/2/32/iodelay_clk_freq))
 
-        _l = self._l
+        CSRs    = self.CSRs
+        CDCCSRs = self.CDCCSRs
 
         self.settings.delays = max_delay_taps
         self.settings.write_leveling = True
@@ -88,18 +89,29 @@ class S7DDR5PHY(DDR5PHY, S7Common):
         # Serialization ----------------------------------------------------------------------------
         prefixes = [""] if not with_sub_channels else ["A_", "B_"]
         pin_csr_mapping = {
-            "ck_t":    ((_l["ckdly_inc"],      _l["ckdly_rst"]),      None),
+            "ck_t":    ((CDCCSRs["ckdly_inc"],      CDCCSRs["ckdly_rst"]),      None),
         }
         for prefix in prefixes:
             pin_csr_mapping |= {
-                f"{prefix}par":   ((_l[f"{prefix}pardly_inc"],   _l[f"{prefix}pardly_rst"]),   None),
-                f"{prefix}ca":    ((_l[f"{prefix}cadly_inc"],    _l[f"{prefix}cadly_rst"]),    None),
-                f"{prefix}cs_n":  ((_l[f"{prefix}csdly_inc"],    _l[f"{prefix}csdly_rst"]),    None),
-                f"{prefix}dq":    ((_l[f"{prefix}wdly_dq_inc"],  _l[f"{prefix}wdly_dq_rst"]),  (_l[f"{prefix}rdly_dq_inc"],  _l[f"{prefix}rdly_dq_rst"])),
-                f"{prefix}dqs_t": ((_l[f"{prefix}wdly_dqs_inc"], _l[f"{prefix}wdly_dqs_rst"]), (_l[f"{prefix}rdly_dqs_inc"], _l[f"{prefix}rdly_dqs_rst"])),
+                f"{prefix}par":   (
+                    (CDCCSRs[f"{prefix}pardly_inc"],   CDCCSRs[f"{prefix}pardly_rst"]),
+                     None),
+                f"{prefix}ca":    (
+                    (CDCCSRs[f"{prefix}cadly_inc"],    CDCCSRs[f"{prefix}cadly_rst"]),
+                     None),
+                f"{prefix}cs_n":  (
+                    (CDCCSRs[f"{prefix}csdly_inc"],    CDCCSRs[f"{prefix}csdly_rst"]),
+                     None),
+                f"{prefix}dq":    (
+                    (CDCCSRs[f"{prefix}wdly_dq_inc"],  CDCCSRs[f"{prefix}wdly_dq_rst"]),
+                    (CDCCSRs[f"{prefix}rdly_dq_inc"],  CDCCSRs[f"{prefix}rdly_dq_rst"])),
+                f"{prefix}dqs_t": (
+                    (CDCCSRs[f"{prefix}wdly_dqs_inc"], CDCCSRs[f"{prefix}wdly_dqs_rst"]),
+                    (CDCCSRs[f"{prefix}rdly_dqs_inc"], CDCCSRs[f"{prefix}rdly_dqs_rst"])),
             }
 
         if pin_domains is not None:
+            cdc_cache = {}
             dq_oe = {}
             for pin, count in pads.layout:
                 assert pin in pin_domains, (pin, pin_domains)
@@ -152,8 +164,8 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                             cdc_out_sig_oe = None
                             if _pin_oe in ["A_dq_oe", "B_dq_oe"]:
                                 idx //= self.dq_dqs_ratio
-                                if idx in dq_oe:
-                                    cdc_out_sig_oe = dq_oe[idx]
+                                if (_pin_oe, idx) in dq_oe:
+                                    cdc_out_sig_oe = dq_oe[(_pin_oe, idx)]
                             if cdc_out_sig_oe is None:
                                 if count > 1:
                                     out_sig_oe = getattr(self.out, _pin_oe)[idx]
@@ -170,7 +182,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                                 )
                                 self.submodules += simple_cdc
                             if _pin_oe in ["A_dq_oe", "B_dq_oe"]:
-                                dq_oe[idx] = cdc_out_sig_oe
+                                dq_oe[(_pin_oe, idx)] = cdc_out_sig_oe
 
                         output    = Signal()
                         delay     = Signal()
@@ -182,26 +194,34 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                                 **(dict(dout_fb = delay) if _with_odelay else dict(dout = output)),
                                 tin     = cdc_out_sig_oe,
                                 tout    = tri_state,
-                                clkdiv=_out[0],
-                                clk=_out[1],
+                                clkdiv  = _out[0],
+                                clk     = _out[1],
+                                rst_sig = CSRs['_rst'].storage,
                             )
                         else:
                             oserdes = self.oserdese2_ddr(
                                 din = cdc_out_sig,
                                 **(dict(dout_fb=delay) if _with_odelay else dict(dout = output)),
-                                clkdiv=_out[0],
-                                clk=_out[1],
+                                clkdiv  = _out[0],
+                                clk     = _out[1],
+                                rst_sig = CSRs['_rst'].storage,
                             )
                         if with_odelay and pin in pin_csr_mapping:
                             dq = True if pin in ["A_dq", "B_dq"] else False
                             inc = None
                             rst = None
+                            if (pin, 0, _out[0]) not in cdc_cache:
+                                cdc_cache[(pin, 0, _out[0])] = (
+                                    cdc_any(pin_csr_mapping[pin][0][0], _out[0]),
+                                    cdc_any(pin_csr_mapping[pin][0][1], _out[0])
+                                )
+                            inc_sig, rst_sig = cdc_cache[(pin, 0, _out[0])]
                             if count > 1:
-                                inc = self.get_inc(i, cdc_any(pin_csr_mapping[pin][0][0], _out[0]), pin[:2], _out[0], dq=dq)
-                                rst = self.get_rst(i, cdc_any(pin_csr_mapping[pin][0][1], _out[0]), pin[:2], _out[0], dq=dq)
+                                inc = self.get_inc(i, inc_sig, pin[:2], _out[0], dq=dq)
+                                rst = self.get_rst(i, rst_sig, pin[:2], _out[0], dq=dq)
                             else:
-                                rst  = cdc_any(pin_csr_mapping[pin][0][1], _out[0])
-                                inc  = cdc_any(pin_csr_mapping[pin][0][0], _out[0])
+                                inc  = inc_sig
+                                rst  = rst_sig
 
                             self.odelaye2(
                                 din  = delay,
@@ -221,12 +241,18 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                             cd = _in[0]
                             if _out is not None:
                                 cd = _out[0]
+                            if (pin, 1, cd) not in cdc_cache:
+                                cdc_cache[(pin, 1, _out[0])] = (
+                                    cdc_any(pin_csr_mapping[pin][1][0], cd),
+                                    cdc_any(pin_csr_mapping[pin][1][1], cd)
+                                )
+                            inc_sig, rst_sig = cdc_cache[(pin, 0, _out[0])]
                             if count > 1:
-                                inc  = self.get_inc(i, cdc_any(pin_csr_mapping[pin][1][0], cd), pin[:2], cd, dq=dq)
-                                rst  = self.get_rst(i, cdc_any(pin_csr_mapping[pin][1][1], cd), pin[:2], cd, dq=dq)
+                                inc  = self.get_inc(i, inc_sig, pin[:2], cd, dq=dq)
+                                rst  = self.get_rst(i, rst_sig, pin[:2], cd, dq=dq)
                             else:
-                                inc  = cdc_any(pin_csr_mapping[pin][1][0], cd)
-                                rst  = cdc_any(pin_csr_mapping[pin][1][1], cd)
+                                inc  = inc_sig
+                                rst  = rst_sig
                             self.idelaye2(
                                 din  = _input,
                                 dout = _delayed_input,
@@ -250,6 +276,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                             dout   = to_phy,
                             clk    = _in[1],
                             clkdiv = _in[0],
+                            rst_sig = CSRs['_rst'].storage,
                         )
 
 
@@ -342,8 +369,8 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                 self.odelaye2(
                     din=clk_ser,
                     dout=clk_dly,
-                    rst=_l['ckdly_rst'],
-                    inc=_l['ckdly_inc'],
+                    rst=CDCCSRs['ckdly_rst'],
+                    inc=CDCCSRs['ckdly_inc'],
                     clk="sys2x_io",
                 )
             self.obufds(din=clk_dly, dout=self.pads.ck_t, dout_b=self.pads.ck_c)
@@ -394,8 +421,8 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                         self.odelaye2(
                             din  = cs_n_ser,
                             dout = pad,
-                            rst  = self.get_rst(it, _l[prefix+'csdly_rst'], prefix, "sys2x_io"),
-                            inc  = self.get_inc(it, _l[prefix+'csdly_inc'], prefix, "sys2x_io"),
+                            rst  = self.get_rst(it, CDCCSRs[prefix+'csdly_rst'], prefix, "sys2x_io"),
+                            inc  = self.get_inc(it, CDCCSRs[prefix+'csdly_inc'], prefix, "sys2x_io"),
                             clk  = "sys2x_io",
                         )
 
@@ -422,13 +449,13 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                         self.odelaye2(
                             din  = ca_ser,
                             dout = pad,
-                            rst  = self.get_rst(it, _l[prefix+'cadly_rst'], prefix, "sys2x_io"),
-                            inc  = self.get_inc(it, _l[prefix+'cadly_inc'], prefix, "sys2x_io"),
+                            rst  = self.get_rst(it, CDCCSRs[prefix+'cadly_rst'], prefix, "sys2x_io"),
+                            inc  = self.get_inc(it, CDCCSRs[prefix+'cadly_inc'], prefix, "sys2x_io"),
                             clk  = "sys2x_io",
                             cnt_value_out = cnt_out,
                         )
-                        self.sync += If(getattr(self, prefix+'dly_sel').storage[it],
-                            getattr(self, prefix+'cadly').status.eq(cnt_out)
+                        self.sync += If(CSRs[prefix+'dly_sel'].storage[it],
+                            CSRs[prefix+'cadly'].status.eq(cnt_out)
                         )
 
                 # PAR ---------------------------------------------------------------------------------
@@ -455,8 +482,8 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                         self.odelaye2(
                             din  = par_ser,
                             dout = pad,
-                            rst  = _l[prefix+'pardly_rst'],
-                            inc  = _l[prefix+'pardly_inc'],
+                            rst  = CDCCSRs[prefix+'pardly_rst'],
+                            inc  = CDCCSRs[prefix+'pardly_inc'],
                             clk  = "sys2x_io",
                         )
 
@@ -503,13 +530,13 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                         self.odelaye2(
                             din  = dqs_ser,
                             dout = dqs_dly,
-                            rst  = self.get_rst(it, _l[prefix+'wdly_dqs_rst'], prefix, "sys2x_io"),
-                            inc  = self.get_inc(it, _l[prefix+'wdly_dqs_inc'], prefix, "sys2x_io"),
+                            rst  = self.get_rst(it, CDCCSRs[prefix+'wdly_dqs_rst'], prefix, "sys2x_io"),
+                            inc  = self.get_inc(it, CDCCSRs[prefix+'wdly_dqs_inc'], prefix, "sys2x_io"),
                             clk  = "sys2x_io",
                             cnt_value_out = cnt_out,
                         )
-                        self.sync += If(getattr(self, prefix+'dly_sel').storage[it],
-                            getattr(self, prefix+'wdly_dqs').status.eq(cnt_out)
+                        self.sync += If(CSRs[prefix+'dly_sel'].storage[it],
+                            CSRs[prefix+'wdly_dqs'].status.eq(cnt_out)
                         )
 
                     self.iobufds(
@@ -523,22 +550,23 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                     self.idelaye2(
                         din  = dqs_i,
                         dout = dqs_i_dly,
-                        rst  = self.get_rst(it, _l[prefix+'rdly_dqs_rst'], prefix, "sys2x_io"),
-                        inc  = self.get_inc(it, _l[prefix+'rdly_dqs_inc'], prefix, "sys2x_io"),
+                        rst  = self.get_rst(it, CDCCSRs[prefix+'rdly_dqs_rst'], prefix, "sys2x_io"),
+                        inc  = self.get_inc(it, CDCCSRs[prefix+'rdly_dqs_inc'], prefix, "sys2x_io"),
                         init = max_delay_taps-1,
                         clk  = "sys2x_io",
                         cnt_value_out = cnt_out,
                         dec  = True,
                     )
-                    self.sync += If(getattr(self, prefix+'dly_sel').storage[it],
-                        getattr(self, prefix+'rdly_dqs').status.eq(cnt_out)
+                    self.sync += If(CSRs[prefix+'dly_sel'].storage[it],
+                        CSRs[prefix+'rdly_dqs'].status.eq(cnt_out)
                     )
 
                     self.iserdese2_ddr(
                         din    = dqs_i_dly,
                         dout   = getattr(self.out, prefix+"dqs_t_i")[it],
                         clk    = "sys4x_io",
-                        clkdiv = "sys_io"
+                        clkdiv = "sys_io",
+                        rst_sig = CSRs["_rst"].storage
                     )
 
                 # DQ ----------------------------------------------------------------------------------
@@ -586,14 +614,14 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                         self.odelaye2(
                             din  = dq_ser,
                             dout = dq_dly,
-                            rst  = self.get_rst(it, _l[prefix+'wdly_dq_rst'], prefix, "sys2x_io", dq=True),
-                            inc  = self.get_inc(it, _l[prefix+'wdly_dq_inc'], prefix, "sys2x_io", dq=True),
+                            rst  = self.get_rst(it, CDCCSRs[prefix+'wdly_dq_rst'], prefix, "sys2x_io", dq=True),
+                            inc  = self.get_inc(it, CDCCSRs[prefix+'wdly_dq_inc'], prefix, "sys2x_io", dq=True),
                             clk  = "sys2x_io",
                             cnt_value_out = cnt_out,
                         )
                         if it%self.dq_dqs_ratio == 0:
-                            self.sync += If(getattr(self, prefix+'dly_sel').storage[it//self.dq_dqs_ratio],
-                                getattr(self, prefix+'wdly_dq').status.eq(cnt_out)
+                            self.sync += If(CSRs[prefix+'dly_sel'].storage[it//self.dq_dqs_ratio],
+                                CSRs[prefix+'wdly_dq'].status.eq(cnt_out)
                             )
                     self.iobuf(
                         din    = dq_dly,
@@ -610,22 +638,23 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                     self.idelaye2(
                         din  = dq_i,
                         dout = dq_i_dly,
-                        rst  = self.get_rst(it, _l[prefix+'rdly_dq_rst'], prefix, "sys2x_io", dq=True),
-                        inc  = self.get_inc(it, _l[prefix+'rdly_dq_inc'], prefix, "sys2x_io", dq=True),
+                        rst  = self.get_rst(it, CDCCSRs[prefix+'rdly_dq_rst'], prefix, "sys2x_io", dq=True),
+                        inc  = self.get_inc(it, CDCCSRs[prefix+'rdly_dq_inc'], prefix, "sys2x_io", dq=True),
                         clk  = "sys2x_io",
                         init = max_delay_taps-1,
                         cnt_value_out = cnt_out,
                         dec  = True,
                     )
                     if it%self.dq_dqs_ratio == 0:
-                        self.sync += If(getattr(self, prefix+'dly_sel').storage[it//self.dq_dqs_ratio],
-                            getattr(self, prefix+'rdly_dq').status.eq(cnt_out)
+                        self.sync += If(CSRs[prefix+'dly_sel'].storage[it//self.dq_dqs_ratio],
+                            CSRs[prefix+'rdly_dq'].status.eq(cnt_out)
                         )
                     self.iserdese2_ddr(
                         din  = dq_i_dly,
                         dout = in_dq,
                         clk    = "sys4x_io",
-                        clkdiv = "sys_io"
+                        clkdiv = "sys_io",
+                        rst_sig = CSRs["_rst"].storage
                     )
                     self.sync += delay_dq_i.eq(in_dq[-2:])
                     self.comb += basephy_dq_i.eq(Cat(delay_dq_i, in_dq[:-2]))
@@ -659,13 +688,13 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                             self.odelaye2(
                                 din  = dm_ser,
                                 dout = dm_dly,
-                                rst  = self.get_rst(it, _l[prefix+'wdly_dm_rst'], prefix, "sys2x_io"),
-                                inc  = self.get_inc(it, _l[prefix+'wdly_dm_inc'], prefix, "sys2x_io"),
+                                rst  = self.get_rst(it, CDCCSRs[prefix+'wdly_dm_rst'], prefix, "sys2x_io"),
+                                inc  = self.get_inc(it, CDCCSRs[prefix+'wdly_dm_inc'], prefix, "sys2x_io"),
                                 clk  = "sys2x_io",
                                 cnt_value_out = cnt_out,
                             )
-                            self.comb += If(getattr(self, prefix+'dly_sel').storage[it],
-                                getattr(self, prefix+'wdly_dm').status.eq(cnt_out)
+                            self.comb += If(CSRs[prefix+'dly_sel'].storage[it],
+                                CSRs[prefix+'wdly_dm'].status.eq(cnt_out)
                             )
                         self.iobuf(
                             din    = dm_dly,
