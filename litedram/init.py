@@ -826,10 +826,9 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
         (1, 1, 0b0),  # write leveling disabled
     ])
     mr[5] = reg([(5, 1, {
-            4:  0b0,
-            8:  0b1,
-            16: 0b1,
-        }[dq_dqs_ratio])]) # DM enable
+            False:  0b0,
+            True:  0b1,
+        }[phy_settings.masked_write])]) # DM enable
     mr[6] = reg([(0, 8, 0b00000000)]) # Write Recover 48nCK and tRTP 12nCK
     mr[8] = reg([
         (0, 3, 0b001),  # Read preamble   0010

@@ -26,6 +26,8 @@ from litedram.phy.ddr5.BasePHYOutput import BasePHYOutput
 from litedram.phy.ddr5.BasePHYPatternGenerators import DQOePattern, DQSPattern
 from litedram.phy.ddr5.BasePHYAddressSlicer import PHYAddressSlicer
 from litedram.phy.ddr5.BasePHYCSR import BasePHYCSR
+from litedram.phy.ddr5.BasePHYWritePath import BasePHYWritePath, BasePHYWritePathInput, BasePHYWritePathOutput
+from litedram.phy.ddr5.BasePHYReadPath import BasePHYReadPath, BasePHYReadPathInput, BasePHYReadPathOutput
 
 
 class DDR5PHY(Module, AutoCSR):
@@ -74,7 +76,8 @@ class DDR5PHY(Module, AutoCSR):
                  with_clock_odelay=False, with_address_odelay=False,
                  with_idelay=False, with_per_dq_idelay=False, csr_cdc=None, csr_cdc_90=None,
                  rd_extra_delay=Latency(sys=0), address_lines=13,
-                 i_domain=None, i_doman_ratio=1, o_doamin=None, o_domain_ratio=1,
+                 i_domain=None, i_domain_ratio=1, o_doamin=None, o_domain_ratio=1,
+                 SyncFIFO_cls=SyncFIFO,
                  default_read_latency=0, default_write_latency=0):
 
         self.pads        = pads
@@ -171,24 +174,16 @@ class DDR5PHY(Module, AutoCSR):
         # Read latency
         # This value should be the worst case delay between sending a read cmd and
         # getting data back. The exact delay may vary based on the training result.
-        self.min_read_latency  = min_read_latency = (
-            cmd_latency - 1 +      # CMD latency
-            addr_pre_ser_delay +   # PHY address buffering
-            ser_latency.sys4x +    # CMD serialization latency
-            rd_extra_delay.sys4x + # Delays like CDCs
-            2 +                    # Minimal Preamble
-            des_latency.sys4x      # Data deserialization latency
-        ) # CL 0
-        self.max_read_latency = max_read_latency = min_read_latency + 66 + 1 # CL 64 and 2N mode
-        read_latency = (max_read_latency + nphases - 1) // nphases
+        self.min_read_latency, self.max_read_latency, extra_delay = BasePHYReadPath.get_min_max_supported_latencies(
+            nphases, addr_pre_ser_delay, ser_latency, rd_extra_delay,des_latency)
+        read_latency = (self.max_read_latency + extra_delay + nphases - 1) // nphases
+
         # Write latency
         # Set to 0, Training PHY will align DQS and DQ for write commands
         # See write leveling training in JESD79-5A
         # Max supported latency is 64 DRAM bus cycles + 1 for 2N mode
-        write_addjust = -min(0, nphases + 2 - 1 - addr_pre_ser_delay)
-        min_write_latency = nphases + 2 - 1 - addr_pre_ser_delay
-        self.min_write_latency = min_write_latency + write_addjust
-        self.max_write_latency = 64 + 1
+        min_write_latency, max_write_latency, write_addjust = \
+            BasePHYWritePath.get_min_max_supported_latencies(nphases, addr_pre_ser_delay)
 
         self.settings = PhySettings(
             phytype       = phytype,
@@ -201,6 +196,7 @@ class DDR5PHY(Module, AutoCSR):
             wrphase       = CSRs['_wrphase'].storage,
             cl            = cl,
             cwl           = cwl,
+            masked_write  = masked_write,
             read_latency  = read_latency + 3,
             write_latency = 0,
             cmd_latency   = cmd_latency,
@@ -252,464 +248,87 @@ class DDR5PHY(Module, AutoCSR):
 
             for strobe in range(strobes):
                 # Read Control Path ------------------------------------------------------------------------
-                # Creates a delay line of read commands coming from the DFI interface. The output is used to
-                # signal a valid read data to the DFI interface.
-                #
-                # The read data valid is asserted for 1 sys_clk cycle when the data is available on the DFI
-                # interface, the latency is the sum of the minimal PHY and user added delays.
-                rddata_en_input = Signal(nphases)
+                _csr = {}
+                _csr['dly_sel'] = CSRs[prefix+'dly_sel'].storage[strobe]
+                _csr['ck_rdly_inc'] = CSRs[prefix+'ck_rdly_inc'].re
+                _csr['ck_rdly_rst'] = CSRs[prefix+'ck_rdly_rst'].re
+                _csr['preamble'] = CSRs[prefix+'preamble'].status
+                _csr['wlevel_en'] = CSRs[prefix+'wlevel_en'].storage
 
-                for i in range(nphases):
-                    self.comb += rddata_en_input[i].eq(getattr(dfi.phases[i], prefix).rddata_en | CSRs[prefix+'wlevel_en'].storage)
+                dq_offset = strobe*dq_dqs_ratio
+                phy     = BasePHYReadPathInput(nphases, dq_dqs_ratio)
+                self.comb += [t_phase.rddata_en.eq(getattr(s_phase, prefix).rddata_en)
+                    for t_phase, s_phase in zip(phy.phases, dfi.phases)]
+                self.comb += phy.dqs_t_i.eq(getattr(self.out, prefix+'dqs_t_i')[strobe])
+                self.comb += [getattr(phy, f"dq{i}_i").eq(
+                    getattr(self.out, prefix+'dq_i')[dq_offset+i]) for i in range(dq_dqs_ratio)]
 
-                default_read_latency = default_read_latency - 2 if default_read_latency > 2 else 0
-                rd_reset_value = min_read_latency + default_read_latency
+                dfi_out = BasePHYReadPathOutput(nphases, dq_dqs_ratio)
 
-                nphases_log = nphases.bit_length() - 1
-
-                # Read window ----------------------------------------------------------------------
-                rddata_ens = [
-                    ShiftRegister(
-                        signal = rddata_en_input[i],
-                        ntaps  = read_latency + 1
-                    ) for i in range(nphases)
-                ]
-                for i, rs in enumerate(rddata_ens):
-                    setattr(self.submodules, f"{prefix}{strobe}_Read_SR_{i}", rs)
-
-                rddata_out_en = ShiftRegister(
-                    signal = reduce(or_, rddata_en_input),
-                    ntaps  = read_latency + 3
+                self.submodules += BasePHYReadPath(
+                    dfi_out,
+                    phy,
+                    CSRs=_csr,
+                    default_read_latency=default_read_latency
                 )
-                setattr(self.submodules, f"{prefix}{strobe}_Read_FIFO_SR_{i}", rddata_out_en)
-
-
-                rd_window = Signal(nphases)
-                rd_delay  = Signal(max=4*read_latency, reset=rd_reset_value)
-                rd_index  = Signal(max=read_latency)
-                rd_offset = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
-
-                self.sync += [
-                    If(CSRs[prefix+'dly_sel'].storage[strobe] & \
-                       CSRs[prefix+'ck_rdly_inc'].re & \
-                       (rd_delay < (min_read_latency + 66)),
-                        rd_delay.eq(rd_delay + 1),
-                    ).Elif(CSRs[prefix+'dly_sel'].storage[strobe] & \
-                           CSRs[prefix+'ck_rdly_rst'].re,
-                        rd_delay.eq(rd_reset_value),
-                    ),
-                ]
 
                 self.comb += [
-                    rd_index.eq(rd_delay[nphases_log:]),
-                    rd_offset.eq(rd_delay[:nphases_log]),
-                ]
-
-                rd_index_p = [Signal(max=read_latency) for _ in range(nphases)]
-                rd_cases = {}
-                for i in range(nphases):
-                    first_part  = [rd_index_p[j].eq(rd_index + 1) for j in range(i)]
-                    second_part = [rd_index_p[j].eq(rd_index) for j in range(i, nphases)]
-                    rd_cases[i] = first_part + second_part
-
-                self.comb += [
-                    Case(rd_offset,
-                        rd_cases,
-                    ),
-                    rd_window.eq(Cat([rddata_ens[i].taps[rd_index_p[i]] for i in range(nphases)])),
-                ]
-
-                # Read Preamble window -------------------------------------------------------------
-                rddata_preamble_ens = [
-                    ShiftRegister(
-                        signal = rddata_en_input[i],
-                        ntaps  = read_latency
-                    ) for i in range(nphases)
-                ]
-                for i, rs in enumerate(rddata_preamble_ens):
-                    setattr(self.submodules, f"{prefix}{strobe}_Preamble_SR_{i}", rs)
-
-                rd_preamble_window      = Signal(nphases)
-                rd_last_preamble_window = Signal(nphases)
-                rd_preamble        = Signal(max=4*read_latency, reset=rd_reset_value - 2)
-                rd_preamble_index  = Signal(max=read_latency)
-                rd_preamble_offset = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
-
-                self.sync += [
-                    If(CSRs[prefix+'dly_sel'].storage[strobe] & \
-                       CSRs[prefix+'ck_rdly_inc'].re & \
-                       (rd_delay < (min_read_latency + 66)),
-                        rd_preamble.eq(rd_preamble + 1),
-                    ).Elif(CSRs[prefix+'dly_sel'].storage[strobe] & \
-                           CSRs[prefix+'ck_rdly_rst'].re,
-                        rd_preamble.eq(rd_reset_value - 2),
-                    ),
-                ]
-
-                self.comb += [
-                    rd_preamble_index.eq(rd_preamble[nphases_log:]),
-                    rd_preamble_offset.eq(rd_preamble[:nphases_log]),
-                ]
-
-                rd_preamble_index_p = [Signal(max=read_latency) for _ in range(nphases)]
-                rd_preamble_cases = {}
-                for i in range(nphases):
-                    first_part  = [rd_preamble_index_p[j].eq(rd_preamble_index + 1) for j in range(i)]
-                    second_part = [rd_preamble_index_p[j].eq(rd_preamble_index) for j in range(i, nphases)]
-                    rd_preamble_cases[i] = first_part + second_part
-
-                self.comb += [
-                    Case(rd_preamble_offset,
-                        rd_preamble_cases,
-                    ),
-                    rd_preamble_window.eq(
-                        Cat([rddata_preamble_ens[i].taps[rd_preamble_index_p[i]] for i in range(nphases)])
-                    ),
-                ]
-                self.sync += [
-                    rd_last_preamble_window.eq(rd_preamble_window),
-                ]
-
-                # Read Preamble Path ---------------------------------------------------------------
-                rd_preamble_rdy = Signal(max=2*nphases)
-                self.comb += [
-                    If(~rd_last_preamble_window[-1] & rd_preamble_window[0],
-                        rd_preamble_rdy.eq(1)
-                    ),
-                ]
-                for i in range(1, nphases):
-                    self.comb += [
-                        If(~rd_preamble_window[i-1] & rd_preamble_window[i],
-                            rd_preamble_rdy.eq(2*i | 1)
-                        ),
-                    ]
-
-                rd_sampled_preamble = Signal(2*2)
-                rd_preamble_cnt     = Signal()
-
-                rd_preamble_cases_sync = {}
-                for i in range(nphases):
-                    if i+1 < nphases:
-                        rd_preamble_cases_sync[i] = [
-                            rd_sampled_preamble.eq(getattr(self.out, prefix+'dqs_t_i')[strobe][i*2:i*2+4]),
-                            rd_preamble_cnt.eq(0),
-                        ]
-                    else:
-                        rd_preamble_cases_sync[i] = [
-                            rd_sampled_preamble[0:2].eq(getattr(self.out, prefix+'dqs_t_i')[strobe][i*2:i*2+2]),
-                            rd_preamble_cnt.eq(1),
-                        ]
-
-                self.sync += [
-                    If(rd_preamble_rdy[0],
-                        Case(rd_preamble_rdy[1:],
-                            rd_preamble_cases_sync
-                        ),
-                    ),
-                    If(rd_preamble_cnt == 1,
-                        rd_sampled_preamble[2:4].eq(getattr(self.out, prefix+'dqs_t_i')[strobe][0:2]),
-                        rd_preamble_cnt.eq(0),
-                    ),
-                ]
-
-                self.comb += [
-                    If(CSRs[prefix+'dly_sel'].storage[strobe],
-                        CSRs[prefix+'preamble'].status.eq(rd_sampled_preamble),
-                    ),
-                ]
-
-                # Read Data Path ----------------------------------------------------------------------------
-                # The rd_window can present any arbitrary (1*0*)* pattern of length nphases.
-                # We detect where one full DFI phase of data finishes and where other starts
-                # by counting how many valid bits are set in the rd_window, and how many
-                # are set in range [0:i-1], for the i = {0, .., nphases-1}.
-                # When data for full DFI phase are collected, they are stored in FIFO and await
-                # for settings.read_latency-1 to pass before being presented on DFI bus.
-
-                rd_fifo = SyncFIFO(width=dq_dqs_ratio*nphases*2, depth=read_latency, fwft=False)
-                self.submodules += rd_fifo
-
-                rddata_cnt          = Signal(max=nphases)
-                rddata_intermediate = Array(Signal(2*dq_dqs_ratio) for _ in range(nphases))
-                rddata_sel          = Array(Signal(2*dq_dqs_ratio) for _ in range(nphases))
-
-                rddata_cnt_tmps      = [Signal(max=nphases) for _ in range(nphases)]
-                rddata_cnt_and_tmp   = [Signal(max=2*nphases) for _ in range(nphases)]
-                rddata_cnt_all_valid = Signal(max=2*nphases)
-
-                self.comb += rddata_cnt_all_valid.eq(rddata_cnt + reduce(add, rd_window))
-
-                for i in range(nphases):
-                    dq_offset = strobe*dq_dqs_ratio
-                    dq_start  = i*2
-                    dq_end    = (i+1)*2
-                    self.comb += [
-                        rddata_cnt_tmps[i].eq(reduce(add, rd_window[:i], 0)),
-                        rddata_cnt_and_tmp[i].eq(rddata_cnt + rddata_cnt_tmps[i]),
-                        If(rd_window[i] & ~rddata_cnt_and_tmp[i][nphases_log] & rddata_cnt_all_valid[nphases_log],
-                            rddata_sel[rddata_cnt_and_tmp[i][:nphases_log]].eq(
-                                Cat([getattr(self.out, prefix+'dq_i')[dq_offset+dq][2*i] for dq in range(dq_dqs_ratio)] +
-                                    [getattr(self.out, prefix+'dq_i')[dq_offset+dq][2*i+1] for dq in range(dq_dqs_ratio)])),
-                        ),
-                        If(i < rddata_cnt,
-                            rddata_sel[i].eq(rddata_intermediate[i]),
-                        ),
-                    ]
-
-                    self.sync += [
-                        If(rd_window[i] & (rddata_cnt_and_tmp[i][nphases_log] | ~rddata_cnt_all_valid[nphases_log]),
-                            rddata_intermediate[rddata_cnt_and_tmp[i][:nphases_log]].eq(
-                                Cat([getattr(self.out, prefix+'dq_i')[dq_offset+dq][2*i] for dq in range(dq_dqs_ratio)] +
-                                    [getattr(self.out, prefix+'dq_i')[dq_offset+dq][2*i+1] for dq in range(dq_dqs_ratio)])),
-                        )
-                    ]
-
-                self.sync += [
-                    If(reduce(or_, rd_window),
-                        rddata_cnt.eq(rddata_cnt_all_valid[:nphases_log]),
-                    ),
-                ]
-
-                self.comb += [
-                    rd_fifo.din.eq(0),
-                    rd_fifo.we.eq(0),
-                    If(reduce(or_, rd_window),
-                        If(rddata_cnt_all_valid[nphases_log],
-                            rd_fifo.din.eq(Cat(rddata_sel)),
-                            rd_fifo.we.eq(1),
-                        ),
-                    ),
-                ]
-
-                # Retime
-                self.comb += [
-                    getattr(phase, prefix).rddata_valid.eq( \
-                        reduce(or_, rddata_out_en.output)) \
-                    for phase in self.dfi.phases
+                    getattr(t_phase, prefix).rddata_valid.eq( \
+                        reduce(or_, s_phase.rddata_valid)) \
+                    for t_phase, s_phase in zip(self.dfi.phases, dfi_out.phases)
                 ]
 
                 rddata_start = strobe*2*dq_dqs_ratio
                 rddata_end   = (strobe+1)*2*dq_dqs_ratio
-
-                rd_fifo_good = Signal()
-                self.sync += [
-                    rd_fifo_good.eq(rd_fifo.re & rd_fifo.readable)
-                ]
-
                 self.comb += [
-                    If(rd_fifo_good,
-                        getattr(phase, prefix).rddata[rddata_start:rddata_end].eq(rd_fifo.dout[i*2*dq_dqs_ratio:(i+1)*2*dq_dqs_ratio])
-                    ) for i, phase in enumerate(self.dfi.phases)
-                ] + [
-                    rd_fifo.re.eq(rddata_out_en.taps[-2])
+                    getattr(t_phase, prefix).rddata[rddata_start:rddata_end].eq(s_phase.rddata)
+                    for t_phase, s_phase in zip(self.dfi.phases, dfi_out.phases)
                 ]
 
                 # Write Control Path -----------------------------------------------------------------------
-                wrtap = (self.min_write_latency + write_addjust + 66 + nphases + 1 + nphases - 1)//nphases
-                assert wrtap >= 0
+                _csr = {}
+                _csr['dly_sel'] = CSRs[prefix+'dly_sel'].storage[strobe]
+                _csr['ck_wdly_inc'] = CSRs[prefix+'ck_wdly_inc'].re
+                _csr['ck_wdly_rst'] = CSRs[prefix+'ck_wdly_rst'].re
+                _csr['ck_wddly_inc'] = CSRs[prefix+'ck_wddly_inc'].re
+                _csr['ck_wddly_rst'] = CSRs[prefix+'ck_wddly_rst'].re
+                _csr['wlevel_en'] = CSRs[prefix+'wlevel_en'].storage
+                wrdata_start = strobe*2*dq_dqs_ratio
+                wrdata_end   = (strobe+1)*2*dq_dqs_ratio
+                wrdata_mask_bits = dq_dqs_ratio // 4
+                wrdata_m_start = strobe*wrdata_mask_bits
+                wrdata_m_end   = (strobe+1)*wrdata_mask_bits
+                dfi_in = BasePHYWritePathInput(nphases, dq_dqs_ratio)
+                self.comb += [t_phase.wrdata_en.eq(getattr(s_phase, prefix).wrdata_en)
+                    for t_phase, s_phase in zip(dfi_in.phases, dfi.phases)]
+                self.comb += [t_phase.wrdata.eq(
+                    getattr(s_phase, prefix).wrdata[wrdata_start:wrdata_end])
+                    for t_phase, s_phase in zip(dfi_in.phases, dfi.phases)]
+                def rep(sig, cnt):
+                    return sig
+                if dq_dqs_ratio == 4:
+                    rep = Replicate
+                self.comb += [t_phase.wrdata_mask.eq(
+                    rep(getattr(s_phase, prefix).wrdata_mask[wrdata_m_start:wrdata_m_end], 2))
+                    for t_phase, s_phase in zip(dfi_in.phases, dfi.phases)]
 
-                # Create a delay line of write commands coming from the DFI interface. This taps are used to
-                # control DQ/DQS tristates.
-
-                wrdata_en_comb = Signal(nphases)
-                self.comb += wrdata_en_comb.eq(Cat([getattr(dfi.phases[i], prefix).wrdata_en for i in range(nphases)]))
-
-                wrdata_en = TappedDelayLine(
-                    signal = wrdata_en_comb,
-                    ntaps  = wrtap
+                out = BasePHYWritePathOutput(nphases, dq_dqs_ratio)
+                self.submodules += BasePHYWritePath(
+                    dfi=dfi_in, out=out, CSRs=_csr,
+                    default_write_latency=default_write_latency,
+                    SyncFIFO_cls=SyncFIFO_cls,
+                    with_data_mask=masked_write,
                 )
-                self.submodules += wrdata_en
-
-                assert default_write_latency >= min_write_latency or default_write_latency == 0, f"default_write_latency={default_write_latency} is to small, min_write_latency={min_write_latency}"
-
-                wr_reset_value = 0 if default_write_latency < min_write_latency else default_write_latency - min_write_latency
-
-                wr_window       = Signal(nphases + 3)
-                wr_delay        = Signal(max=66 + write_addjust, reset=wr_reset_value)
-                wr_index        = Signal(max=(66 + write_addjust)//nphases+1)
-                wr_offset       = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
-
-                self.sync += [
-                    If(CSRs[prefix+'dly_sel'].storage[strobe] & \
-                       CSRs[prefix+'ck_wdly_inc'].re & \
-                       (wr_delay < 65),
-                        wr_delay.eq(wr_delay + 1),
-                    ).Elif(CSRs[prefix+'dly_sel'].storage[strobe] & \
-                           CSRs[prefix+'ck_wdly_rst'].re,
-                        wr_delay.eq(wr_reset_value),
-                    ),
-                ]
 
                 self.comb += [
-                    wr_index.eq(wr_delay[nphases_log:]),
-                    wr_offset.eq(wr_delay[:nphases_log]),
+                    getattr(self.out, prefix+'dqs_t_o')[strobe].eq(out.dqs_t_o),
+                    getattr(self.out, prefix+'dqs_c_o')[strobe].eq(out.dqs_c_o),
+                    getattr(self.out, prefix+'dqs_oe')[strobe].eq(out.dqs_oe),
+                    getattr(self.out, prefix+'dq_oe')[strobe].eq(out.dq_oe),
+                    getattr(self.out, prefix+'dm_n_o')[strobe].eq(out.dm_n_o)
                 ]
-
-                wr_cases = {}
-                if nphases > 1:
-                    for i in range(nphases):
-                        if 3+i <= nphases:
-                            wr_cases[i] = wr_window.eq(Cat(wrdata_en.taps[wr_index+1][nphases-(3+i):], wrdata_en.taps[wr_index][:nphases-i]))
-                        else:
-                            wr_cases[i] = wr_window.eq(Cat(wrdata_en.taps[wr_index+2][2*nphases-(3+i):], wrdata_en.taps[wr_index+1], wrdata_en.taps[wr_index][:nphases-i]))
-                else:
-                    wr_cases[0] = wr_window.eq(Cat(wrdata_en.taps[wr_index+3], wrdata_en.taps[wr_index+2], wrdata_en.taps[wr_index+1], wrdata_en.taps[wr_index]))
-
-                self.comb += [
-                    Case(wr_offset,
-                        wr_cases,
-                    )
-                ]
-
-                dqs_oe        = Signal(2*nphases)
-                dqs_pattern   = DQSPattern(
-                    nphases   = nphases,
-                    wlevel_en = CSRs[prefix+'wlevel_en'].storage,
-                )
-                self.comb += dqs_pattern.window.eq(wr_window)
-                self.submodules += dqs_pattern
-
-                self.comb += [
-                    getattr(self.out, prefix+'dqs_t_o')[strobe].eq(dqs_pattern.o,),
-                    getattr(self.out, prefix+'dqs_c_o')[strobe].eq(~dqs_pattern.o,),
-                    getattr(self.out, prefix+'dqs_oe')[strobe].eq(dqs_pattern.oe),
-                ]
-
-                wr_data_window  = Signal(nphases+1)
-                wr_data_delay   = Signal(max=68 + write_addjust, reset=wr_reset_value + 2)
-                wr_data_index   = Signal(max=(68 + write_addjust)//nphases+1)
-                wr_data_offset  = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
-
-                self.sync += [
-                    If(CSRs[prefix+'dly_sel'].storage[strobe] & \
-                       CSRs[prefix+'ck_wddly_inc'].re & \
-                       (wr_data_delay < 67),
-                        wr_data_delay.eq(wr_data_delay + 1),
-                    ).Elif(CSRs[prefix+'dly_sel'].storage[strobe] & \
-                           CSRs[prefix+'ck_wddly_rst'].re,
-                        wr_data_delay.eq(wr_reset_value + 2),
-                    ),
-                ]
-
-                self.comb += [
-                    wr_data_index.eq(wr_data_delay[nphases_log:]),
-                    wr_data_offset.eq(wr_data_delay[:nphases_log]),
-                ]
-
-                wr_data_cases = {}
-                for i in range(nphases):
-                    if 1+i <= nphases: # only false for last i = nphases -1
-                        wr_data_cases[i] = wr_data_window.eq(Cat(wrdata_en.taps[wr_data_index+1][nphases-(1+i):], wrdata_en.taps[wr_data_index][:nphases-i]))
-
-                self.comb += [
-                    Case(wr_data_offset,
-                        wr_data_cases,
-                    )
-                ]
-
-                dq_oe        = Signal(2*nphases)
-                dq_pattern   = DQOePattern(
-                    nphases   = nphases,
-                    wlevel_en = CSRs[prefix+'wlevel_en'].storage,
-                )
-                self.comb += dq_pattern.window.eq(wr_data_window)
-                self.submodules += dq_pattern
-
-                self.comb += [
-                    getattr(self.out, prefix+'dq_oe')[strobe].eq(dq_pattern.oe),
-                ]
-
-                # Write Data Path ----------------------------------------------------------------------------
-
-                wr_fifo = SyncFIFO(width=(dq_dqs_ratio+1)*nphases*2, depth=wrtap, fwft=False)
-                self.submodules += wr_fifo
-
-                self.comb += [
-                    wr_fifo.din.eq(Cat([Cat([getattr(phase, prefix).wrdata[2*strobe*dq_dqs_ratio:2*(strobe+1)*dq_dqs_ratio],
-                                             getattr(phase, prefix).wrdata_mask[strobe*2:(strobe+1)*2] if dq_dqs_ratio > 4 else Replicate(getattr(phase, prefix).wrdata_mask[strobe], 2)]) for phase in self.dfi.phases])),
-                    If(wr_data_index > 0,
-                        wr_fifo.we.eq(reduce(or_, [getattr(phase, prefix).wrdata_en for phase in self.dfi.phases])),
-                    ),
-                ]
-
-                wr_data             = Signal(2*nphases*dq_dqs_ratio)
-                wr_fifo_data        = Signal(2*nphases*dq_dqs_ratio)
-                wr_input_data       = Signal(2*nphases*dq_dqs_ratio)
-                wr_register_data    = Signal(2*nphases*dq_dqs_ratio)
-                wr_dmi              = Signal(2*nphases)
-                wr_fifo_dmi         = Signal(2*nphases)
-                wr_input_dmi        = Signal(2*nphases)
-                wr_register_dmi     = Signal(2*nphases)
-                wr_fifo_data_valid  = Signal()
-
-                self.sync += wr_fifo_data_valid.eq(wr_fifo.re & wr_fifo.readable)
-                self.sync += [
-                    wr_input_data.eq(Cat([getattr(phase, prefix).wrdata[2*strobe*dq_dqs_ratio:2*(strobe+1)*dq_dqs_ratio] for phase in self.dfi.phases])),
-                    wr_input_dmi.eq(Cat([getattr(phase, prefix).wrdata_mask[strobe*2:(strobe+1)*2] if dq_dqs_ratio > 4 else Replicate(getattr(phase, prefix).wrdata_mask[strobe], 2) for phase in self.dfi.phases])),
-                ]
-
-                self.comb += [
-                    If(wr_data_index > 0,
-                        wr_fifo.re.eq(reduce(or_, wrdata_en.taps[wr_data_index-1])),
-                        If(wr_fifo_data_valid,
-                            wr_fifo_data.eq(Cat([wr_fifo.dout[(2*i)*(dq_dqs_ratio+1): (2*i)*(dq_dqs_ratio+1)+2*dq_dqs_ratio] for i in range(nphases)])),
-                            wr_fifo_dmi.eq(Cat([wr_fifo.dout[(2*i)*(dq_dqs_ratio+1)+2*dq_dqs_ratio: (2*i+2)*(dq_dqs_ratio+1)] for i in range(nphases)])),
-                        ),
-                    ).Else(
-                        wr_fifo_data.eq(wr_input_data),
-                        wr_fifo_dmi.eq(wr_input_dmi),
-                    ),
-                ]
-
-                dq_dmi_wr_cases_comb = {}
-                dq_dmi_wr_cases_sync = {}
-
-                dq_dmi_wr_cases_comb[0] = [
-                    wr_data.eq(Cat(wr_fifo_data[:nphases*2*dq_dqs_ratio])),
-                    wr_dmi.eq(Cat(wr_fifo_dmi[:nphases*2])),
-                ]
-                dq_dmi_wr_cases_sync[0] = [
-                    wr_register_data.eq(0),
-                    wr_register_dmi.eq(0),
-                ]
-
-                for i in range(1, nphases):
-                    dq_dmi_wr_cases_comb[i] = [
-                        wr_data.eq(Cat(wr_register_data[:i*2*dq_dqs_ratio], wr_fifo_data[:(nphases-i)*2*dq_dqs_ratio])),
-                        wr_dmi.eq(Cat(wr_register_dmi[:i*2], wr_fifo_dmi[:(nphases-i)*2])),
-                    ]
-                    dq_dmi_wr_cases_sync[i] = [
-                        wr_register_data.eq(wr_fifo_data[(nphases-i)*2*dq_dqs_ratio:]),
-                        wr_register_dmi.eq(wr_fifo_dmi[(nphases-i)*2:]),
-                    ]
-
-                self.comb += [
-                    Case(wr_data_offset,
-                        dq_dmi_wr_cases_comb
-                    ),
-                ]
-
-                self.sync += [
-                    Case(wr_data_offset,
-                        dq_dmi_wr_cases_sync
-                    ),
-                ]
-
-                # DMI --------------------------------------------------------------------------------------
-                # DMI signal is used for Data Mask or Data Bus Invertion depending on Mode Registers values.
-                # With DM and DBI disabled, this signal is a Don't Care.
-                # With DM enabled, masking is performed only when the command used is WRITE-MASKED.
-                # We don't support DBI, DM support is configured statically with `masked_write`.
-                self.comb += getattr(self.out, prefix+'dm_n_o')[strobe].eq(~wr_dmi)
-
-                # DQ ---------------------------------------------------------------------------------------
                 for bit in range(dq_dqs_ratio):
-                    # output
-                    _wrdata = [
-                        wr_data[i * dq_dqs_ratio + bit] for i in range(2*nphases)
-                    ]
-
-                    self.comb += getattr(self.out, prefix+'dq_o')[bit + strobe*dq_dqs_ratio].eq(Cat(_wrdata))
+                    self.comb += getattr(self.out, prefix+'dq_o')[bit + strobe*dq_dqs_ratio].eq(getattr(out, f"dq{bit}_o"))
 
 
     def get_rst(self, byte, rst, prefix="", clk="sys", dq=False):

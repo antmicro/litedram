@@ -325,6 +325,7 @@ class PhySettings(Settings):
             cmd_delay: Optional[int] = None,  # used to force cmd delay during initialization in BIOS
             bitslips: int = 0,  # number of write/read bitslip taps
             delays: int = 0,  # number of write/read delay taps
+            masked_write: bool = False, # can masked writes
             with_alert: bool = False, # phy has CSRs for reading and reseting alert condition
             # Minimal delay between data being send to phy and them showing on DQ lines
             # If CLW is delay from write command to data on DQ, SW should add CLW-min_write_latency delay cycles
