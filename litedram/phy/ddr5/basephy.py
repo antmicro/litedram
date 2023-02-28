@@ -298,9 +298,15 @@ class DDR5PHY(Module, AutoCSR):
 
         # Commands are sent over 2 DRAM clocks (sys4x) and we count cl/cwl from last bit
         cmd_latency     = 2
-
         cl              = get_cl_cw(memtype, tck)
         cwl = cl - 2
+
+        self.des_latency          = des_latency
+        self.ser_latency          = ser_latency
+        self.ca_cdc_min_max_delay = (rd_extra_delay, rd_extra_delay)
+        self.rd_cdc_min_max_delay = (Latency(sys=0), Latency(sys=0))
+        self.wr_cdc_min_max_delay = (rd_extra_delay, rd_extra_delay)
+
         # Read latency
         # This value should be the worst case delay between sending a read cmd and
         # getting data back. There will be exact delay may vary based on the training result.
