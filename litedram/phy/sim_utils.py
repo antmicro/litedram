@@ -582,14 +582,15 @@ class SimpleCDCrWrap(Module, _FIFOInterface):
 
 
 class AsyncFIFOXilinx7(Module):
-    LATENCY=3
-    WCL_LATENCY=3
+    LATENCY=4 # 3 to pass through memory and 1 for output register
+    WCL_LATENCY=4
     RANDOMIZE=False
 
     @classmethod
     def randomize_delay(cls):
-        cls.RANDOMIZE = True
-        cls.WCL_LATENCY=4
+        cls.RANDOMIZE=True
+        cls.LATENCY=4
+        cls.WCL_LATENCY=5
 
     def __init__(self, wclk, rclk, randomize=False):
         delay = 3
@@ -597,6 +598,8 @@ class AsyncFIFOXilinx7(Module):
             from random import random
             if 0.5 < random():
                 delay += 1
+        assert type(wclk) == str
+        assert type(rclk) == str
 
         self.DI = Signal(72)
         self.WREN = Signal()
@@ -616,6 +619,7 @@ class AsyncFIFOXilinx7(Module):
         self.specials += mem
         w_port = mem.get_port(write_capable=True, has_re=True, clock_domain=wclk)
         r_port = mem.get_port(has_re=True, clock_domain=rclk)
+        self.specials += [w_port, r_port]
 
         self.comb += w_port.dat_w.eq(self.DI)
         self.comb += w_port.adr.eq(wclk_w_cnt[:9])
