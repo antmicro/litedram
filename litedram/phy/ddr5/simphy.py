@@ -8,8 +8,9 @@ from migen import *
 
 from litex.soc.interconnect.csr import CSR
 
-from litedram.phy.utils import delayed, Serializer, Deserializer, Latency, SimpleCDC
+from litedram.phy.utils import delayed, Serializer, Deserializer, Latency
 from litedram.phy.sim_utils import SimPad, SimulationPads, SimSerDesMixin
+from litedram.phy.sim_utils import SimpleCDC, SimpleCDCr
 from litedram.phy.ddr5.basephy import DDR5PHY
 from litedram.phy.ddr5.BasePHYOutput import BasePHYOutput
 
@@ -78,6 +79,7 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
         ddr_90      = dict(clkdiv="sys2x", clk="sys4x_90_ddr", xilinx=True)
         recv_ddr_90 = dict(clkdiv="sys", clk="sys4x_90_ddr", xilinx=True)
 
+        SimpleCDC.set_register()
         # This configuration mimics Xilinx 7-series serdes behavior
         if aligned_reset_zero:
             ddr["reset_cnt"] = 0
@@ -96,7 +98,6 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
             i_dw=len(ck_t), o_dw=len(cdc_ck_t),
             i=ck_t, o=cdc_ck_t,
             name=f"ck_t",
-            register=True,
         )
         self.submodules += simple_cdc
         self.ser(i=cdc_ck_t, o=self.pads.ck_t, name='ck_t', **ddr)
@@ -107,7 +108,6 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
             i_dw=len(ck_c), o_dw=len(cdc_ck_c),
             i=ck_c, o=cdc_ck_c,
             name=f"ck_c",
-            register=True,
         )
         self.submodules += simple_cdc
         self.ser(i=cdc_ck_c, o=self.pads.ck_c, name='ck_c', **ddr)
@@ -120,7 +120,6 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
             i_dw=len(reset_n), o_dw=len(cdc_reset_n),
             i=reset_n, o=cdc_reset_n,
             name=f"reset_n",
-            register=True,
         )
         self.submodules += simple_cdc
         self.ser(i=cdc_reset_n, o=self.pads.reset_n, name='reset_n', **ddr)
@@ -138,7 +137,6 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
                     i_dw=len(basephy_cs), o_dw=len(cdc_out),
                     i=basephy_cs, o=cdc_out,
                     name=f"{prefix}cs_n_{it}",
-                    register=True,
                 )
                 self.submodules += simple_cdc
                 self.ser(i=cdc_out, o=pad, name=f'{prefix}cs_n_{it}', **cs)
@@ -150,7 +148,6 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
                     i_dw=len(basephy_ca), o_dw=len(cdc_out_ca),
                     i=basephy_ca, o=cdc_out_ca,
                     name=f"{prefix}ca_{it}",
-                    register=True,
                 )
                 self.submodules += simple_cdc
                 self.ser(i=cdc_out_ca, o=pad, name=f'{prefix}ca{it}', **cmd)
@@ -164,7 +161,6 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
                 i_dw=len(basephy_par), o_dw=len(cdc_out_par),
                 i=basephy_par, o=cdc_out_par,
                 name=f"{prefix}par_{it}",
-                register=True,
             )
             self.submodules += simple_cdc
             self.ser(i=cdc_out_par, o=pad, name=f'{prefix}par', **cmd)
@@ -178,7 +174,6 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
                     i_dw=len(dqs_t_o), o_dw=len(cdc_dqs_t_o),
                     i=dqs_t_o, o=cdc_dqs_t_o,
                     name=f"{prefix}dqs_t_o_{it}",
-                    register=True,
                 )
                 self.submodules += simple_cdc
                 self.ser(i=cdc_dqs_t_o,
@@ -195,7 +190,6 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
                     i_dw=len(dqs_c_o), o_dw=len(cdc_dqs_c_o),
                     i=dqs_c_o, o=cdc_dqs_c_o,
                     name=f"{prefix}dqs_c_o_{it}",
-                    register=True,
                 )
                 self.submodules += simple_cdc
                 self.ser(i=cdc_dqs_c_o,
@@ -216,7 +210,6 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
                     i_dw=len(out_dm), o_dw=len(cdc_out_dm),
                     i=out_dm, o=cdc_out_dm,
                     name=f"{prefix}dm_o_{it}",
-                    register=True,
                 )
                 self.submodules += simple_cdc
                 self.ser(i=cdc_out_dm, o=getattr(self.pads, prefix+'dm_n_o')[it],
@@ -242,7 +235,6 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
                     i_dw=len(out_dq), o_dw=len(cdc_out_dq),
                     i=out_dq, o=cdc_out_dq,
                     name=f"{prefix}dq_o_{it}",
-                    register=True,
                 )
                 self.submodules += simple_cdc
                 self.ser(i=cdc_out_dq, o=getattr(self.pads, prefix+'dq_o')[it],
@@ -261,7 +253,6 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
                     i_dw=len(out_dqs_t_oe), o_dw=len(cdc_out_dqs_t_oe),
                     i=out_dqs_t_oe, o=cdc_out_dqs_t_oe,
                     name=f"{prefix}dqs_t_oe",
-                    register=True,
                 )
                 self.submodules += simple_cdc
                 self.ser(i=cdc_out_dqs_t_oe,
@@ -275,7 +266,6 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
                     i_dw=len(out_dqs_c_oe), o_dw=len(cdc_out_dqs_c_oe),
                     i=out_dqs_c_oe, o=cdc_out_dqs_c_oe,
                     name=f"{prefix}dqs_c_oe",
-                    register=True,
                 )
                 self.submodules += simple_cdc
                 self.ser(i=cdc_out_dqs_c_oe,
@@ -293,7 +283,6 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
                     i_dw=len(out_dq_oe), o_dw=len(cdc_out_dq_oe),
                     i=out_dq_oe, o=cdc_out_dq_oe,
                     name=f"{prefix}dq_oe",
-                    register=True,
                 )
                 self.submodules += simple_cdc
                 self.ser(i=cdc_out_dq_oe,

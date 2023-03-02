@@ -12,7 +12,8 @@ from litex.soc.interconnect.csr import *
 from litedram.common import *
 from litedram.phy.dfi import *
 
-from litedram.phy.utils import delayed, Latency, SimpleCDC
+from litedram.phy.utils import delayed, Latency
+from litedram.phy.sim_utils import SimpleCDC, SimpleCDCr
 from litedram.phy.ddr5.basephy import DDR5PHY
 
 from litedram.phy.s7common import S7Common
@@ -110,6 +111,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                     (CDCCSRs[f"{prefix}rdly_dqs_inc"], CDCCSRs[f"{prefix}rdly_dqs_rst"])),
             }
 
+        SimpleCDC.set_register()
         if pin_domains is not None:
             cdc_cache = {}
             dq_oe = {}
@@ -156,7 +158,6 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                             i_dw=len(out_sig), o_dw=len(cdc_out_sig),
                             i=out_sig, o=cdc_out_sig,
                             name=_pin+f"_{i}",
-                            register=True,
                         )
                         self.submodules += simple_cdc
                         if _pin_oe is not None:
@@ -178,7 +179,6 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                                     i_dw=len(out_sig_oe), o_dw=len(cdc_out_sig_oe),
                                     i=out_sig_oe, o=cdc_out_sig_oe,
                                     name=_pin_oe+f"_{i}",
-                                    register=True,
                                 )
                                 self.submodules += simple_cdc
                             if _pin_oe in ["A_dq_oe", "B_dq_oe"]:
@@ -355,7 +355,6 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                 i_dw=len(ck_t), o_dw=len(cdc_ck_t),
                 i=ck_t, o=cdc_ck_t,
                 name=f"ck_t",
-                register=True,
             )
             self.submodules += simple_cdc
 
@@ -386,7 +385,6 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                 i_dw=len(reset_n), o_dw=len(cdc_reset_n),
                 i=reset_n, o=cdc_reset_n,
                 name=f"reset_n",
-                register=True,
             )
             self.submodules += simple_cdc
             reset_n_o = getattr(self.pads, 'reset_n')
@@ -408,7 +406,6 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                         i_dw=len(basephy_cs), o_dw=len(cdc_out_cs),
                         i=basephy_cs, o=cdc_out_cs,
                         name=f"{prefix}cs_n_{it}",
-                        register=True,
                     )
                     self.submodules += simple_cdc
                     cs_n_ser = Signal()
@@ -435,7 +432,6 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                         i_dw=len(basephy_ca), o_dw=len(cdc_out_ca),
                         i=basephy_ca, o=cdc_out_ca,
                         name=f"{prefix}ca_{it}",
-                        register=True,
                     )
                     self.submodules += simple_cdc
                     ca_ser = Signal()
@@ -469,7 +465,6 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                         i_dw=len(basephy_par), o_dw=len(cdc_out_par),
                         i=basephy_par, o=cdc_out_par,
                         name=f"{prefix}par_{it}",
-                        register=True,
                     )
                     self.submodules += simple_cdc
                     par_ser = Signal()
@@ -497,7 +492,6 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                         i_dw=len(dqs_t_o), o_dw=len(cdc_dqs_t_o),
                         i=dqs_t_o, o=cdc_dqs_t_o,
                         name=f"{prefix}dqs_t_o_{it}",
-                        register=True,
                     )
                     self.submodules += simple_cdc
 
@@ -508,7 +502,6 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                         i_dw=len(out_dqs_oe), o_dw=len(cdc_out_dqs_oe),
                         i=~out_dqs_oe, o=cdc_out_dqs_oe,
                         name=f"{prefix}dqs_t_oe",
-                        register=True,
                     )
                     self.submodules += simple_cdc
 
@@ -579,7 +572,6 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                         i_dw=len(basephy_dq), o_dw=len(cdc_out_dq),
                         i=basephy_dq, o=cdc_out_dq,
                         name=f"{prefix}dq_o_{it}",
-                        register=True,
                     )
                     self.submodules += simple_cdc
 
@@ -591,7 +583,6 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                             i_dw=len(basephy_dq_oe), o_dw=len(cdc_out_dq_oe),
                             i=~basephy_dq_oe, o=cdc_out_dq_oe,
                             name=f"{prefix}dq_oe{it//self.dq_dqs_ratio}",
-                            register=True,
                         )
                         self.submodules += simple_cdc
                         dq_oe[it//self.dq_dqs_ratio] = cdc_out_dq_oe
@@ -669,7 +660,6 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                             i_dw=len(basephy_dm), o_dw=len(cdc_out_dm),
                             i=basephy_dm, o=cdc_out_dm,
                             name=f"{prefix}dm_o_{it}",
-                            register=True,
                         )
                         self.submodules += simple_cdc
 

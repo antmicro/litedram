@@ -17,7 +17,7 @@ from litex.soc.interconnect.csr import CSRStorage, AutoCSR
 from litedram.common import Settings, tXXDController
 from litedram.phy.utils import Serializer, Deserializer, edge
 
-from operator import or_
+from operator import or_, and_
 from functools import reduce
 
 # PHY ----------------------------------------------------------------------------------------------
@@ -397,6 +397,188 @@ class PulseTiming(Module):
 
     def progress(self):
         return self.timing.progress()
+
+# CDCs
+
+class SimpleCDC(Module):
+    LATENCY=1
+    register=False
+
+    @classmethod
+    def set_register(cls):
+        cls.LATENCY=2
+        cls.register = True
+
+    def __init__(self, clkdiv, clk, i_dw, o_dw, *,
+                    i=None, o=None, name=None, outside_reset_n=None):
+
+        sd_clk = getattr(self.sync, clk)
+        sd_clkdiv = getattr(self.sync, clkdiv)
+
+        assert i_dw == 2*o_dw
+
+        if i is None: i = Signal(i_dw)
+        if o is None: o = Signal(o_dw)
+        self.i = i
+        self.o = o
+
+        w_cnt = Signal(name='{}_w_cnt'.format(name) if name is not None else None)
+
+        self.r_ready = r_ready = Signal(name='{}_r_ready'.format(name) if name is not None else None)
+        r_row_cnt = Signal(name='{}_r_row_cnt'.format(name) if name is not None else None)
+        r_col_cnt = Signal(name='{}_r_col_cnt'.format(name) if name is not None else None)
+
+        self.i_d = i_d = Array([Signal.like(i), Signal.like(i)], name='{}_i_d'.format(name) if name is not None else None)
+        reset_n = Signal(name='{}_reset_n'.format(name) if name is not None else None)
+
+        if outside_reset_n is None:
+            sd_clkdiv += [reset_n.eq(1)]
+        else:
+            sd_clkdiv += [reset_n.eq(outside_reset_n)]
+
+        sd_clkdiv += [
+            If(w_cnt,
+                w_cnt.eq(0),
+            ).Else(
+                w_cnt.eq(1),
+            ),
+            i_d[w_cnt].eq(i),
+        ]
+
+        sd_clk += [
+            If(reset_n,
+                r_ready.eq(1),
+            ),
+            If(r_ready,
+                If(r_col_cnt,
+                    r_row_cnt.eq(r_row_cnt + 1),
+                ),
+                r_col_cnt.eq(r_col_cnt + 1),
+            )
+        ]
+
+        self.o_array = o_array = Array([
+            Array([i_d[0][0:o_dw], i_d[0][o_dw:]]),
+            Array([i_d[1][0:o_dw], i_d[1][o_dw:]])
+        ])
+        if not self.register:
+            self.comb += If(r_ready, o.eq(o_array[r_row_cnt][r_col_cnt]))
+        else:
+            sd_clk += If(r_ready, o.eq(o_array[r_row_cnt][r_col_cnt]))
+
+
+class SimpleCDCr(Module):
+    LATENCY=1
+    register=False
+    aligned=False
+
+    @classmethod
+    def set_aligned(cls):
+        cls.aligned=True
+        cls.LATENCY=2
+        if cls.register:
+            cls.LATENCY=3
+
+    @classmethod
+    def set_register(cls):
+        cls.LATENCY=2
+        cls.register = True
+        if cls.aligned:
+            cls.LATENCY=3
+
+    def __init__(self, clkdiv, clk, i_dw, o_dw, *,
+                    i=None, o=None, name=None, outside_reset_n=None):
+
+        sd_clk = getattr(self.sync, clk)
+        sd_clkdiv = getattr(self.sync, clkdiv)
+
+        assert 2*i_dw == o_dw
+
+        if i is None: i = Signal(i_dw)
+        if o is None: o = Signal(o_dw)
+        self.i = i
+        self.o = o
+        reset_n = Signal(name='{}_reset_n'.format(name) if name is not None else None)
+        r_cnt = Signal(name='{}_w_cnt'.format(name) if name is not None else None)
+        self.r_ready = r_ready = Signal(name='{}_r_ready'.format(name) if name is not None else None)
+        w_row_cnt = Signal(name='{}_r_row_cnt'.format(name) if name is not None else None)
+        w_col_cnt = Signal(name='{}_r_col_cnt'.format(name) if name is not None else None)
+        self.i_d = i_d = Array([Array([Signal.like(i) for _ in range(2)]) for _ in range(2)],
+                                name='{}_i_d'.format(name) if name is not None else None)
+
+        if outside_reset_n is None:
+            reset_n = Signal(name='{}_reset_n'.format(name) if name is not None else None)
+            sd_clkdiv += [
+                reset_n.eq(1),
+            ]
+        else:
+            reset_n = outside_reset_n
+
+        sd_clkdiv += [
+            If(reset_n,
+                r_ready.eq(1),
+            ),
+            If(r_ready,
+                If(r_cnt,
+                    r_cnt.eq(0),
+                ).Else(
+                    r_cnt.eq(1),
+                ),
+            ),
+        ]
+
+        sd_clk += [
+            If(reset_n,
+                If(w_col_cnt,
+                    w_row_cnt.eq(w_row_cnt + 1),
+                ),
+                w_col_cnt.eq(w_col_cnt + 1),
+                i_d[w_row_cnt][w_col_cnt].eq(i),
+            )
+        ]
+
+        self.o_array = o_array = Array([
+            Cat(i_d[0]),
+            Cat(i_d[1]),
+        ])
+        if not self.register:
+            self.comb += If(r_ready, o.eq(o_array[r_cnt]))
+        else:
+            sd_clkdiv += If(r_ready, o.eq(o_array[r_cnt]))
+
+
+class SimpleCDCWrap(Module, _FIFOInterface):
+    LATENCY = SimpleCDC.LATENCY
+
+    @classmethod
+    def reset_latency(cls):
+        cls.LATENCY=SimpleCDC.LATENCY
+
+    def __init__(self, clkdiv, clk, i_dw, o_dw, name=None):
+        _FIFOInterface.__init__(self, i_dw, 2)
+        cross = SimpleCDC(clkdiv, clk, i_dw, o_dw, name=name, outside_reset_n=self.we)
+        self.submodules += cross
+        self.comb += [
+            cross.i.eq(self.din),
+            self.dout.eq(cross.o),
+        ]
+
+
+class SimpleCDCrWrap(Module, _FIFOInterface):
+    LATENCY = SimpleCDC.LATENCY
+
+    @classmethod
+    def reset_latency(cls):
+        cls.LATENCY=SimpleCDC.LATENCY
+
+    def __init__(self, clkdiv, clk, i_dw, o_dw, name=None):
+        _FIFOInterface.__init__(self, o_dw, 2)
+        cross = SimpleCDCr(clkdiv, clk, i_dw, o_dw, name=name, outside_reset_n=self.we)
+        self.submodules += cross
+        self.comb += [
+            cross.i.eq(self.din),
+            self.dout.eq(cross.o),
+        ]
 
 
 class AsyncFIFOXilinx7(Module):
