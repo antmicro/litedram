@@ -227,8 +227,13 @@ class Serializer(Module):
     """
 
     LATENCY = 1
+    xilinx = False
 
-    def __init__(self, clkdiv, clk, i_dw, o_dw, i=None, o=None, reset=None, reset_cnt=-1, name=None, aligned=False, xilinx=False):
+    @classmethod
+    def set_xilinx(cls):
+        cls.xilinx = True
+
+    def __init__(self, clkdiv, clk, i_dw, o_dw, i=None, o=None, reset=None, reset_cnt=-1, name=None, aligned=False):
         assert i_dw > o_dw, (i_dw, o_dw)
         assert i_dw % o_dw == 0, (i_dw, o_dw)
         ratio = i_dw // o_dw
@@ -247,8 +252,7 @@ class Serializer(Module):
         if reset_cnt < 0:
             reset_cnt = ratio + reset_cnt
 
-        if not xilinx:
-
+        if not self.xilinx:
             reset_cnt *= 2
 
             self.i_d = i_d = Array([Signal.like(i), Signal.like(i)])
@@ -303,7 +307,7 @@ class Deserializer(Module):
     """
     LATENCY = 2
 
-    def __init__(self, clkdiv, clk, i_dw, o_dw, i=None, o=None, reset=None, reset_cnt=-1, name=None, aligned=False, xilinx=False):
+    def __init__(self, clkdiv, clk, i_dw, o_dw, i=None, o=None, reset=None, reset_cnt=-1, name=None, aligned=False):
         assert i_dw < o_dw, (i_dw, o_dw)
         assert o_dw % i_dw == 0, (i_dw, o_dw)
         ratio = o_dw // i_dw

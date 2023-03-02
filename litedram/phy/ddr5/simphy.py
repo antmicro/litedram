@@ -58,6 +58,8 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
             raise NotImplementedError(f"Unspupported DQ:DQS ratio: {dq_dqs_ratio}")
 
         self.submodules += pads
+        SimpleCDC.set_register()
+        Serializer.set_xilinx()
         super().__init__(pads,
             ser_latency       = Latency(sys2x=Serializer.LATENCY+1),
             des_latency       = Latency(sys=(Deserializer.LATENCY-1 if aligned_reset_zero else Deserializer.LATENCY)),
@@ -73,13 +75,12 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
         channels_prefix = [""] if not with_sub_channels else ["A_", "B_"]
         delay = lambda sig, cycles: delayed(self, sig, cycles=cycles)
 
-        cs          = dict(clkdiv="sys2x", clk="sys4x_ddr", xilinx=True)
-        cmd         = dict(clkdiv="sys2x", clk="sys4x_ddr", xilinx=True)
-        ddr         = dict(clkdiv="sys2x", clk="sys4x_ddr", xilinx=True)
-        ddr_90      = dict(clkdiv="sys2x", clk="sys4x_90_ddr", xilinx=True)
-        recv_ddr_90 = dict(clkdiv="sys", clk="sys4x_90_ddr", xilinx=True)
+        cs          = dict(clkdiv="sys2x", clk="sys4x_ddr")
+        cmd         = dict(clkdiv="sys2x", clk="sys4x_ddr")
+        ddr         = dict(clkdiv="sys2x", clk="sys4x_ddr")
+        ddr_90      = dict(clkdiv="sys2x", clk="sys4x_90_ddr")
+        recv_ddr_90 = dict(clkdiv="sys", clk="sys4x_90_ddr")
 
-        SimpleCDC.set_register()
         # This configuration mimics Xilinx 7-series serdes behavior
         if aligned_reset_zero:
             ddr["reset_cnt"] = 0
