@@ -40,6 +40,10 @@ class BasePHYCSR(Module, AutoCSR):
             getattr(self, prefix+'wlevel_en').storage.attr.add("slow_ff")
             getattr(self, prefix+'wlevel_en').storage.attr.add("keep")
 
+            setattr(self, prefix+'discard_rd_fifo', CSRStorage(name=prefix+'discard_rd_fifo'))
+            getattr(self, prefix+'discard_rd_fifo').storage.attr.add("slow_ff")
+            getattr(self, prefix+'discard_rd_fifo').storage.attr.add("keep")
+
             setattr(self, prefix+'dly_sel', CSRStorage(
                 max(14, nranks, nibbles), name=prefix+'dly_sel'))
             getattr(self, prefix+'dly_sel').storage.attr.add("slow_ff")
