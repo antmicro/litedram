@@ -348,15 +348,8 @@ class S7DDR5PHY(DDR5PHY, S7Common):
             # Clock
             clk_dly = Signal()
             clk_ser = Signal()
-            ck_t = self.out.ck_t
-            cdc_ck_t = Signal(len(ck_t)//2)
-            simple_cdc = SimpleCDC(
-                clkdiv="sys", clk="sys2x_io",
-                i_dw=len(ck_t), o_dw=len(cdc_ck_t),
-                i=ck_t, o=cdc_ck_t,
-                name=f"ck_t",
-            )
-            self.submodules += simple_cdc
+            cdc_ck_t = Signal(4)
+            self.comb += cdc_ck_t.eq(self.clk_pattern&0xF)
 
             # Every other signal should be realligned to clock.
             self.oserdese2_ddr(

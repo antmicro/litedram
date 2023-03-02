@@ -225,8 +225,7 @@ class DDR5PHY(Module, AutoCSR):
         self.out = BasePHYOutput(nphases, databits, nranks, strobes, with_sub_channels, name="basephy")
 
         # Clocks -----------------------------------------------------------------------------------
-        self.comb += self.out.ck_t.eq(bitpattern("-_-_-_-_"))
-        self.comb += self.out.ck_c.eq(bitpattern("_-_-_-_-"))
+        self.clk_pattern = bitpattern("-_-_-_-_")
 
         # Simple commands --------------------------------------------------------------------------
         self.comb += self.out.reset_n.eq(Cat((phase.reset_n, phase.reset_n) for phase in dfi.phases))

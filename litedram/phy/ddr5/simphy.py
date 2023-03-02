@@ -92,25 +92,12 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
 
         # Clock is shifted 180 degrees to get rising edge in the middle of SDR signals.
         # To achieve that we send negated clock on clk (clk_p).
-        ck_t, ck_c = (self.out.ck_t, self.out.ck_c)
-        cdc_ck_t = Signal(len(ck_t)//2)
-        simple_cdc = SimpleCDC(
-            clkdiv="sys", clk="sys2x",
-            i_dw=len(ck_t), o_dw=len(cdc_ck_t),
-            i=ck_t, o=cdc_ck_t,
-            name=f"ck_t",
-        )
-        self.submodules += simple_cdc
+        cdc_ck_t = Signal(4)
+        self.comb += cdc_ck_t.eq(self.clk_pattern&0xF)
         self.ser(i=cdc_ck_t, o=self.pads.ck_t, name='ck_t', **ddr)
 
-        cdc_ck_c = Signal(len(ck_c)//2)
-        simple_cdc = SimpleCDC(
-            clkdiv="sys", clk="sys2x",
-            i_dw=len(ck_c), o_dw=len(cdc_ck_c),
-            i=ck_c, o=cdc_ck_c,
-            name=f"ck_c",
-        )
-        self.submodules += simple_cdc
+        cdc_ck_c = Signal(4)
+        self.comb += cdc_ck_c.eq(~(self.clk_pattern&0xF))
         self.ser(i=cdc_ck_c, o=self.pads.ck_c, name='ck_c', **ddr)
 
         reset_n = self.out.reset_n
