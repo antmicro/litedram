@@ -877,6 +877,7 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
     dfii_control_1n = '|'.join(dfii_control_1n)
 
     all_cs        = 2**phy_settings.nranks-1
+    # all_cs        = 2
     all_phases    = 2**phy_settings.nphases-1
 
     def cmd_vca():
@@ -994,7 +995,10 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
         ("Assert reset", prefixes, 0, 0, 0, "0", ck(3e-6)),
         ("Assert CS in reset", prefixes, all_cs, 0, 2**4-1, dfii_control_2n, ck(10e-9)),
         ("Release reset", prefixes, all_cs, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N",ck(4e-3)),
-        ("Release CS", prefixes, 0, 0x3FFF, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(2e-6)),
+        ("Release CS", prefixes, 0, 0x3FFF, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(5e-6)),
+        # TODO check timing of release CS:
+        # 3u means 11u
+        # 4u means 15u
     ]
 
     setup_dram_mrs_sequence = [

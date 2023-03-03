@@ -52,7 +52,8 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
         elif dq_dqs_ratio == 4:
             # databits length taken from DDR5 Tester
             pads = DDR5SimulationPads(databits=databits,
-                                      nranks=nranks,
+                                    #   nranks=nranks,
+                                      nranks=2,
                                       dq_dqs_ratio=4,
                                       with_sub_channels=with_sub_channels)
         else:

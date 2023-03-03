@@ -102,13 +102,14 @@ class LiteDRAMController(Module):
         timing_regs = registers.get_register_signals()
 
         # LiteDRAM Interface (User) ----------------------------------------------------------------
+        self.settings.phy.nranks    = 1
         self.interface = interface = LiteDRAMInterface(address_align, self.settings)
 
         # DFI Interface (Memory) -------------------------------------------------------------------
         self.dfi = dfi.Interface(
             addressbits = geom_settings.addressbits,
             bankbits    = geom_settings.bankbits,
-            nranks      = phy_settings.nranks,
+            nranks      = 1, #phy_settings.nranks,
             databits    = phy_settings.dfi_databits,
             nphases     = phy_settings.nphases)
 

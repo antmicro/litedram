@@ -90,7 +90,7 @@ class DDR5RCD01Channel(Module):
             if_ib_o=if_ibuf_o,
             if_ctrl=if_ctrl_ibuf
         )
-        self.submodules += xibuf
+        self.submodules.xibuf = xibuf
 
         """
             Receive commands blocker
@@ -233,7 +233,7 @@ class DDR5RCD01Channel(Module):
             if_clk_row_B_o=if_clk_rowB_rankB_o,
             if_ctrl=if_ctrl_fwd_block_B,
         )
-        self.submodules += xfwd_blocker_B
+        self.submodules.xfwd_blocker_B = xfwd_blocker_B
 
         xrankB = DDR5RCD01RankBuffer(
             if_ibuf=if_csca_rank_B_o,
@@ -250,7 +250,7 @@ class DDR5RCD01Channel(Module):
             if_ctrl_obuf_clks_row_A=if_ctrl_obuf_clks_row_A_rankB,
             if_ctrl_obuf_clks_row_B=if_ctrl_obuf_clks_row_B_rankB,
         )
-        self.submodules += xrankB
+        self.submodules.xrankB = xrankB
 
         self.comb += if_obuf.qbcs_a_n.eq(if_obuf_csca_row_A_rankB.qcs_n)
         self.comb += if_obuf.qbca_a.eq(if_obuf_csca_row_A_rankB.qca)
@@ -273,7 +273,7 @@ class DDR5RCD01Channel(Module):
             sample_o=dcstm_sample_o,
             if_ctrl=if_ctrl_dcstm_agent,
         )
-        self.submodules += xdcstm_agent
+        self.submodules.xdcstm_agent = xdcstm_agent
 
         """
             DCATM Agent
@@ -286,7 +286,7 @@ class DDR5RCD01Channel(Module):
             sample_o=dcatm_sample_o,
             if_ctrl=if_ctrl_dcatm_agent,
         )
-        self.submodules += xdcatm_agent
+        self.submodules.xdcatm_agent = xdcatm_agent
 
         """
             This is hard-connected to alert, which means that
@@ -302,7 +302,7 @@ class DDR5RCD01Channel(Module):
             error_o=if_common.derror_in_n,
             if_ctrl=if_ctrl_error_arbiter,
         )
-        self.submodules += xerror_arbiter
+        self.submodules.xerror_arbiter = xerror_arbiter
 
         """
             Control Center
@@ -351,7 +351,7 @@ class DDR5RCD01Channel(Module):
             drst_rw04=drst_rw04,
             qrst_n=if_sdram.qrst_n,
         )
-        self.submodules += xreset_generator
+        self.submodules.xreset_generator = xreset_generator
 
 
 class TestBed(Module):

@@ -1,7 +1,7 @@
 #
 # This file is part of LiteDRAM.
 #
-# Copyright (c) 2021 Antmicro <www.antmicro.com>
+# Copyright (c) 2023 Antmicro <www.antmicro.com>
 # SPDX-License-Identifier: BSD-2-Clause
 
 import os
@@ -46,7 +46,7 @@ _io = {
          Subsignal("reset_n", Pins(1)),
          Subsignal("alert_n", Pins(1)),
 
-         Subsignal("A_cs_n",  Pins(1)),
+         Subsignal("A_cs_n",  Pins(2)),
          Subsignal("A_ca",    Pins(14)),
          Subsignal("A_par",   Pins(1)),
 
@@ -57,7 +57,7 @@ _io = {
          Subsignal("A_dqs_t", Pins(1)),
          Subsignal("A_dqs_c", Pins(1)),
 
-         Subsignal("B_cs_n",  Pins(1)),
+         Subsignal("B_cs_n",  Pins(2)),
          Subsignal("B_ca",    Pins(14)),
          Subsignal("B_par",   Pins(1)),
 
@@ -187,6 +187,7 @@ def get_clocks(sys_clk_freq):
     clk_dict = {
         "sys":             dict(freq_hz=sys_clk_freq),
         "sys2x":           dict(freq_hz=2*sys_clk_freq),
+        "sys2x_90":        dict(freq_hz=2*sys_clk_freq,phase_deg=90),
         "sys4x":           dict(freq_hz=4*sys_clk_freq),
         "sys4x_ddr":       dict(freq_hz=2*4*sys_clk_freq),                  # RCD cmd sample
         "sys4x_180":       dict(freq_hz=4*sys_clk_freq, phase_deg=180),     # phy cs
@@ -280,14 +281,14 @@ class SimSoCRCD(SoCCore):
         pads_sideband = DDR5RCD01SidebandMockSimulationPads()
         self.submodules.i2cmockmaster = I2CMockMasterWrapper(pads_sideband)
 
-        xRCDSystem = DDR5RCD01SystemWrapper(
+        xRCDSystemWrapper = DDR5RCD01SystemWrapper(
             phy_pads        = self.ddrphy.pads,
             pads_sideband   = pads_sideband,
             rcd_passthrough = pass_through,
             sideband_type   = sb_enum.MOCK,
         )
-        xRCDSystem = ClockDomainsRenamer("sys4x_ddr")(xRCDSystem)
-        self.submodules.xRCDSystem = xRCDSystem
+        xRCDSystemWrapper = ClockDomainsRenamer("sys4x_ddr")(xRCDSystemWrapper)
+        self.submodules.xRCDSystemWrapper = xRCDSystemWrapper
 
         RCD_outpads = {
             ('A_', 0, 1): "A_front_top",
@@ -302,7 +303,7 @@ class SimSoCRCD(SoCCore):
 
 
         for domain in RCD_outpads.values():
-            pads = getattr(xRCDSystem, domain)
+            pads = getattr(xRCDSystemWrapper, domain)
             setattr(self.clock_domains, f"cd_{domain}_t",
                 ClockDomain(domain+"_t"))
             setattr(self.clock_domains, f"cd_{domain}_c",
@@ -321,7 +322,7 @@ class SimSoCRCD(SoCCore):
                 for i in range(modules_in_rank):
                     place = i%2
                     domain = RCD_outpads[(prefix, rank, place)]
-                    pads = getattr(xRCDSystem, domain)
+                    pads = getattr(xRCDSystemWrapper, domain)
                     module = DDR5SDRAMSimulationModel(
                         pads          = pads,
                         cl            = self.sdram.controller.settings.phy.cl,
