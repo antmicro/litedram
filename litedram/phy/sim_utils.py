@@ -14,7 +14,7 @@ from litex.build.sim.config import SimConfig
 from litex.build.generic_platform import Pins, Subsignal
 from litex.soc.interconnect.csr import CSRStorage, AutoCSR
 
-from litedram.common import Settings, tXXDController
+from litedram.common import Settings, tXXDController, SimpleSyncFIFO
 from litedram.phy.utils import Serializer, Deserializer, edge
 
 from operator import or_, and_
@@ -434,7 +434,7 @@ class SimpleCDC(Module):
         if outside_reset_n is None:
             sd_clkdiv += [reset_n.eq(1)]
         else:
-            sd_clkdiv += [reset_n.eq(outside_reset_n)]
+            sd_clkdiv += [reset_n.eq(outside_reset_n & ~w_cnt)]
 
         sd_clkdiv += [
             If(w_cnt,
@@ -548,36 +548,45 @@ class SimpleCDCr(Module):
 
 
 class SimpleCDCWrap(Module, _FIFOInterface):
-    LATENCY = SimpleCDC.LATENCY
+    LATENCY = SimpleCDC.LATENCY + 1
 
     @classmethod
     def reset_latency(cls):
-        cls.LATENCY=SimpleCDC.LATENCY
+        cls.LATENCY=SimpleCDC.LATENCY + 1
 
     def __init__(self, clkdiv, clk, i_dw, o_dw, name=None):
-        _FIFOInterface.__init__(self, i_dw, 2)
-        cross = SimpleCDC(clkdiv, clk, i_dw, o_dw, name=name, outside_reset_n=self.we)
-        self.submodules += cross
+        _FIFOInterface.__init__(self, i_dw, 32)
+        _fifo = SimpleSyncFIFO(o_dw, 2)
+        cross = SimpleCDC(clkdiv, clk, i_dw+2, o_dw+1, name=name, outside_reset_n=self.we)
+        self.submodules += cross, ClockDomainsRenamer(clk)(_fifo)
         self.comb += [
-            cross.i.eq(self.din),
-            self.dout.eq(cross.o),
+            cross.i.eq(Cat(self.din[:i_dw//2], self.we, self.din[i_dw//2:], self.we)),
+            _fifo.din.eq(cross.o[:-1]),
+            _fifo.we.eq(cross.o[-1]),
+            self.dout.eq(_fifo.dout),
+            _fifo.re.eq(self.re),
+            self.readable.eq(_fifo.readable),
         ]
 
 
 class SimpleCDCrWrap(Module, _FIFOInterface):
-    LATENCY = SimpleCDC.LATENCY
+    LATENCY = SimpleCDCr.LATENCY + 1
 
     @classmethod
     def reset_latency(cls):
-        cls.LATENCY=SimpleCDC.LATENCY
+        cls.LATENCY=SimpleCDCr.LATENCY + 1
 
     def __init__(self, clkdiv, clk, i_dw, o_dw, name=None):
         _FIFOInterface.__init__(self, o_dw, 2)
-        cross = SimpleCDCr(clkdiv, clk, i_dw, o_dw, name=name, outside_reset_n=self.we)
+        cross = SimpleCDCr(clkdiv, clk, i_dw+1, o_dw+2, name=name, outside_reset_n=self.we)
         self.submodules += cross
         self.comb += [
-            cross.i.eq(self.din),
-            self.dout.eq(cross.o),
+            cross.i.eq(Cat(self.din, self.we)),
+            _fifo.din.eq(Cat(cross.o[:i_dw], cross.o[i_dw+1:-1])),
+            _fifo.we.eq(reduce(or_(cross.o[i_dw], cross.o[-1]))),
+            self.dout.eq(_fifo.dout),
+            _fifo.re.eq(self.re),
+            self.readable.eq(_fifo.readable),
         ]
 
 
