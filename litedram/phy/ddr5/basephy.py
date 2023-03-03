@@ -24,7 +24,8 @@ from litedram.phy.ddr5.commands import DFIPhaseAdapter
 
 from litedram.phy.ddr5.BasePHYOutput import BasePHYOutput
 from litedram.phy.ddr5.BasePHYPatternGenerators import DQOePattern, DQSPattern
-from litedram.phy.ddr5.BasePHYAddressSlicer import PHYAddressSlicer
+from litedram.phy.ddr5.BasePHYAddressSlicer import (PHYAddressSlicer, PHYAddressSlicerInput,
+    PHYAddressSlicerOutput, PHYAddressSlicerRemap, PHYResetInput, PHYResetOutput)
 from litedram.phy.ddr5.BasePHYCSR import BasePHYCSR
 from litedram.phy.ddr5.BasePHYWritePath import BasePHYWritePath, BasePHYWritePathInput, BasePHYWritePathOutput
 from litedram.phy.ddr5.BasePHYReadPath import BasePHYReadPath, BasePHYReadPathInput, BasePHYReadPathOutput
@@ -217,7 +218,7 @@ class DDR5PHY(Module, AutoCSR):
         )
 
         # DFI Interface ----------------------------------------------------------------------------
-        self.dfi = dfi = Interface(14, 1, nranks, 2*combined_data_bits, nphases=4, with_sub_channels=with_sub_channels)
+        self.dfi = dfi = Interface(14, 1, nranks, 2*combined_data_bits, nphases=nphases, with_sub_channels=with_sub_channels)
 
         # Now prepare the data by converting the sequences on adapters into sequences on the pads.
         # We have to ignore overlapping commands, and module timings have to ensure that there are
@@ -228,8 +229,7 @@ class DDR5PHY(Module, AutoCSR):
         self.clk_pattern = bitpattern("-_-_-_-_")
 
         # Simple commands --------------------------------------------------------------------------
-        self.comb += self.out.reset_n.eq(Cat((phase.reset_n, phase.reset_n) for phase in dfi.phases))
-        self.comb += [phase.alert_n.eq(self.out.alert_n[i*2] & self.out.alert_n[i*2+1]) for i, phase in enumerate(self.dfi.phases)]
+        self.comb += [phase.alert_n.eq(reduce(or_, self.out.alert_n[i*2:(i+1)*2])) for i, phase in enumerate(self.dfi.phases)]
 
         _alert_reduce = Signal()
         _alert = Signal.like(self.out.alert_n)
@@ -243,9 +243,10 @@ class DDR5PHY(Module, AutoCSR):
         ]
         self.comb += CSRs['alert'].status.eq(_alert_reduce)
 
-        for prefix in prefixes:
-            self.submodules += PHYAddressSlicer(self.out, dfi, CSRs['_rdimm_mode'].storage, prefix)
+        # Handle CA/CS/PAR
+        self.handle_ca(prefixes, dfi, nphases, nranks)
 
+        for prefix in prefixes:
             for strobe in range(strobes):
                 # Read Control Path ------------------------------------------------------------------------
                 _csr = {}
@@ -329,6 +330,53 @@ class DDR5PHY(Module, AutoCSR):
                 ]
                 for bit in range(dq_dqs_ratio):
                     self.comb += getattr(self.out, prefix+'dq_o')[bit + strobe*dq_dqs_ratio].eq(getattr(out, f"dq{bit}_o"))
+
+
+    def handle_ca(self, prefixes, dfi, nphases, nranks):
+        ca_outs = []
+        rst_in  = PHYResetInput(nphases)
+        for t_phase, s_phase in zip(rst_in.phases, dfi.phases):
+            self.comb += t_phase.reset_n.eq(s_phase.reset_n)
+        rst_out = PHYResetOutput(nphases)
+        for t_phase, s_phase in zip(rst_out.phases, rst_in.phases):
+            self.sync += t_phase.reset_n.eq(Replicate(s_phase.reset_n, 2))
+
+        ca_outs.append(("", rst_out))
+        for prefix in prefixes:
+            slicer_in  = PHYAddressSlicerInput(nphases, nranks)
+            self.submodules += PHYAddressSlicerRemap(dfi, slicer_in, prefix)
+            slicer_out = PHYAddressSlicerOutput(nphases, nranks)
+            address_slicer = PHYAddressSlicer(slicer_out, slicer_in,
+                self.CSRs['_rdimm_mode'].storage, nphases, nranks)
+            self.submodules += address_slicer
+            ca_outs.append((prefix, slicer_out))
+
+        width = reduce(add,
+            [len(sig) for sig in ca_outs[1][1].flatten()]) * len(ca_outs[1:]) + \
+            2 * nphases
+
+        input_arr = []
+        for i in range(nphases):
+            for _, ca_out in ca_outs:
+                input_arr.append(Cat(ca_out.phases[i].flatten()))
+
+        output_arr = []
+        for i in range(nphases):
+            for prefix, ca_out in ca_outs:
+                for key, _ in ca_out.phases[i].layout:
+                    if "ca0" == key:
+                        key = 'ca'
+                    elif "cs0" in key:
+                        key = 'cs_n'
+                    elif "ca" in key or "ca" in key:
+                        continue
+                    sig_or_list = getattr(self.out, prefix+key)
+                    if not isinstance(sig_or_list, list):
+                        sig_or_list = [sig_or_list]
+                    for sig in sig_or_list:
+                        output_arr.append(sig[2*i:2*i+2])
+
+        self.comb += Cat(output_arr).eq(Cat(input_arr))
 
 
     def get_rst(self, byte, rst, prefix="", clk="sys", dq=False):

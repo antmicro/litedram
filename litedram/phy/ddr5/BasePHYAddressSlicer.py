@@ -11,56 +11,107 @@ from migen.fhdl.structure import Signal, If, Cat, Replicate
 from migen.fhdl.module import Module
 from migen.genlib.record import Record
 
+class PHYResetInput(Record):
+    @staticmethod
+    def data_layout():
+        dfi_layout = [
+            ("reset_n", 1),
+        ]
+        return dfi_layout
+    def __init__(self, nphases):
+        dfi = self.data_layout()
+        layout = [(f"p{i}", dfi) for i in range(nphases)]
+        Record.__init__(self, layout)
+        self.phases = [getattr(self, f"p{i}") for i in range(nphases)]
+        for phase in self.phases:
+            phase.reset_n.reset=~0
+
+
+class PHYResetOutput(Record):
+    @staticmethod
+    def data_layout():
+        dfi_layout = [
+            ("reset_n", 2),
+        ]
+        return dfi_layout
+    def __init__(self, nphases):
+        dfi = self.data_layout()
+        layout = [(f"p{i}", dfi) for i in range(nphases)]
+        Record.__init__(self, layout)
+        self.phases = [getattr(self, f"p{i}") for i in range(nphases)]
+        for phase in self.phases:
+            phase.reset_n.reset=~0
+
+
+class PHYAddressSlicerInput(Record):
+    @staticmethod
+    def data_layout(nranks):
+        dfi_layout = [
+            ("address", 14),
+            ("cs_n", nranks),
+            ("mode_2n", 1),
+        ]
+        return dfi_layout
+    def __init__(self, nphases, nranks):
+        dfi = self.data_layout(nranks)
+        layout = [(f"p{i}", dfi) for i in range(nphases)]
+        Record.__init__(self, layout)
+        self.phases = [getattr(self, f"p{i}") for i in range(nphases)]
+        for phase in self.phases:
+            getattr(phase, f"cs_n").reset = 2**nranks-1
+
+
+class PHYAddressSlicerOutput(Record):
+    @staticmethod
+    def data_layout(nranks, nphases):
+        dfi_layout = [
+            *[(f"ca{i}", 2) for i in range(14)],
+            *[(f"cs{i}_n", 2) for i in range(nranks)],
+            ("par", 2),
+        ]
+        return dfi_layout
+    def __init__(self, nphases, nranks):
+        dfi = self.data_layout(nranks, nphases)
+        layout = [(f"p{i}", dfi) for i in range(nphases)]
+        Record.__init__(self, layout)
+        self.phases = [getattr(self, f"p{i}") for i in range(nphases)]
+        for phase in self.phases:
+            for i in range(nranks):
+                getattr(phase, f"cs{i}_n").reset = 3
+
+
+class PHYAddressSlicerRemap(Module):
+    def __init__(self, dfi_in, slicer_out, prefix):
+        layout = [name for name, _ in slicer_out.layout[0][1]]
+        for s_phase, t_phase in zip(dfi_in.phases, slicer_out.phases):
+            for name in layout:
+                if name == "mode_2n":
+                    self.comb += getattr(t_phase, name).eq(
+                        getattr(s_phase, name))
+                else:
+                    self.comb += getattr(t_phase, name).eq(
+                        getattr(getattr(s_phase, prefix), name))
+
 
 class _DFIAddressBuffer(Module):
     @classmethod
-    def dfi_delay(cls, nphases):
+    def get_delay(cls, nphases):
         return nphases
-
-    def __init__(self, dfi, prefix):
-        nranks  = len(getattr(dfi.phases[0], prefix).cs_n)
-        nphases = len(dfi.phases)
-        assert nranks > 0
-        assert nphases > 0 and (nphases & (nphases-1)) == 0
-
-        layout = [
-            ("address", 14),
-            ("cs_n", nranks),
-            ("reset_n", 1),
-            ("mode_2n", 1),
-        ]
-
-        self.phases = []
-        for i in range(nphases):
-            r = Record(layout)
-            r.cs_n.reset=(2**layout[1][1]-1)
-            setattr(self, f"p{i}", r)
-            self.phases.append(r)
-        for name, _ in layout:
-            for i, phase in enumerate(dfi.phases):
-                _sub_phase = getattr(phase, prefix)
-                if name not in _sub_phase.__dict__:
-                    _sub_phase = phase
-                self.sync += \
-                    getattr(self.phases[i], name).eq(getattr(_sub_phase, name))
+    def __init__(self, src, target):
+        for src_phase, target_phase in zip(src.phases, target.phases):
+            for name, _ in src_phase.layout:
+                self.sync += getattr(target_phase, name).eq(getattr(src_phase, name))
 
 
 class PHYAddressSlicer(Module):
     @classmethod
     def dfi_delay(cls, nphases):
-        return _DFIAddressBuffer.dfi_delay(nphases) + nphases # base buffer + Slicer delay
+        return _DFIAddressBuffer.get_delay(nphases) + nphases # base buffer + Slicer delay
 
-    def __init__(self, out, dfi, rdimm_mode, prefix):
-        # DDR5 CS/CA/PAR PATH ----------------------------------------------------------------------
-
-        nranks  = len(getattr(dfi.phases[0], prefix).cs_n)
-        nphases = len(dfi.phases)
-        assert nranks > 0
-        assert nphases > 0 and (nphases & (nphases-1)) == 0
-
+    def __init__(self, slicer_out, slicer_in, rdimm_mode, nphases, nranks):
         # Buffer DFI -------------------------------------------------------------------------------
-        cmd_buff = _DFIAddressBuffer(dfi, prefix)
-        self.submodules.BufferDFICommand = cmd_buff
+        cmd_buff = PHYAddressSlicerInput(nphases, nranks)
+        self.submodules += _DFIAddressBuffer(slicer_in, cmd_buff)
 
         # DDR5 CS ----------------------------------------------------------------------------------
         carry_cs_n = Signal(nranks, reset=2**nranks-1)
@@ -68,16 +119,16 @@ class PHYAddressSlicer(Module):
             carry_cs_n.eq(cmd_buff.phases[-1].cs_n),
         ]
 
-        for rank in range(nranks):
-            cs_n = getattr(out, prefix + 'cs_n')
-            for j in range(nphases):
+        for j, phase in enumerate(slicer_out.phases):
+            for rank in range(nranks):
+                cs_n = getattr(phase, f'cs{rank}_n')
                 self.sync += [
                     If(~cmd_buff.phases[j].mode_2n,
-                        cs_n[rank][2*j].eq(cmd_buff.phases[j].cs_n[rank]),
+                        cs_n[0].eq(cmd_buff.phases[j].cs_n[rank]),
                     ).Else(
-                        cs_n[rank][2*j].eq(carry_cs_n[rank] if j == 0 else cmd_buff.phases[j-1].cs_n[rank]),
+                        cs_n[0].eq(carry_cs_n[rank] if j == 0 else cmd_buff.phases[j-1].cs_n[rank]),
                     ),
-                    cs_n[rank][2*j+1].eq(cmd_buff.phases[j].cs_n[rank]),
+                    cs_n[1].eq(cmd_buff.phases[j].cs_n[rank]),
                 ]
 
         # DDR5 CA ----------------------------------------------------------------------------------
@@ -117,9 +168,9 @@ class PHYAddressSlicer(Module):
             )
 
         # CA Slicer --------------------------------------------------------------------------------
-        for bit in range(7):
-            for j in range(nphases):
-                sig = getattr(out, prefix+'ca')[bit][j*2:j*2+2]
+        for j, phase in enumerate(slicer_out.phases):
+            for bit in range(7):
+                sig = getattr(phase, f'ca{bit}')
                 self.sync += [
                     If(rdimm_mode & cmd_buff.phases[j].mode_2n,
                         If(~take_lower_bits[j],
@@ -134,18 +185,18 @@ class PHYAddressSlicer(Module):
                     ),
                 ]
 
-        for bit in range(7, 14):
-            _ca = getattr(out, prefix+'ca')[bit]
-            for j in range(nphases):
+        for j, phase in enumerate(slicer_out.phases):
+            for bit in range(7, 14):
+                _ca = getattr(phase, f'ca{bit}')
                 self.sync += [
                     If(~rdimm_mode,
-                        _ca[j*2:j*2+2].eq(Replicate(cmd_buff.phases[j].address[bit], 2)),
+                        _ca.eq(Replicate(cmd_buff.phases[j].address[bit], 2)),
                     ).Else(
-                        _ca[j*2:j*2+2].eq(Replicate(0, 2)),
+                        _ca.eq(Replicate(0, 2)),
                     ),
                 ]
 
         # DDR5 PAR ---------------------------------------------------------------------------------
-        self.sync += getattr(out, prefix + 'par').eq(
-            Cat([reduce(xor, cmd_buff.phases[phase].address[7*i:7+7*i])
-                    for phase in range(nphases) for i in range(2)]))
+        self.sync += [
+            phase.par.eq(reduce(xor, cmd_buff.phases[n_phase].address[7*i:7+7*i]))
+                    for n_phase, phase in enumerate(slicer_out.phases) for i in range(2)]
