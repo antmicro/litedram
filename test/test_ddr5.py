@@ -54,18 +54,29 @@ class VerilatorDDR5Tests(unittest.TestCase):
         self.run_test([
             "--finish-after-memtest", "--log-level", "warn",
             "--output-dir", "build/test_ddr5_sim_dq_dqs_ratio_4",
-            "--l2-size", "32",
+            "--l2-size", "256",
             "--dq-dqs-ratio", "4",
         ])
 
-    def test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_false_modules_per_rank_1(self):
+    def test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_false_modules_per_rank_1_with_dm(self):
         # Test simulation with regular delays, intermediate serialization stage,
         # refresh and no L2 cache (masked write must work)
         self.run_test([
             "--finish-after-memtest", "--log-level", "warn",
-            "--output-dir", "build/test_ddr5_sim_dq_dqs_ratio_8",
-            "--l2-size", "0",
+            "--output-dir", "build/test_ddr5_sim_dq_dqs_ratio_8_with_dm",
+            "--l2-size", "256",
             "--dq-dqs-ratio", "8",
+        ])
+
+    def test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_false_modules_per_rank_1_without_dm(self):
+        # Test simulation with regular delays, intermediate serialization stage,
+        # refresh and no L2 cache (masked write must work)
+        self.run_test([
+            "--finish-after-memtest", "--log-level", "warn",
+            "--output-dir", "build/test_ddr5_sim_dq_dqs_ratio_8_without_dm",
+            "--l2-size", "256",
+            "--dq-dqs-ratio", "8",
+            "--no-masked-write",
         ])
 
     def test_ddr5_sim_dq_dqs_ratio_4_with_sub_channels_true_modules_per_rank_1(self):
@@ -74,20 +85,32 @@ class VerilatorDDR5Tests(unittest.TestCase):
         self.run_test([
             "--finish-after-memtest", "--log-level", "warn",
             "--output-dir", "build/test_ddr5_sim_dq_dqs_ratio_4_with_sub_channels",
-            "--l2-size", "32",
+            "--l2-size", "256",
             "--dq-dqs-ratio", "4",
             "--with-sub-channels",
         ])
 
-    def test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_true_modules_per_rank_1(self):
+    def test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_true_modules_per_rank_1_with_dm(self):
         # Test simulation with regular delays, intermediate serialization stage,
         # refresh and no L2 cache (masked write must work)
         self.run_test([
             "--finish-after-memtest", "--log-level", "warn",
-            "--output-dir", "build/test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels",
-            "--l2-size", "0",
+            "--output-dir", "build/test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_with_dm",
+            "--l2-size", "256",
             "--dq-dqs-ratio", "8",
             "--with-sub-channels",
+        ])
+
+    def test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_true_modules_per_rank_1_without_dm(self):
+        # Test simulation with regular delays, intermediate serialization stage,
+        # refresh and no L2 cache (masked write must work)
+        self.run_test([
+            "--finish-after-memtest", "--log-level", "warn",
+            "--output-dir", "build/test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_without_dm",
+            "--l2-size", "256",
+            "--dq-dqs-ratio", "8",
+            "--with-sub-channels",
+            "--no-masked-write",
         ])
 
     def test_ddr5_sim_dq_dqs_ratio_4_with_sub_channels_false_modules_per_rank_2(self):
@@ -96,20 +119,32 @@ class VerilatorDDR5Tests(unittest.TestCase):
         self.run_test([
             "--finish-after-memtest", "--log-level", "warn",
             "--output-dir", "build/test_ddr5_sim_dq_dqs_ratio_4",
-            "--l2-size", "32",
+            "--l2-size", "256",
             "--dq-dqs-ratio", "4",
             "--modules-in-rank", "2",
         ])
 
-    def test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_false_modules_per_rank_2(self):
+    def test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_false_modules_per_rank_2_with_dm(self):
         # Test simulation with regular delays, intermediate serialization stage,
         # refresh and no L2 cache (masked write must work)
         self.run_test([
             "--finish-after-memtest", "--log-level", "warn",
-            "--output-dir", "build/test_ddr5_sim_dq_dqs_ratio_8",
-            "--l2-size", "0",
+            "--output-dir", "build/test_ddr5_sim_dq_dqs_ratio_8_with_dm",
+            "--l2-size", "256",
             "--dq-dqs-ratio", "8",
             "--modules-in-rank", "2",
+        ])
+
+    def test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_false_modules_per_rank_2_without_dm(self):
+        # Test simulation with regular delays, intermediate serialization stage,
+        # refresh and no L2 cache (masked write must work)
+        self.run_test([
+            "--finish-after-memtest", "--log-level", "warn",
+            "--output-dir", "build/test_ddr5_sim_dq_dqs_ratio_8_without_dm",
+            "--l2-size", "256",
+            "--dq-dqs-ratio", "8",
+            "--modules-in-rank", "2",
+            "--no-masked-write",
         ])
 
     def test_ddr5_sim_dq_dqs_ratio_4_with_sub_channels_true_modules_per_rank_2(self):
@@ -118,20 +153,33 @@ class VerilatorDDR5Tests(unittest.TestCase):
         self.run_test([
             "--finish-after-memtest", "--log-level", "warn",
             "--output-dir", "build/test_ddr5_sim_dq_dqs_ratio_4_with_sub_channels",
-            "--l2-size", "32",
+            "--l2-size", "256",
             "--dq-dqs-ratio", "4",
             "--with-sub-channels",
             "--modules-in-rank", "2",
         ])
 
-    def test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_true_modules_per_rank_2(self):
+    def test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_true_modules_per_rank_2_with_dm(self):
         # Test simulation with regular delays, intermediate serialization stage,
         # refresh and no L2 cache (masked write must work)
         self.run_test([
             "--finish-after-memtest", "--log-level", "warn",
-            "--output-dir", "build/test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels",
-            "--l2-size", "0",
+            "--output-dir", "build/test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_with_dm",
+            "--l2-size", "256",
             "--dq-dqs-ratio", "8",
             "--with-sub-channels",
             "--modules-in-rank", "2",
+        ])
+
+    def test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_true_modules_per_rank_2_without_dm(self):
+        # Test simulation with regular delays, intermediate serialization stage,
+        # refresh and no L2 cache (masked write must work)
+        self.run_test([
+            "--finish-after-memtest", "--log-level", "warn",
+            "--output-dir", "build/test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_without_dm",
+            "--l2-size", "256",
+            "--dq-dqs-ratio", "8",
+            "--with-sub-channels",
+            "--modules-in-rank", "2",
+            "--no-masked-write",
         ])

@@ -179,6 +179,10 @@ jobs:
             rcd_mode: "pass_through"
           - with_sub_channels: "true"
             rcd_mode: "normal"
+          - dq_dqs_ratio: "8"
+            with_dm: "true"
+          - dq_dqs_ratio: "8"
+            with_dm: "false"
 
     steps:
       # Checkout Repository
@@ -237,23 +241,33 @@ jobs:
       - name: Install Project
         run: python3 setup.py develop --user
 
-      # Test
+      # RCD regression test
       - name: Run Tests
         if: ${{ matrix.rcd_mode == 'pass_through'}}
         run: |
           export PATH=/usr/local/riscv/bin:$PATH
           pytest test/test_ddr5_rdimm_regression.py -k ${{ format('test_ddr5_rcd_reg_sim_dq_dqs_ratio_{0}_modules_per_rank_{1}', matrix.dq_dqs_ratio, matrix.module_in_rank) }} --verbose
 
-      # Test
+      # RCD test
       - name: Run Tests
         if: ${{ matrix.rcd_mode == 'normal'}}
         run: |
           export PATH=/usr/local/riscv/bin:$PATH
           pytest test/test_ddr5_rdimm.py -k ${{ format('test_ddr5_rcd_sim_dq_dqs_ratio_{0}_modules_per_rank_{1}', matrix.dq_dqs_ratio, matrix.module_in_rank) }} --verbose
 
-      # Test
+      # NO RCD test
       - name: Run Tests
-        if: ${{ matrix.rcd_mode != 'pass_through' && matrix.rcd_mode != 'normal'}}
+        if: ${{ matrix.rcd_mode != 'pass_through' && matrix.rcd_mode != 'normal' && matrix.dq_dqs_ratio != '8' }}
         run: |
           export PATH=/usr/local/riscv/bin:$PATH
-          pytest test/test_ddr5.py -k ${{ format('test_ddr5_sim_dq_dqs_ratio_{1}_with_sub_channels_{0}_modules_per_rank_{2}', matrix.with_sub_channels, matrix.dq_dqs_ratio, matrix.module_in_rank) }} --verbose
+          pytest test/test_ddr5.py -k ${{ format('test_ddr5_sim_dq_dqs_ratio_4_with_sub_channels_{0}_modules_per_rank_{1}', matrix.with_sub_channels, matrix.module_in_rank) }} --verbose
+
+        if: ${{ matrix.rcd_mode != 'pass_through' && matrix.rcd_mode != 'normal' && matrix.dq_dqs_ratio == '8' && matrix.with_dm }}
+        run: |
+          export PATH=/usr/local/riscv/bin:$PATH
+          pytest test/test_ddr5.py -k ${{ format('test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_{0}_modules_per_rank_{1}_with_dm', matrix.with_sub_channels, matrix.module_in_rank) }} --verbose
+
+        if: ${{ matrix.rcd_mode != 'pass_through' && matrix.rcd_mode != 'normal' && matrix.dq_dqs_ratio == '8' && !matrix.with_dm }}
+        run: |
+          export PATH=/usr/local/riscv/bin:$PATH
+          pytest test/test_ddr5.py -k ${{ format('test_ddr5_sim_dq_dqs_ratio_8_with_sub_channels_{0}_modules_per_rank_{1}_without_dm', matrix.with_sub_channels, matrix.module_in_rank) }} --verbose
