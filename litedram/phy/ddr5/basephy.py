@@ -27,8 +27,11 @@ from litedram.phy.ddr5.BasePHYPatternGenerators import DQOePattern, DQSPattern
 from litedram.phy.ddr5.BasePHYAddressSlicer import (PHYAddressSlicer, PHYAddressSlicerInput,
     PHYAddressSlicerOutput, PHYAddressSlicerRemap, PHYResetInput, PHYResetOutput)
 from litedram.phy.ddr5.BasePHYCSR import BasePHYCSR
-from litedram.phy.ddr5.BasePHYWritePath import BasePHYWritePath, BasePHYWritePathInput, BasePHYWritePathOutput
-from litedram.phy.ddr5.BasePHYReadPath import BasePHYReadPath, BasePHYReadPathInput, BasePHYReadPathOutput
+from litedram.phy.ddr5.BasePHYWritePath import (BasePHYWritePath, BasePHYWritePathInput,
+    BasePHYWritePathOutput)
+from litedram.phy.ddr5.BasePHYDQReadPath import (BasePHYDQReadPath, BasePHYDQRetimeReadPath)
+from litedram.phy.ddr5.BasePHYDQInterfaces import (BasePHYDQPadOutput, BasePHYDQPhyInput,
+    BasePHYDQPhyInputCTRL, BasePHYDQPhyOutputBuffer)
 
 
 class DDR5PHY(Module, AutoCSR):
@@ -176,9 +179,12 @@ class DDR5PHY(Module, AutoCSR):
         # Read latency
         # This value should be the worst case delay between sending a read cmd and
         # getting data back. The exact delay may vary based on the training result.
-        self.min_read_latency, self.max_read_latency, extra_delay = BasePHYReadPath.get_min_max_supported_latencies(
-            nphases, addr_pre_ser_delay, ser_latency, rd_extra_delay,des_latency)
-        read_latency = (self.max_read_latency + extra_delay + nphases - 1) // nphases
+        self.min_read_latency, self.max_read_latency = \
+            BasePHYDQReadPath.get_min_max_supported_latencies(
+                nphases, addr_pre_ser_delay, 0, self.ca_cdc_min_max_delay,
+                self.rd_cdc_min_max_delay, (Latency(sys=0), Latency(sys=0)),
+                ser_latency, des_latency)
+        read_latency = (self.max_read_latency + nphases - 1) // nphases
 
         # Write latency
         # Set to 0, Training PHY will align DQS and DQ for write commands
@@ -247,8 +253,25 @@ class DDR5PHY(Module, AutoCSR):
         self.handle_ca(prefixes, dfi, nphases, nranks)
 
         for prefix in prefixes:
+            rd_dfi_ctrl = BasePHYDQPhyInputCTRL(nphases)
+            rd_fifo_re = Signal()
+            rd_fifo_valid = Signal()
+            rd_fifo_valids = []
+            # Read Control Path --------------------------------------------------------------------
+            _csr = {}
+            _csr['wlevel_en'] = CSRs[prefix+'wlevel_en'].storage
+            _csr['discard_rd_fifo'] = 0
+            self.submodules += BasePHYDQRetimeReadPath(
+                read_latency=read_latency,
+                dfi=self.dfi,
+                dfi_ctrl=rd_dfi_ctrl,
+                rd_fifo_valid=rd_fifo_valid,
+                rd_fifo_re=rd_fifo_re,
+                CSRs=_csr,
+                prefix=prefix,
+            )
             for strobe in range(strobes):
-                # Read Control Path ------------------------------------------------------------------------
+                # Read Control Path ----------------------------------------------------------------
                 _csr = {}
                 _csr['dly_sel'] = CSRs[prefix+'dly_sel'].storage[strobe]
                 _csr['ck_rdly_inc'] = CSRs[prefix+'ck_rdly_inc'].re
@@ -257,33 +280,31 @@ class DDR5PHY(Module, AutoCSR):
                 _csr['wlevel_en'] = CSRs[prefix+'wlevel_en'].storage
 
                 dq_offset = strobe*dq_dqs_ratio
-                phy     = BasePHYReadPathInput(nphases, dq_dqs_ratio)
+                dfi      = BasePHYDQPhyInput(nphases, dq_dqs_ratio)
+                pads_out = BasePHYDQPadOutput(nphases, dq_dqs_ratio)
+
                 self.comb += [t_phase.rddata_en.eq(getattr(s_phase, prefix).rddata_en)
-                    for t_phase, s_phase in zip(phy.phases, dfi.phases)]
-                self.comb += phy.dqs_t_i.eq(getattr(self.out, prefix+'dqs_t_i')[strobe])
-                self.comb += [getattr(phy, f"dq{i}_i").eq(
+                    for t_phase, s_phase in zip(rd_dfi_ctrl.phases, self.dfi.phases)]
+                self.comb += pads_out.dqs_t_i.eq(getattr(self.out, prefix+'dqs_t_i')[strobe])
+                self.comb += [getattr(pads_out, f"dq{i}_i").eq(
                     getattr(self.out, prefix+'dq_i')[dq_offset+i]) for i in range(dq_dqs_ratio)]
 
-                dfi_out = BasePHYReadPathOutput(nphases, dq_dqs_ratio)
-
-                self.submodules += BasePHYReadPath(
-                    dfi_out,
-                    phy,
+                self.submodules += BasePHYDQReadPath(
+                    dfi=dfi,
+                    dfi_ctrl=rd_dfi_ctrl,
+                    phy=pads_out,
+                    rd_re=rd_fifo_re,
+                    rd_valids=rd_fifo_valids,
+                    dq_dqs_ratio=dq_dqs_ratio,
                     CSRs=_csr,
-                    default_read_latency=default_read_latency
+                    default_read_latency=default_read_latency,
                 )
-
-                self.comb += [
-                    getattr(t_phase, prefix).rddata_valid.eq( \
-                        reduce(or_, s_phase.rddata_valid)) \
-                    for t_phase, s_phase in zip(self.dfi.phases, dfi_out.phases)
-                ]
 
                 rddata_start = strobe*2*dq_dqs_ratio
                 rddata_end   = (strobe+1)*2*dq_dqs_ratio
                 self.comb += [
                     getattr(t_phase, prefix).rddata[rddata_start:rddata_end].eq(s_phase.rddata)
-                    for t_phase, s_phase in zip(self.dfi.phases, dfi_out.phases)
+                    for t_phase, s_phase in zip(self.dfi.phases, dfi.phases)
                 ]
 
                 # Write Control Path -----------------------------------------------------------------------
@@ -301,17 +322,17 @@ class DDR5PHY(Module, AutoCSR):
                 wrdata_m_end   = (strobe+1)*wrdata_mask_bits
                 dfi_in = BasePHYWritePathInput(nphases, dq_dqs_ratio)
                 self.comb += [t_phase.wrdata_en.eq(getattr(s_phase, prefix).wrdata_en)
-                    for t_phase, s_phase in zip(dfi_in.phases, dfi.phases)]
+                    for t_phase, s_phase in zip(dfi_in.phases, self.dfi.phases)]
                 self.comb += [t_phase.wrdata.eq(
                     getattr(s_phase, prefix).wrdata[wrdata_start:wrdata_end])
-                    for t_phase, s_phase in zip(dfi_in.phases, dfi.phases)]
+                    for t_phase, s_phase in zip(dfi_in.phases, self.dfi.phases)]
                 def rep(sig, cnt):
                     return sig
                 if dq_dqs_ratio == 4:
                     rep = Replicate
                 self.comb += [t_phase.wrdata_mask.eq(
                     rep(getattr(s_phase, prefix).wrdata_mask[wrdata_m_start:wrdata_m_end], 2))
-                    for t_phase, s_phase in zip(dfi_in.phases, dfi.phases)]
+                    for t_phase, s_phase in zip(dfi_in.phases, self.dfi.phases)]
 
                 out = BasePHYWritePathOutput(nphases, dq_dqs_ratio)
                 self.submodules += BasePHYWritePath(
@@ -330,6 +351,7 @@ class DDR5PHY(Module, AutoCSR):
                 ]
                 for bit in range(dq_dqs_ratio):
                     self.comb += getattr(self.out, prefix+'dq_o')[bit + strobe*dq_dqs_ratio].eq(getattr(out, f"dq{bit}_o"))
+            self.comb += rd_fifo_valid.eq(reduce(and_, rd_fifo_valids))
 
 
     def handle_ca(self, prefixes, dfi, nphases, nranks):

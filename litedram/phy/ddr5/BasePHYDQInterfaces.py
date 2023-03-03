@@ -24,28 +24,41 @@ class BasePHYDQPadInput(Record):
 
 class BasePHYDQPadOutput(Record):
     @staticmethod
-    def data_layout(nphases):
+    def data_layout(nphases, dq_dqs_ratio):
         base_layout = [
-            (f"dqs{i}_t_i", 2*nphases) for i in range(2)
+            (f"dqs_t_i", 2*nphases) for i in range(1)
         ] + [
-            (f"dq{i}_i", 2*nphases) for i in range(8)
+            (f"dq{i}_i", 2*nphases) for i in range(dq_dqs_ratio)
         ]
         return base_layout
-    def __init__(self, nphases):
-        phy = self.data_layout(nphases)
+    def __init__(self, nphases, dq_dqs_ratio):
+        phy = self.data_layout(nphases, dq_dqs_ratio)
         Record.__init__(self, phy)
 
 
 class BasePHYDQPhyInput(Record):
     @staticmethod
-    def data_layout(nphases):
+    def data_layout(nphases, dq_dqs_ratio):
         dfi_layout = [
-            ("rddata", 2*8),
+            ("rddata", 2*dq_dqs_ratio),
         ]
         return dfi_layout
-    def __init__(self, nphases):
-        dfi = self.data_layout(nphases)
+    def __init__(self, nphases, dq_dqs_ratio):
+        dfi = self.data_layout(nphases, dq_dqs_ratio)
         layout = [(f"p{i}", dfi) for i in range(nphases)]
+        Record.__init__(self, layout)
+        self.phases = [getattr(self, f"p{i}") for i in range(nphases)]
+
+
+class BasePHYDQPhyInputCTRL(Record):
+    @staticmethod
+    def data_layout(nphases):
+        base_layout = [
+            ("rddata_en", 1),
+        ]
+        return base_layout
+    def __init__(self, nphases):
+        layout = [(f"p{i}", self.data_layout(nphases)) for i in range(nphases)]
         Record.__init__(self, layout)
         self.phases = [getattr(self, f"p{i}") for i in range(nphases)]
 
@@ -55,7 +68,6 @@ class BasePHYDQPhyOutputCTRL(Record):
     def data_layout(nphases):
         base_layout = [
             ("wrdata_en", 1),
-            ("rddata_en", 1),
         ]
         return base_layout
     def __init__(self, nphases):
