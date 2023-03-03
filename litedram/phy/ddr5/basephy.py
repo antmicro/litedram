@@ -30,8 +30,8 @@ class DDR5Output:
     def __init__(self, nphases, databits, nranks, nstrobes, with_sub_channels=False, name=None):
         self.ck_t   = Signal(2*nphases)
         self.ck_c   = Signal(2*nphases)
-        self.reset_n = Signal(2*nphases)  # Serializer will work in ddr mode
-        self.alert_n = Signal(2*nphases)  # Deserializer will work in ddr mode
+        self.reset_n = Signal(2*nphases, reset=~0) # Serializer will work in ddr mode
+        self.alert_n = Signal(2*nphases)           # Deserializer will work in ddr mode
 
         prefixes = [""] if not with_sub_channels else ["A_", "B_"]
 

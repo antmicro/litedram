@@ -112,7 +112,8 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
         self.ser(i=cdc_ck_c, o=self.pads.ck_c, name='ck_c', **ddr)
 
         reset_n = self.out.reset_n
-        cdc_reset_n = Signal(len(reset_n)//2)
+        rst_len = len(reset_n)//2
+        cdc_reset_n = Signal(rst_len, reset=~0)
         simple_cdc = SimpleCDC(
             clkdiv="sys", clk="sys2x",
             i_dw=len(reset_n), o_dw=len(cdc_reset_n),

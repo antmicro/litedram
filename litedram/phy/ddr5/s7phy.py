@@ -127,7 +127,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                 self.comb += getattr(self.pads, const).eq(0)
 
         reset_n = self.out.reset_n
-        cdc_reset_n = Signal(len(reset_n)//2)
+        cdc_reset_n = Signal(len(reset_n)//2, reset=~0)
         simple_cdc = SimpleCDC(
             clkdiv="sys", clk="sys2x_io",
             i_dw=len(reset_n), o_dw=len(cdc_reset_n),

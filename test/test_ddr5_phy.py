@@ -149,6 +149,8 @@ class DDR5Tests(unittest.TestCase):
         # latencies to use in pad checkers
         # wait 2 cycles for reset + cycle delay + cmd buffering and slicing + CDC + serialization
         ca_CDC_latency   = self.phy.ca_cdc_min_max_delay[0].sys4x
+        self.reset_n_latency: str  = self.xs + 'x' * (self.NPHASES*Serializer.LATENCY) + \
+            '1' * self.NPHASES + '1' * ca_CDC_latency
         self.ca_latency:       str = self.xs + 'x' * self.NPHASES + self.dfi + \
             'x' * ca_CDC_latency + 'x' * (self.NPHASES*Serializer.LATENCY)
         self.cs_n_latency:     str = self.xs + 'x' * self.NPHASES + self.dfi + \
@@ -321,6 +323,28 @@ class DDR5Tests(unittest.TestCase):
         run_simulation(dut, generators, **kwargs)
         PadChecker.assert_ok(self, checkers)
         dfi.assert_ok(self)
+
+    def test_ddr5_reset_n_phase_0(self):
+        self.run_test(
+            dfi_sequence = [
+                {0: dict(reset_n=0)},
+            ],
+            pad_checkers = {"sys4x_180": {
+                'reset_n': self.reset_n_latency + '01111111',
+            }},
+            vcd_name="ddr5_reset_n_phase_0.vcd"
+        )
+
+    def test_ddr5_reset_n_phase_3(self):
+        self.run_test(
+            dfi_sequence = [
+                {0: dict(reset_n=0)},
+            ],
+            pad_checkers = {"sys4x_180": {
+                'reset_n': self.reset_n_latency + '01111111',
+            }},
+            vcd_name="ddr5_reset_n_phase_3.vcd"
+        )
 
     def test_ddr5_cs_n_phase_0_1N(self):
         # Test that CS_n is serialized correctly when sending command on phase 0
