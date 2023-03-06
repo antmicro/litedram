@@ -418,7 +418,7 @@ class DFISamplerDDR5(Module, AutoCSR):
 
 class DFIInjector(Module, AutoCSR):
     def __init__(self, addressbits, bankbits, nranks, databits, nphases=1,
-                 memtype=None, strobes=None, with_sub_channels=False):
+                 memtype=None, strobes=None, with_sub_channels=False, masked_writes_arg=None):
         self.slave   = dfi.Interface(addressbits, bankbits, nranks, databits, nphases)
         self.master  = dfi.Interface(addressbits, bankbits, nranks, databits, nphases)
         csr1_dfi     = dfi.Interface(addressbits, bankbits, nranks, databits, nphases)
@@ -433,9 +433,15 @@ class DFIInjector(Module, AutoCSR):
             csr2_dfi     = dfi.Interface(14, 1, nranks, databits, nphases, with_sub_channels)
             ddr5_dfi     = dfi.Interface(14, 1, nranks, databits, nphases)
 
-            masked_writes  = False
-            if databits//2//strobes in [8, 16]:
-                masked_writes = True
+            if masked_writes_arg is None:
+                masked_writes  = False
+                if databits//2//strobes in [8, 16]:
+                    masked_writes = True
+            else:
+                assert isinstance(masked_writes_arg, bool)
+                masked_writes = masked_writes_arg
+                assert not masked_writes or databits//2//strobes in [8, 16]
+
             adapters = [DFIPhaseAdapter(phase, masked_writes) for phase in self.intermediate.phases]
             self.submodules += adapters
 
