@@ -548,17 +548,18 @@ class SimpleCDCr(Module):
 
 
 class SimpleCDCWrap(Module, _FIFOInterface):
-    LATENCY = SimpleCDC.LATENCY + 1
+    LATENCY = SimpleCDC.LATENCY + 2
 
     @classmethod
     def reset_latency(cls):
-        cls.LATENCY=SimpleCDC.LATENCY + 1
+        cls.LATENCY=SimpleCDC.LATENCY + 2
 
     def __init__(self, clkdiv, clk, i_dw, o_dw, name=None):
         _FIFOInterface.__init__(self, i_dw, 32)
-        _fifo = SimpleSyncFIFO(o_dw, 2)
+        _fifo = SimpleSyncFIFO(o_dw, 2, fwft=False)
+        self.submodules += ClockDomainsRenamer(clk)(_fifo)
         cross = SimpleCDC(clkdiv, clk, i_dw+2, o_dw+1, name=name, outside_reset_n=self.we)
-        self.submodules += cross, ClockDomainsRenamer(clk)(_fifo)
+        self.submodules += cross
         self.comb += [
             cross.i.eq(Cat(self.din[:i_dw//2], self.we, self.din[i_dw//2:], self.we)),
             _fifo.din.eq(cross.o[:-1]),

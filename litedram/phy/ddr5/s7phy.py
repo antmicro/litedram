@@ -5,7 +5,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 from migen import *
-from migen.genlib.cdc import PulseSynchronizer
+from migen.genlib.fifo import _FIFOInterface
+from migen.genlib.cdc import PulseSynchronizer, MultiReg
 
 from litex.soc.interconnect.csr import *
 
@@ -13,10 +14,142 @@ from litedram.common import *
 from litedram.phy.dfi import *
 
 from litedram.phy.utils import delayed, Latency
-from litedram.phy.sim_utils import SimpleCDC, SimpleCDCr
+from litedram.phy.sim_utils import SimpleCDC, SimpleCDCWrap, SimpleCDCr
 from litedram.phy.ddr5.basephy import DDR5PHY
 
 from litedram.phy.s7common import S7Common
+
+class Xilinx7SeriesAsyncFIFO(Module):
+    LATENCY=4 # 3 to pass through memory and 1 for output register
+    WCL_LATENCY=5
+
+    def __init__(self, wclk, rclk, width=72):
+        assert type(wclk) == str
+        assert type(rclk) == str
+        assert width in [4, 9, 18, 36, 72], f"Xilinx 7 Sereis FIFO primitive supports widtths: "\
+            "4,9,18,36, or 72, you tried {width}"
+
+        self.DI = Signal(width)
+        self.WREN = Signal()
+        self.FULL = Signal()
+
+        self.DO = Signal(width)
+        self.RDEN = Signal()
+        self.EMPTY = Signal()
+
+        fifo_primitive = "FIFO18E1"
+        fifo_mode = "FIFO18"
+        if width ==36:
+            fifo_mode = "FIFO18_36"
+        if width > 36:
+            fifo_mode = "FIFO36_72"
+            fifo_primitive = "FIFO36E1"
+
+        i_cd = getattr(self.sync, wclk)
+        rst = Signal(reset_less=True)
+        w_rst = Signal(reset=1)
+        w_cnt = Signal(3)
+        i_cd += [
+            If(w_cnt<5,
+                w_cnt.eq(w_cnt+1),
+            ).Else(
+                w_rst.eq(0),
+            )
+        ]
+
+        o_cd = getattr(self.sync, rclk)
+        r_rst = Signal(reset=1)
+        r_cnt = Signal(3)
+        o_cd += [
+            If(r_cnt<5,
+                r_cnt.eq(r_cnt+1),
+            ).Else(
+                r_rst.eq(0),
+            )
+        ]
+
+        self.specials += Instance(
+            fifo_primitive,
+            p_EN_SYN        = "FALSE",
+            p_DO_REG        = 1,
+            p_FIFO_MODE     = fifo_mode,
+            p_DATA_WIDTH    = width,
+            i_RST           = ResetSignal(wclk),
+            i_WRCLK         = ClockSignal(wclk),
+            i_WREN          = self.WREN,
+            o_FULL          = self.FULL,
+            i_DI            = self.DI[:(7*width)//8+1],
+            i_DIP           = self.DI[(7*width)//8+1:],
+            i_RDEN          = self.RDEN,
+            i_RDCLK         = ClockSignal(rclk),
+            o_EMPTY         = self.EMPTY,
+            o_DO            = self.DO[:(7*width)//8+1],
+            o_DOP           = self.DO[(7*width)//8+1:],
+        )
+
+
+class Xilinx7SeriesAsyncFIFOWrap(Module, _FIFOInterface):
+    LATENCY     = Xilinx7SeriesAsyncFIFO.LATENCY
+    WCL_LATENCY = Xilinx7SeriesAsyncFIFO.WCL_LATENCY
+
+    def __init__(self, wclk, rclk, i_dw, o_dw, name=None):
+        _FIFOInterface.__init__(self, max(i_dw, o_dw), 512)
+        width = max(i_dw, o_dw)
+        fifo_72 = width//72
+        fifo_36 = 0
+        if width > 36:
+            fifo_72 += 1
+        elif width > 0:
+            fifo_36 = 1
+        cdcs = [Xilinx7SeriesAsyncFIFO(wclk, rclk) for _ in range(fifo_72)] + \
+               [Xilinx7SeriesAsyncFIFO(wclk, rclk, width=36) for _ in range(fifo_36)]
+        self.submodules += cdcs
+        intermediate_din  = Signal(width)
+        intermediate_dout = Signal(width)
+        do_read           = Signal(reset=1)
+        do_write          = Signal(reset=1)
+        assert max(i_dw, o_dw)//min(i_dw, o_dw) in [1,2]
+        w_cnt               = Signal()
+        r_cnt               = Signal()
+        r_cnt_i             = Signal()
+        i_cd = getattr(self.sync, wclk)
+        o_cd = getattr(self.sync, rclk)
+
+        self.comb += [
+            self.readable.eq(reduce(and_, [~cdc.EMPTY for cdc in cdcs]) | r_cnt),
+            *[cdc.RDEN.eq(self.re & do_read) for cdc in cdcs],
+            self.writable.eq(reduce(and_, [~cdc.FULL for cdc in cdcs])),
+            *[cdc.WREN.eq(self.we & do_write) for cdc in cdcs],
+            Cat([cdc.DI for cdc in cdcs])[:width].eq(intermediate_din),
+            intermediate_dout.eq(Cat([cdc.DO for cdc in cdcs])[:width]),
+        ]
+        if i_dw < width:
+            self.comb += self.dout.eq(intermediate_dout)
+            reg = Signal(i_dw)
+            self.comb += intermediate_din.eq(Cat(reg, self.din[:i_dw]))
+            self.comb += do_write.eq((w_cnt == 1))
+            i_cd += [
+                If((w_cnt == 1),
+                    w_cnt.eq(0),
+                ).Elif(self.we,
+                    reg.eq(self.din[:i_dw]),
+                    w_cnt.eq(1),
+                )
+            ]
+        elif o_dw < width:
+            self.comb += intermediate_din.eq(self.din)
+            self.comb += self.dout.eq(intermediate_dout.part(r_cnt_i*o_dw, o_dw))
+            self.comb += do_read.eq((r_cnt == 0) & self.re)
+            o_cd += [
+                If((r_cnt == 0) & self.re,
+                    r_cnt.eq(1),
+                    r_cnt_i.eq(0),
+                ).Else(
+                    r_cnt.eq(0),
+                    r_cnt_i.eq(1),
+                )
+            ]
+
 
 class S7DDR5PHY(DDR5PHY, S7Common):
     def __init__(self, pads, *, iodelay_clk_freq, with_odelay,
@@ -59,6 +192,8 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                 o.eq(psync.o),
             ]
             return o
+        SimpleCDC.set_register()
+        SimpleCDCWrap.reset_latency()
 
         # DoubleRateDDR5PHY outputs half-width signals (comparing to DDR5PHY) in sys2x domain.
         # This allows us to use 8:1 DDR OSERDESE2/ISERDESE2 to (de-)serialize the data.
@@ -67,8 +202,12 @@ class S7DDR5PHY(DDR5PHY, S7Common):
             des_latency       = Latency(sys=2),  # ISERDESE2 NETWORKING
             phytype           = self.__class__.__name__,
             with_sub_channels = with_sub_channels,
+            ca_domain         = "sys2x_io",
+            csr_ca_cdc        = cdc,
             csr_cdc           = cdc,
             csr_cdc_90        = cdc_90,
+            ca_cdc_min_max_delay =
+                (Latency(sys2x=SimpleCDCWrap.LATENCY), Latency(sys2x=(SimpleCDCWrap.LATENCY))),
             with_odelay       = with_odelay,
             with_idelay       = with_idelay,
             rd_extra_delay    = Latency(sys2x=3),
@@ -374,17 +513,9 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                 if hasattr(self.pads, const):
                     self.comb += getattr(self.pads, const).eq(0)
 
-            reset_n = self.out.reset_n
-            cdc_reset_n = Signal(len(reset_n)//2, reset=~0)
-            simple_cdc = SimpleCDC(
-                clkdiv="sys", clk="sys2x_io",
-                i_dw=len(reset_n), o_dw=len(cdc_reset_n),
-                i=reset_n, o=cdc_reset_n,
-                name=f"reset_n",
-            )
-            self.submodules += simple_cdc
+            reset_n = self.out.reset_n[:4]
             reset_n_o = getattr(self.pads, 'reset_n')
-            self.oserdese2_ddr(din=cdc_reset_n, dout=reset_n_o, **ddr)
+            self.oserdese2_ddr(din=reset_n, dout=reset_n_o, **ddr)
 
             self.iserdese2_ddr(din=self.pads.alert_n, dout=self.out.alert_n, **ddr_90)
 
@@ -396,17 +527,9 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                 cs_n_ser = Signal(nranks)
                 for it, (basephy_cs, pad) in enumerate(
                     zip(getattr(self.out, prefix+'cs_n'), getattr(self.pads, prefix+'cs_n'))):
-                    cdc_out_cs = Signal(len(basephy_cs)//2)
-                    simple_cdc = SimpleCDC(
-                        clkdiv="sys", clk="sys2x_io",
-                        i_dw=len(basephy_cs), o_dw=len(cdc_out_cs),
-                        i=basephy_cs, o=cdc_out_cs,
-                        name=f"{prefix}cs_n_{it}",
-                    )
-                    self.submodules += simple_cdc
                     cs_n_ser = Signal()
                     self.oserdese2_ddr(
-                        din=cdc_out_cs,
+                        din=basephy_cs[:4],
                         **(dict(dout_fb=cs_n_ser) if with_odelay else dict(dout=pad)),
                         **cs,
                     )
@@ -422,17 +545,9 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                 # CA ----------------------------------------------------------------------------------
                 for it, (basephy_ca, pad) in enumerate(
                     zip(getattr(self.out, prefix+'ca'), getattr(self.pads, prefix+'ca'))):
-                    cdc_out_ca = Signal(len(basephy_ca)//2)
-                    simple_cdc = SimpleCDC(
-                        clkdiv="sys", clk="sys2x_io",
-                        i_dw=len(basephy_ca), o_dw=len(cdc_out_ca),
-                        i=basephy_ca, o=cdc_out_ca,
-                        name=f"{prefix}ca_{it}",
-                    )
-                    self.submodules += simple_cdc
                     ca_ser = Signal()
                     self.oserdese2_ddr(
-                        din=cdc_out_ca,
+                        din=basephy_ca[:4],
                         **(dict(dout_fb=ca_ser) if with_odelay else dict(dout=pad)),
                         **cmd,
                     )
@@ -452,20 +567,11 @@ class S7DDR5PHY(DDR5PHY, S7Common):
 
                 # PAR ---------------------------------------------------------------------------------
                 if hasattr(self.pads, prefix+'par'):
-                    basephy_par = getattr(self.out, prefix+'par')
+                    basephy_par = getattr(self.out, prefix+'par')[:4]
                     pad = getattr(self.pads, prefix+'par')
-
-                    cdc_out_par = Signal(len(basephy_par)//2)
-                    simple_cdc = SimpleCDC(
-                        clkdiv="sys", clk="sys2x_io",
-                        i_dw=len(basephy_par), o_dw=len(cdc_out_par),
-                        i=basephy_par, o=cdc_out_par,
-                        name=f"{prefix}par_{it}",
-                    )
-                    self.submodules += simple_cdc
                     par_ser = Signal()
                     self.oserdese2_ddr(
-                        din=cdc_out_par,
+                        din=basephy_par,
                         **(dict(dout_fb=par_ser) if with_odelay else dict(dout=pad)),
                         **cmd,
                     )

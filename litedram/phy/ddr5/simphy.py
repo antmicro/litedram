@@ -9,8 +9,8 @@ from migen import *
 from litex.soc.interconnect.csr import CSR
 
 from litedram.phy.utils import delayed, Serializer, Deserializer, Latency
-from litedram.phy.sim_utils import SimPad, SimulationPads, SimSerDesMixin
-from litedram.phy.sim_utils import SimpleCDC, SimpleCDCr
+from litedram.phy.sim_utils import (SimPad, SimulationPads, SimSerDesMixin,
+    SimpleCDC, SimpleCDCr, SimpleCDCWrap, SimpleCDCrWrap, AsyncFIFOXilinx7Wrap)
 from litedram.phy.ddr5.basephy import DDR5PHY
 from litedram.phy.ddr5.BasePHYOutput import BasePHYOutput
 
@@ -59,20 +59,25 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
 
         self.submodules += pads
         SimpleCDC.set_register()
+        SimpleCDCWrap.reset_latency()
         Serializer.set_xilinx()
+        prefixes = [""] if not with_sub_channels else ["A_", "B_"]
         super().__init__(pads,
             ser_latency       = Latency(sys2x=Serializer.LATENCY+1),
             des_latency       = Latency(sys=(Deserializer.LATENCY-1 if aligned_reset_zero else Deserializer.LATENCY)),
             phytype           = "DDR5SimPHY",
             with_sub_channels = with_sub_channels,
             rd_extra_delay    = Latency(sys2x=2),
+            out_CDC_primitive_cls = SimpleCDCWrap,
+            ca_cdc_min_max_delay =
+                (Latency(sys2x=SimpleCDCWrap.LATENCY), Latency(sys2x=(SimpleCDCWrap.LATENCY))),
+            ca_domain="sys2x",
             **kwargs)
 
         # fake delays (make no sense in simulation, but sdram.c expects them)
         self.settings.read_leveling = True
         self.settings.delays = 1
 
-        channels_prefix = [""] if not with_sub_channels else ["A_", "B_"]
         delay = lambda sig, cycles: delayed(self, sig, cycles=cycles)
 
         cs          = dict(clkdiv="sys2x", clk="sys4x_ddr")
@@ -100,58 +105,25 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
         self.comb += cdc_ck_c.eq(~(self.clk_pattern&0xF))
         self.ser(i=cdc_ck_c, o=self.pads.ck_c, name='ck_c', **ddr)
 
-        reset_n = self.out.reset_n
-        rst_len = len(reset_n)//2
-        cdc_reset_n = Signal(rst_len, reset=~0)
-        simple_cdc = SimpleCDC(
-            clkdiv="sys", clk="sys2x",
-            i_dw=len(reset_n), o_dw=len(cdc_reset_n),
-            i=reset_n, o=cdc_reset_n,
-            name=f"reset_n",
-        )
-        self.submodules += simple_cdc
-        self.ser(i=cdc_reset_n, o=self.pads.reset_n, name='reset_n', **ddr)
-        self.des(i=self.pads.alert_n, o=self.out.alert_n, name='alert_n', **ddr_90)
+        reset_n = self.out.reset_n[:4]
+        self.ser(i=reset_n, o=self.pads.reset_n, name='reset_n', **ddr)
 
-        prefixes = [""] if not with_sub_channels else ["A_", "B_"]
+        self.des(i=self.pads.alert_n, o=self.out.alert_n, name='alert_n', **ddr_90)
 
         for prefix in prefixes:
 
             # Command/address
-            for it, (basephy_cs, pad) in enumerate(zip(getattr(self.out, prefix+'cs_n'), getattr(self.pads, prefix+'cs_n'))):
-                cdc_out = Signal(len(basephy_cs)//2)
-                simple_cdc = SimpleCDC(
-                    clkdiv="sys", clk="sys2x",
-                    i_dw=len(basephy_cs), o_dw=len(cdc_out),
-                    i=basephy_cs, o=cdc_out,
-                    name=f"{prefix}cs_n_{it}",
-                )
-                self.submodules += simple_cdc
-                self.ser(i=cdc_out, o=pad, name=f'{prefix}cs_n_{it}', **cs)
+            for it, (basephy_cs, pad) in enumerate(zip(getattr(self.out, prefix+'cs_n'),
+                                                       getattr(self.pads, prefix+'cs_n'))):
+                self.ser(i=basephy_cs[:4], o=pad, name=f'{prefix}cs_n_{it}', **cs)
 
-            for it, (basephy_ca, pad) in enumerate(zip(getattr(self.out, prefix+'ca'), getattr(self.pads, prefix+'ca'))):
-                cdc_out_ca = Signal(len(basephy_ca)//2)
-                simple_cdc = SimpleCDC(
-                    clkdiv="sys", clk="sys2x",
-                    i_dw=len(basephy_ca), o_dw=len(cdc_out_ca),
-                    i=basephy_ca, o=cdc_out_ca,
-                    name=f"{prefix}ca_{it}",
-                )
-                self.submodules += simple_cdc
-                self.ser(i=cdc_out_ca, o=pad, name=f'{prefix}ca{it}', **cmd)
+            for it, (basephy_ca, pad) in enumerate(zip(getattr(self.out, prefix+'ca'),
+                                                       getattr(self.pads, prefix+'ca'))):
+                self.ser(i=basephy_ca[:4], o=pad, name=f'{prefix}ca{it}', **cmd)
 
             basephy_par = getattr(self.out, prefix+'par')
             pad = getattr(self.pads, prefix+'par')
-
-            cdc_out_par = Signal(len(basephy_par)//2)
-            simple_cdc = SimpleCDC(
-                clkdiv="sys", clk="sys2x",
-                i_dw=len(basephy_par), o_dw=len(cdc_out_par),
-                i=basephy_par, o=cdc_out_par,
-                name=f"{prefix}par_{it}",
-            )
-            self.submodules += simple_cdc
-            self.ser(i=cdc_out_par, o=pad, name=f'{prefix}par', **cmd)
+            self.ser(i=basephy_par[:4], o=pad, name=f'{prefix}par', **cmd)
 
             # nibble to output mapping
             mult = dq_dqs_ratio//4

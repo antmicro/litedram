@@ -19,6 +19,7 @@ from litedram.phy.dfi import *
 
 from litedram.phy.utils import (bitpattern, delayed, Serializer, Deserializer, Latency,
     CommandsPipeline)
+from litedram.phy.sim_utils import SimpleCDCWrap, SimpleCDCrWrap
 
 from litedram.phy.ddr5.commands import DFIPhaseAdapter
 
@@ -80,10 +81,15 @@ class DDR5PHY(Module, AutoCSR):
     """
     def __init__(self, pads, *,
                  sys_clk_freq, ser_latency, des_latency, phytype, direct_control,
+                 ca_cdc_min_max_delay,
+                 ca_domain,
+                 out_CDC_primitive_cls=SimpleCDCWrap,
                  with_sub_channels=False, cmd_delay=None, masked_write=False,
                  extended_overlaps_check=False, with_odelay=False,
                  with_clock_odelay=False, with_address_odelay=False,
-                 with_idelay=False, with_per_dq_idelay=False, csr_cdc=None, csr_cdc_90=None,
+                 with_idelay=False, with_per_dq_idelay=False,
+                 csr_cdc=None, csr_cdc_90=None,
+                 csr_ca_cdc=None,
                  rd_extra_delay=Latency(sys=0), address_lines=13,
                  i_domain=None, i_domain_ratio=1, o_doamin=None, o_domain_ratio=1,
                  SyncFIFO_cls=SyncFIFO,
@@ -124,6 +130,11 @@ class DDR5PHY(Module, AutoCSR):
         )
         self.CSRs = CSRs = self.CSRModule.CSR_to_dict()
 
+        def cdc_ca(i):
+            if csr_ca_cdc is None:
+                return i
+            return csr_ca_cdc(i)
+
         def cdc(i):
             if csr_cdc is None:
                 return i
@@ -134,13 +145,19 @@ class DDR5PHY(Module, AutoCSR):
                 return i
             return csr_cdc_90(i)
 
-        self.CDCCSRs = CDCCSRs = dict()
-
         self._rst_cdc       = cdc(CSRs['_rst'].storage)
         self._rst_cdc_90    = cdc_90(CSRs['_rst'].storage)
+        self.CDCCSRs = CDCCSRs = dict()
 
         for key, CSR in CSRs.items():
-            if "ck_" not in key and "dly" in key and "_inc" in key:
+            if reduce(or_, [i in key for i in ["preamble", "wlevel_en", "dly_sel", "dq_dly_sel"]]):
+                continue
+            if reduce(or_, [i in key for i in ["ckdly", "cadly", "csdly", "pardly"]]):
+                if "_inc" in key:
+                    CDCCSRs[key] = cdc_ca(CSR.re)
+                else:
+                    CDCCSRs[key] = cdc_ca(CSR.re | CSRs["_rst"].storage)
+            elif "ck_" not in key and "dly" in key and "_inc" in key:
                 CDCCSRs[key] = cdc(CSR.re)
             elif "ck_" not in key and "dly" in key and "_rst" in key:
                 CDCCSRs[key] = cdc(CSR.re | CSRs['_rst'].storage)
@@ -179,9 +196,9 @@ class DDR5PHY(Module, AutoCSR):
 
         self.des_latency          = des_latency
         self.ser_latency          = ser_latency
-        self.ca_cdc_min_max_delay = (rd_extra_delay, rd_extra_delay)
         self.rd_cdc_min_max_delay = (Latency(sys=0), Latency(sys=0))
         self.wr_cdc_min_max_delay = (rd_extra_delay, rd_extra_delay)
+        self.ca_cdc_min_max_delay = ca_cdc_min_max_delay
 
         # Read latency
         # This value should be the worst case delay between sending a read cmd and
@@ -272,7 +289,9 @@ class DDR5PHY(Module, AutoCSR):
         self.comb += CSRs['alert'].status.eq(_alert_reduce)
 
         # Handle CA/CS/PAR
-        self.handle_ca(prefixes, dfi, nphases, nranks)
+        self.handle_ca(prefixes, dfi, nphases, nranks, out_CDC_primitive_cls, ca_domain)
+
+        # Handle read/write DQ/DQS paths
 
         def rep(sig, cnt):
             return sig
@@ -473,7 +492,7 @@ class DDR5PHY(Module, AutoCSR):
             self.comb += rd_fifo_valid.eq(reduce(and_, rd_fifo_valids))
 
 
-    def handle_ca(self, prefixes, dfi, nphases, nranks):
+    def handle_ca(self, prefixes, dfi, nphases, nranks, out_CDC_primitive_cls, ca_domain):
         ca_outs = []
         rst_in  = PHYResetInput(nphases)
         for t_phase, s_phase in zip(rst_in.phases, dfi.phases):
@@ -502,7 +521,7 @@ class DDR5PHY(Module, AutoCSR):
                 input_arr.append(Cat(ca_out.phases[i].flatten()))
 
         output_arr = []
-        for i in range(nphases):
+        for i in range(nphases//2):
             for prefix, ca_out in ca_outs:
                 for key, _ in ca_out.phases[i].layout:
                     if "ca0" == key:
@@ -517,7 +536,20 @@ class DDR5PHY(Module, AutoCSR):
                     for sig in sig_or_list:
                         output_arr.append(sig[2*i:2*i+2])
 
-        self.comb += Cat(output_arr).eq(Cat(input_arr))
+        switch_to_fifo = Signal()
+        ca_async = out_CDC_primitive_cls("sys", ca_domain, width, width//2)
+        self.submodules.ca_async = ca_async
+
+        cd_ca_dom = getattr(self.sync, ca_domain)
+        cd_ca_dom += switch_to_fifo.eq(ca_async.readable)
+        self.comb += [
+            ca_async.din.eq(Cat(input_arr)),
+            ca_async.we.eq(self.CSRs["_enable_fifos"].storage),
+            If(switch_to_fifo,
+                Cat(output_arr).eq(ca_async.dout),
+            ),
+            ca_async.re.eq(ca_async.readable),
+        ]
 
 
     def get_rst(self, byte, rst, prefix="", clk="sys", dq=False):
