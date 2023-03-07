@@ -101,9 +101,11 @@ class DDR5PHY(Module, AutoCSR):
         self.with_sub_channels         = with_sub_channels
         self.tck         = tck         = 1 / (nphases*sys_clk_freq)
         assert databits % 4 == 0
+        assert nphases == 4, "Works for 4 phases, may not work for other"
 
         self.with_per_dq_idelay = with_per_dq_idelay
         self.dq_dqs_ratio = dq_dqs_ratio = databits // strobes
+        nibbles = databits//4
 
         prefixes = [""] if not with_sub_channels else ["A_", "B_"]
         # Registers --------------------------------------------------------------------------------
@@ -111,7 +113,7 @@ class DDR5PHY(Module, AutoCSR):
             prefixes,
             nphases,
             nranks,
-            strobes,
+            nibbles,
             with_clock_odelay,
             with_address_odelay,
             with_idelay,
@@ -229,6 +231,7 @@ class DDR5PHY(Module, AutoCSR):
             cmd_latency   = cmd_latency,
             cmd_delay     = cmd_delay,
             strobes       = combined_strobes,
+            nibbles       = nibbles,
             address_lines       = address_lines,
             min_write_latency   = min_write_latency + write_addjust,
             min_read_latency    = 2,
@@ -248,7 +251,7 @@ class DDR5PHY(Module, AutoCSR):
         # Now prepare the data by converting the sequences on adapters into sequences on the pads.
         # We have to ignore overlapping commands, and module timings have to ensure that there are
         # no overlapping commands anyway.
-        self.out = BasePHYOutput(nphases, databits, nranks, strobes, with_sub_channels, name="basephy")
+        self.out = BasePHYOutput(nphases, databits, nranks, nibbles, with_sub_channels, name="basephy")
 
         # Clocks -----------------------------------------------------------------------------------
         self.clk_pattern = bitpattern("-_-_-_-_")
@@ -273,7 +276,7 @@ class DDR5PHY(Module, AutoCSR):
 
         def rep(sig, cnt):
             return sig
-        if dq_dqs_ratio == 4:
+        if nibbles % 2 == 1:
             rep = Replicate
 
         for prefix in prefixes:
@@ -322,24 +325,24 @@ class DDR5PHY(Module, AutoCSR):
                 Cat(output_arr).eq(Cat(input_arr)),
             ]
 
-            for strobe in range(strobes):
+            for nibble in range(nibbles):
                 # Read Path ------------------------------------------------------------------------
                 _csr = {}
-                _csr['dly_sel'] = CSRs[prefix+'dly_sel'].storage[strobe]
+                _csr['dly_sel'] = CSRs[prefix+'dly_sel'].storage[nibble]
                 _csr['ck_rdly_inc'] = CSRs[prefix+'ck_rdly_inc'].re
                 _csr['ck_rdly_rst'] = CSRs[prefix+'ck_rdly_rst'].re
                 _csr['preamble'] = CSRs[prefix+'preamble'].status
                 _csr['wlevel_en'] = CSRs[prefix+'wlevel_en'].storage
 
-                dq_offset = strobe*dq_dqs_ratio
-                dfi      = BasePHYDQPhyInput(nphases, dq_dqs_ratio)
-                pads_out = BasePHYDQPadOutput(nphases, dq_dqs_ratio)
+                dq_offset = nibble*4
+                dfi      = BasePHYDQPhyInput(nphases, 4)
+                pads_out = BasePHYDQPadOutput(nphases, 4)
 
                 self.comb += [t_phase.rddata_en.eq(getattr(s_phase, prefix).rddata_en)
                     for t_phase, s_phase in zip(rd_dfi_ctrl.phases, self.dfi.phases)]
-                self.comb += pads_out.dqs_t_i.eq(getattr(self.out, prefix+'dqs_t_i')[strobe])
+                self.comb += pads_out.dqs_t_i.eq(getattr(self.out, prefix+'dqs_t_i')[nibble])
                 self.comb += [getattr(pads_out, f"dq{i}_i").eq(
-                    getattr(self.out, prefix+'dq_i')[dq_offset+i]) for i in range(dq_dqs_ratio)]
+                    getattr(self.out, prefix+'dq_i')[dq_offset+i]) for i in range(4)]
 
                 self.submodules += BasePHYDQReadPath(
                     dfi=dfi,
@@ -347,22 +350,36 @@ class DDR5PHY(Module, AutoCSR):
                     phy=pads_out,
                     rd_re=rd_fifo_re,
                     rd_valids=rd_fifo_valids,
-                    dq_dqs_ratio=dq_dqs_ratio,
+                    dq_dqs_ratio=4,
                     CSRs=_csr,
                     default_read_latency=default_read_latency,
                 )
 
-                rddata_start = strobe*2*dq_dqs_ratio
-                rddata_end   = (strobe+1)*2*dq_dqs_ratio
-                self.comb += [
-                    getattr(t_phase, prefix).rddata[rddata_start:rddata_end].eq(s_phase.rddata)
-                    for t_phase, s_phase in zip(self.dfi.phases, dfi.phases)
-                ]
+                rddata_start = nibble*8
+                rddata_end   = (nibble+1)*8
+                if nibbles % 2 == 0:
+                    mux_rddata = nibble//2 * 16 + (nibble%2) * 4
+                    self.comb += [
+                        If(CSRs[prefix+'dq_dqs_ratio'].storage[3],
+                            *[getattr(t_phase, prefix).rddata[mux_rddata: mux_rddata + 4].eq(
+                                s_phase.rddata[:4]) for t_phase, s_phase in zip(self.dfi.phases, dfi.phases)],
+                            *[getattr(t_phase, prefix).rddata[mux_rddata + 8: mux_rddata + 12].eq(
+                                s_phase.rddata[4:]) for t_phase, s_phase in zip(self.dfi.phases, dfi.phases)],
+                        ).Else(
+                            *[getattr(t_phase, prefix).rddata[rddata_start:rddata_end].eq(s_phase.rddata)
+                              for t_phase, s_phase in zip(self.dfi.phases, dfi.phases)],
+                        )
+                    ]
+                else:
+                    self.comb += [
+                        getattr(t_phase, prefix).rddata[rddata_start:rddata_end].eq(s_phase.rddata)
+                        for t_phase, s_phase in zip(self.dfi.phases, dfi.phases)
+                    ]
 
                 # Write Path -----------------------------------------------------------------------
                 # DQS ------------------------------------------------------------------------------
                 _csr = {}
-                _csr['dly_sel'] = CSRs[prefix+'dly_sel'].storage[strobe]
+                _csr['dly_sel'] = CSRs[prefix+'dly_sel'].storage[nibble]
                 _csr['ck_wdly_inc'] = CSRs[prefix+'ck_wdly_inc'].re
                 _csr['ck_wdly_rst'] = CSRs[prefix+'ck_wdly_rst'].re
                 _csr['wlevel_en'] = CSRs[prefix+'wlevel_en'].storage
@@ -375,59 +392,84 @@ class DDR5PHY(Module, AutoCSR):
                 )
 
                 self.comb += [
-                    getattr(self.out, prefix+'dqs_t_o')[strobe].eq(out.dqs_t_o),
-                    getattr(self.out, prefix+'dqs_c_o')[strobe].eq(out.dqs_c_o),
-                    getattr(self.out, prefix+'dqs_oe')[strobe].eq(out.dqs_oe),
+                    getattr(self.out, prefix+'dqs_t_o')[nibble].eq(out.dqs_t_o),
+                    getattr(self.out, prefix+'dqs_c_o')[nibble].eq(out.dqs_c_o),
+                    getattr(self.out, prefix+'dqs_oe')[nibble].eq(out.dqs_oe),
                 ]
 
                 # DQ -------------------------------------------------------------------------------
                 _csr = {}
-                _csr['dly_sel'] = CSRs[prefix+'dly_sel'].storage[strobe]
+                _csr['dly_sel'] = CSRs[prefix+'dly_sel'].storage[nibble]
                 _csr['ck_wddly_inc'] = CSRs[prefix+'ck_wddly_inc'].re
                 _csr['ck_wddly_rst'] = CSRs[prefix+'ck_wddly_rst'].re
                 _csr['wlevel_en'] = CSRs[prefix+'wlevel_en'].storage
 
-                wrdata_start = strobe*2*dq_dqs_ratio
-                wrdata_end   = (strobe+1)*2*dq_dqs_ratio
-                wrdata_mask_bits = dq_dqs_ratio // 4
-                wrdata_m_start = strobe*wrdata_mask_bits
-                wrdata_m_end   = (strobe+1)*wrdata_mask_bits
+                wrdata_start = nibble*8
+                wrdata_end   = (nibble+1)*8
+                if nibbles % 2 == 0:
+                    wrdata_m_start = nibble
+                    wrdata_m_end   = nibble+2
+                else:
+                    wrdata_m_start = nibble
+                    wrdata_m_end   = nibble+1
 
-                dfi_in    = BasePHYDQPhyOutput(nphases, dq_dqs_ratio)
-                self.comb += [t_phase.wrdata.eq(
-                    getattr(s_phase, prefix).wrdata[wrdata_start:wrdata_end])
-                    for t_phase, s_phase in zip(dfi_in.phases, self.dfi.phases)]
-                self.comb += [t_phase.wrdata_mask.eq(
-                    rep(getattr(s_phase, prefix).wrdata_mask[wrdata_m_start:wrdata_m_end], 2))
-                    for t_phase, s_phase in zip(dfi_in.phases, self.dfi.phases)]
+                dfi_in    = BasePHYDQPhyOutput(nphases, 4)
+                if nibbles % 2 == 0:
+                    mux_wrdata = nibble//2 * 16 + (nibble%2) * 4
+                    self.comb += [
+                        If(CSRs[prefix+'dq_dqs_ratio'].storage[3],
+                            *[t_phase.wrdata[:4].eq(
+                                getattr(s_phase, prefix).wrdata[mux_wrdata: mux_wrdata + 4])
+                                for t_phase, s_phase in zip(dfi_in.phases, self.dfi.phases)],
+                            *[t_phase.wrdata[4:].eq(
+                                getattr(s_phase, prefix).wrdata[mux_wrdata + 8: mux_wrdata + 12])
+                                for t_phase, s_phase in zip(dfi_in.phases, self.dfi.phases)],
+                        ).Else(
+                            *[t_phase.wrdata.eq(getattr(s_phase, prefix).wrdata[wrdata_start:wrdata_end])
+                            for t_phase, s_phase in zip(dfi_in.phases, self.dfi.phases)]
+                        )
+                    ]
+                    self.comb += []
+                    if nibble % 2 == 0:
+                        self.comb += [t_phase.wrdata_mask.eq(
+                            rep(getattr(s_phase, prefix).wrdata_mask[wrdata_m_start:wrdata_m_end], 2))
+                            for t_phase, s_phase in zip(dfi_in.phases, self.dfi.phases)]
+                else:
+                    self.comb += [
+                        t_phase.wrdata.eq(getattr(s_phase, prefix).wrdata[wrdata_start:wrdata_end])
+                        for t_phase, s_phase in zip(dfi_in.phases, self.dfi.phases)
+                    ]
 
-                dfi_inter = BasePHYDQPhyOutput(nphases, dq_dqs_ratio)
+                dfi_inter = BasePHYDQPhyOutput(nphases, 4)
                 self.submodules += BasePHYDQPhyOutputBuffer(dfi_in, dfi_inter)
 
-                wr_dq_dfi = BasePHYDQPhyOutput(nphases, dq_dqs_ratio)
+                wr_dq_dfi = BasePHYDQPhyOutput(nphases, 4)
                 input_arr = [Cat([phase.wrdata, phase.wrdata_mask]) for phase in dfi_inter.phases]
                 output_arr = [Cat([phase.wrdata, phase.wrdata_mask]) for phase in wr_dq_dfi.phases]
 
                 self.comb += [
                     Cat(output_arr).eq(Cat(input_arr)),
                 ]
-                out = BasePHYDQPadInput(nphases, dq_dqs_ratio)
+                out = BasePHYDQPadInput(nphases, 4)
                 self.submodules += BasePHYDQWritePath(
                     dfi=wr_dq_dfi, dfi_ctrl=wr_dq_dfi_ctrl, out=out, CSRs=_csr,
                     default_write_latency=default_write_latency,
                     SyncFIFO_cls=SyncFIFO_cls,
-                    dq_dqs_ratio=dq_dqs_ratio,
+                    dq_dqs_ratio=4,
                 )
-                self.submodules += BasePHYDMPath(
-                    dfi=wr_dq_dfi, dfi_ctrl=wr_dq_dfi_ctrl, out=out, CSRs=_csr,
-                    default_write_latency=default_write_latency,
-                    SyncFIFO_cls=SyncFIFO_cls,
-                )
-                self.comb += getattr(self.out, prefix+'dq_oe')[strobe].eq(
+                if nibble % 2 == 0 and nibbles % 2 == 0:
+                    _csr['dly_sel'] = reduce(and_, CSRs[prefix+'dly_sel'].storage[nibble:nibble+2])
+                    self.submodules += BasePHYDMPath(
+                        dfi=wr_dq_dfi, dfi_ctrl=wr_dq_dfi_ctrl, out=out, CSRs=_csr,
+                        default_write_latency=default_write_latency,
+                        SyncFIFO_cls=SyncFIFO_cls,
+                    )
+
+                self.comb += getattr(self.out, prefix+'dq_oe')[nibble].eq(
                     getattr(out, f'dq0_oe')),
-                for bit in range(dq_dqs_ratio):
-                    self.comb += getattr(self.out, prefix+'dq_o')[bit + strobe*dq_dqs_ratio].eq(getattr(out, f"dq{bit}_o"))
-                self.comb += getattr(self.out, prefix+'dm_n_o')[strobe].eq(out.dm_n_o)
+                for bit in range(4):
+                    self.comb += getattr(self.out, prefix+'dq_o')[bit + nibble*4].eq(getattr(out, f"dq{bit}_o"))
+                self.comb += getattr(self.out, prefix+'dm_n_o')[nibble].eq(out.dm_n_o)
             self.comb += rd_fifo_valid.eq(reduce(and_, rd_fifo_valids))
 
 

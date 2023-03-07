@@ -10,7 +10,7 @@ from litex.soc.interconnect.csr import AutoCSR, CSR, CSRStorage, CSRStatus
 
 
 class BasePHYCSR(Module, AutoCSR):
-    def __init__(self, prefixes, nphases, nranks, strobes,
+    def __init__(self, prefixes, nphases, nranks, nibbles,
                  with_clock_odelay, with_address_odelay,
                  with_idelay, with_odelay,
                  with_per_dq_idelay, databits, dq_dqs_ratio):
@@ -41,9 +41,15 @@ class BasePHYCSR(Module, AutoCSR):
             getattr(self, prefix+'wlevel_en').storage.attr.add("keep")
 
             setattr(self, prefix+'dly_sel', CSRStorage(
-                max(strobes, 14, nranks, databits//4), name=prefix+'dly_sel'))
+                max(14, nranks, nibbles), name=prefix+'dly_sel'))
             getattr(self, prefix+'dly_sel').storage.attr.add("slow_ff")
             getattr(self, prefix+'dly_sel').storage.attr.add("keep")
+
+            if nibbles%2 == 0:
+                setattr(self, prefix+'dq_dqs_ratio',
+                    CSRStorage(4, name=prefix+'dq_dqs_ratio', reset=dq_dqs_ratio))
+                getattr(self, prefix+'dq_dqs_ratio').storage.attr.add("slow_ff")
+                getattr(self, prefix+'dq_dqs_ratio').storage.attr.add("keep")
 
             setattr(self, prefix+'ck_rdly_inc', CSR(name=prefix+'ck_rdly_inc'))
             setattr(self, prefix+'ck_rdly_rst', CSR(name=prefix+'ck_rdly_rst'))

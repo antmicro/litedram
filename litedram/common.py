@@ -340,6 +340,7 @@ class PhySettings(Settings):
             read_leveling: bool = False,
             with_sub_channels: bool = False,
             # DDR5 specific
+            nibbles: Optional[int] = None, # Number of data nibbles
             address_lines: int = 13,
             with_per_dq_idelay: bool = False,
             with_address_odelay: bool = False, # Concrete PHY has ODELAYs on all address lines
