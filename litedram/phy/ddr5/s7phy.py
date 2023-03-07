@@ -679,7 +679,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                                 clk  = "sys2x_io",
                                 cnt_value_out = cnt_out,
                             )
-                            self.comb += If(CSRs[prefix+'dly_sel'].storage[it*mult],
+                            self.sync += If(CSRs[prefix+'dly_sel'].storage[it*mult],
                                 CSRs[prefix+'wdly_dm'].status.eq(cnt_out)
                             )
                         self.iobuf(
