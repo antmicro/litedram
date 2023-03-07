@@ -9,16 +9,16 @@ from migen.genlib.record import Record
 
 class BasePHYDQPadInput(Record):
     @staticmethod
-    def data_layout(nphases):
+    def data_layout(nphases, dq_dqs_ratio):
         base_layout = [
-            (f"dq{i}_oe", 2*nphases) for i in range(2)
+            (f"dq{i}_oe", 2*nphases) for i in range(1)
         ] + [
-            (f"dq{i}_o", 2*nphases) for i in range(8)
+            (f"dq{i}_o", 2*nphases) for i in range(dq_dqs_ratio)
         ]
         base_layout.append(("dm_n_o", 2*nphases))
         return base_layout
-    def __init__(self, nphases):
-        layout = self.data_layout(nphases)
+    def __init__(self, nphases, dq_dqs_ratio):
+        layout = self.data_layout(nphases, dq_dqs_ratio)
         Record.__init__(self, layout)
 
 
@@ -78,14 +78,14 @@ class BasePHYDQPhyOutputCTRL(Record):
 
 class BasePHYDQPhyOutput(Record):
     @staticmethod
-    def data_layout(nphases):
+    def data_layout(nphases, dq_dqs_ratio):
         base_layout = [
-            ("wrdata", 2*8),
+            ("wrdata", 2*dq_dqs_ratio),
         ]
-        base_layout.append(("wrdata_mask", 2))
+        base_layout.append(("wrdata_mask", dq_dqs_ratio//4))
         return base_layout
-    def __init__(self, nphases):
-        layout = [(f"p{i}", self.data_layout(nphases)) for i in range(nphases)]
+    def __init__(self, nphases, dq_dqs_ratio):
+        layout = [(f"p{i}", self.data_layout(nphases, dq_dqs_ratio)) for i in range(nphases)]
         Record.__init__(self, layout)
         self.phases = [getattr(self, f"p{i}") for i in range(nphases)]
 
