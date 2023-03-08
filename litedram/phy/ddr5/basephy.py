@@ -81,19 +81,19 @@ class DDR5PHY(Module, AutoCSR):
     """
     def __init__(self, pads, *,
                  sys_clk_freq, ser_latency, des_latency, phytype, direct_control,
-                 ca_cdc_min_max_delay,
-                 ca_domain,
+                 ca_cdc_min_max_delay, wr_cdc_min_max_delay,
+                 ca_domain, wr_dqs_domain, dq_domain,
                  out_CDC_primitive_cls=SimpleCDCWrap,
                  with_sub_channels=False, cmd_delay=None, masked_write=False,
                  extended_overlaps_check=False, with_odelay=False,
                  with_clock_odelay=False, with_address_odelay=False,
                  with_idelay=False, with_per_dq_idelay=False,
                  csr_cdc=None, csr_cdc_90=None,
-                 csr_ca_cdc=None,
+                 csr_ca_cdc=None, csr_dq_cdc=None, csr_dqs_cdc=None,
                  rd_extra_delay=Latency(sys=0), address_lines=13,
                  i_domain=None, i_domain_ratio=1, o_doamin=None, o_domain_ratio=1,
                  SyncFIFO_cls=SyncFIFO,
-                 default_read_latency=0, default_write_latency=0):
+                 default_read_latency=0, default_write_latency=0, leds=None):
 
         self.pads        = pads
         self.memtype     = memtype     = "DDR5"
@@ -135,6 +135,16 @@ class DDR5PHY(Module, AutoCSR):
                 return i
             return csr_ca_cdc(i)
 
+        def cdc_dq(i, prefix):
+            if csr_dq_cdc is None:
+                return i
+            return csr_dq_cdc[prefix](i)
+
+        def cdc_dqs(i, prefix):
+            if csr_dqs_cdc is None:
+                return i
+            return csr_dqs_cdc[prefix](i)
+
         def cdc(i):
             if csr_cdc is None:
                 return i
@@ -157,10 +167,25 @@ class DDR5PHY(Module, AutoCSR):
                     CDCCSRs[key] = cdc_ca(CSR.re)
                 else:
                     CDCCSRs[key] = cdc_ca(CSR.re | CSRs["_rst"].storage)
+            elif "ck_wdly" in key:
+                for prefix in prefixes:
+                    if prefix in key:
+                        if "_inc" in key:
+                            CDCCSRs[key] = cdc_dqs(CSR.re, prefix)
+                        else:
+                            CDCCSRs[key] = cdc_dqs(CSR.re | CSRs["_rst"].storage, prefix)
+            elif "rd" not in key:
+                for prefix in prefixes:
+                    if prefix in key:
+                        if "_inc" in key:
+                            CDCCSRs[key] = cdc_dq(CSR.re, prefix)
+                        else:
+                            CDCCSRs[key] = cdc_dq(CSR.re | CSRs["_rst"].storage, prefix)
             elif "ck_" not in key and "dly" in key and "_inc" in key:
                 CDCCSRs[key] = cdc(CSR.re)
             elif "ck_" not in key and "dly" in key and "_rst" in key:
                 CDCCSRs[key] = cdc(CSR.re | CSRs['_rst'].storage)
+
 
         # PHY settings -----------------------------------------------------------------------------
 
@@ -197,8 +222,8 @@ class DDR5PHY(Module, AutoCSR):
         self.des_latency          = des_latency
         self.ser_latency          = ser_latency
         self.rd_cdc_min_max_delay = (Latency(sys=0), Latency(sys=0))
-        self.wr_cdc_min_max_delay = (rd_extra_delay, rd_extra_delay)
         self.ca_cdc_min_max_delay = ca_cdc_min_max_delay
+        self.wr_cdc_min_max_delay = wr_cdc_min_max_delay
 
         # Read latency
         # This value should be the worst case delay between sending a read cmd and
@@ -220,15 +245,15 @@ class DDR5PHY(Module, AutoCSR):
         dq_wr_rd_delay = BasePHYDQPhyOutputBuffer.get_delay(nphases)
         min_write_latency, write_addjust = \
             BasePHYWritePathDQS.get_min_max_supported_latencies(
-                nphases, addr_pre_ser_delay, dqs_wr_delay,
+                nphases//2, addr_pre_ser_delay, dqs_wr_delay,
                 self.ca_cdc_min_max_delay, self.wr_cdc_min_max_delay)
 
         BasePHYDQWritePath.get_min_max_supported_latencies(
-            nphases, addr_pre_ser_delay, dq_wr_rd_delay,
+            nphases//2, addr_pre_ser_delay, dq_wr_rd_delay,
             self.ca_cdc_min_max_delay, self.wr_cdc_min_max_delay)
 
         BasePHYDMPath.get_min_max_supported_latencies(
-            nphases, addr_pre_ser_delay, dq_wr_rd_delay,
+            nphases//2, addr_pre_ser_delay, dq_wr_rd_delay,
             self.ca_cdc_min_max_delay, self.wr_cdc_min_max_delay)
 
         self.settings = PhySettings(
@@ -292,11 +317,11 @@ class DDR5PHY(Module, AutoCSR):
         self.handle_ca(prefixes, dfi, nphases, nranks, out_CDC_primitive_cls, ca_domain)
 
         # Handle read/write DQ/DQS paths
-
         def rep(sig, cnt):
             return sig
         if nibbles % 2 == 1:
             rep = Replicate
+        fifo_ready = []
 
         for prefix in prefixes:
             # Read Control Path --------------------------------------------------------------------
@@ -317,32 +342,57 @@ class DDR5PHY(Module, AutoCSR):
                 prefix=prefix,
             )
             # Write Control Path -------------------------------------------------------------------
-            wr_dqs_dfi_ctrl = BasePHYWritePathDQSInput(nphases)
+            # DQS ----------------------------------------------------------------------------------
+            wr_dqs_dfi_ctrl = BasePHYWritePathDQSInput(nphases//2)
             dfi_in    = BasePHYWritePathDQSInput(nphases)
             self.comb += [t_phase.wrdata_en.eq(getattr(s_phase, prefix).wrdata_en)
                 for t_phase, s_phase in zip(dfi_in.phases, self.dfi.phases)]
             dfi_inter = BasePHYWritePathDQSInput(nphases)
             self.submodules += BasePHYDQSWritePathBuffer(dfi_in, dfi_inter)
 
+            width = len(dfi_inter.raw_bits())
+            dqs_async = out_CDC_primitive_cls("sys", wr_dqs_domain[prefix],
+                width, width//2)
+            self.submodules += dqs_async
+
             input_arr = [phase.wrdata_en for phase in dfi_inter.phases]
             output_arr = [phase.wrdata_en for phase in wr_dqs_dfi_ctrl.phases]
 
             self.comb += [
-                Cat(output_arr).eq(Cat(input_arr)),
+                dqs_async.din.eq(Cat(input_arr)),
+                dqs_async.we.eq(CSRs["_enable_fifos"].storage),
+                Cat(output_arr).eq(dqs_async.dout),
+                dqs_async.re.eq(dqs_async.readable),
             ]
+            if leds is not None:
+                fifo_ready.append(dqs_async.readable)
+            # DQ -----------------------------------------------------------------------------------
+            wr_dq_dfi_ctrl = BasePHYDQPhyOutputCTRL(nphases//2)
+            wr_dq_common_start = Signal()
+            self.sync += wr_dq_common_start.eq(CSRs["_enable_fifos"].storage)
 
-            wr_dq_dfi_ctrl = BasePHYDQPhyOutputCTRL(nphases)
             dfi_in    = BasePHYDQPhyOutputCTRL(nphases)
             self.comb += [t_phase.wrdata_en.eq(getattr(s_phase, prefix).wrdata_en)
                 for t_phase, s_phase in zip(dfi_in.phases, self.dfi.phases)]
             dfi_inter = BasePHYDQPhyOutputCTRL(nphases)
             self.submodules += BasePHYDQPhyOutputBuffer(dfi_in, dfi_inter)
+
+            width = len(dfi_inter.raw_bits())
+            dq_async_ctrl = out_CDC_primitive_cls("sys", dq_domain[prefix],
+                width, width//2)
+            self.submodules += dq_async_ctrl
+
             input_arr = [phase.wrdata_en for phase in dfi_inter.phases]
             output_arr = [phase.wrdata_en for phase in wr_dq_dfi_ctrl.phases]
 
             self.comb += [
-                Cat(output_arr).eq(Cat(input_arr)),
+                dq_async_ctrl.din.eq(Cat(input_arr)),
+                dq_async_ctrl.we.eq(wr_dq_common_start),
+                Cat(output_arr).eq(dq_async_ctrl.dout),
+                dq_async_ctrl.re.eq(dq_async_ctrl.readable),
             ]
+            if leds is not None:
+                fifo_ready.append(dq_async_ctrl.readable)
 
             for nibble in range(nibbles):
                 # Read Path ------------------------------------------------------------------------
@@ -399,17 +449,18 @@ class DDR5PHY(Module, AutoCSR):
                 # DQS ------------------------------------------------------------------------------
                 _csr = {}
                 _csr['dly_sel'] = CSRs[prefix+'dly_sel'].storage[nibble]
-                _csr['ck_wdly_inc'] = CSRs[prefix+'ck_wdly_inc'].re
-                _csr['ck_wdly_rst'] = CSRs[prefix+'ck_wdly_rst'].re
+                _csr['ck_wdly_inc'] = CDCCSRs[prefix+'ck_wdly_inc']
+                _csr['ck_wdly_rst'] = CDCCSRs[prefix+'ck_wdly_rst']
                 _csr['wlevel_en'] = CSRs[prefix+'wlevel_en'].storage
-                out = BasePHYWritePathDQSOutput(nphases)
 
-                self.submodules += BasePHYWritePathDQS(
-                    dfi=wr_dqs_dfi_ctrl, out=out, CSRs=_csr,
-                    default_write_latency=default_write_latency,
-                    SyncFIFO_cls=SyncFIFO_cls,
+                out = BasePHYWritePathDQSOutput(nphases//2)
+                self.submodules += ClockDomainsRenamer(wr_dqs_domain[prefix])(
+                    BasePHYWritePathDQS(
+                        dfi=wr_dqs_dfi_ctrl, out=out, CSRs=_csr,
+                        default_write_latency=default_write_latency,
+                        SyncFIFO_cls=SyncFIFO_cls,
+                   )
                 )
-
                 self.comb += [
                     getattr(self.out, prefix+'dqs_t_o')[nibble].eq(out.dqs_t_o),
                     getattr(self.out, prefix+'dqs_c_o')[nibble].eq(out.dqs_c_o),
@@ -419,8 +470,8 @@ class DDR5PHY(Module, AutoCSR):
                 # DQ -------------------------------------------------------------------------------
                 _csr = {}
                 _csr['dly_sel'] = CSRs[prefix+'dly_sel'].storage[nibble]
-                _csr['ck_wddly_inc'] = CSRs[prefix+'ck_wddly_inc'].re
-                _csr['ck_wddly_rst'] = CSRs[prefix+'ck_wddly_rst'].re
+                _csr['ck_wddly_inc'] = CDCCSRs[prefix+'ck_wddly_inc']
+                _csr['ck_wddly_rst'] = CDCCSRs[prefix+'ck_wddly_rst']
                 _csr['wlevel_en'] = CSRs[prefix+'wlevel_en'].storage
 
                 wrdata_start = nibble*8
@@ -462,26 +513,41 @@ class DDR5PHY(Module, AutoCSR):
                 dfi_inter = BasePHYDQPhyOutput(nphases, 4)
                 self.submodules += BasePHYDQPhyOutputBuffer(dfi_in, dfi_inter)
 
-                wr_dq_dfi = BasePHYDQPhyOutput(nphases, 4)
+                width = len(dfi_inter.raw_bits())
+                dq_async = out_CDC_primitive_cls("sys", dq_domain[prefix],
+                    width, width//2)
+                self.submodules += dq_async
+
+                wr_dq_dfi = BasePHYDQPhyOutput(nphases//2, 4)
                 input_arr = [Cat([phase.wrdata, phase.wrdata_mask]) for phase in dfi_inter.phases]
                 output_arr = [Cat([phase.wrdata, phase.wrdata_mask]) for phase in wr_dq_dfi.phases]
 
                 self.comb += [
-                    Cat(output_arr).eq(Cat(input_arr)),
+                    dq_async.din.eq(Cat(input_arr)),
+                    dq_async.we.eq(wr_dq_common_start),
+                    Cat(output_arr).eq(dq_async.dout),
+                    dq_async.re.eq(dq_async.readable),
                 ]
-                out = BasePHYDQPadInput(nphases, 4)
-                self.submodules += BasePHYDQWritePath(
-                    dfi=wr_dq_dfi, dfi_ctrl=wr_dq_dfi_ctrl, out=out, CSRs=_csr,
-                    default_write_latency=default_write_latency,
-                    SyncFIFO_cls=SyncFIFO_cls,
-                    dq_dqs_ratio=4,
-                )
-                if nibble % 2 == 0 and nibbles % 2 == 0:
-                    _csr['dly_sel'] = reduce(and_, CSRs[prefix+'dly_sel'].storage[nibble:nibble+2])
-                    self.submodules += BasePHYDMPath(
+                if leds is not None:
+                    fifo_ready.append(dq_async.readable)
+
+                out = BasePHYDQPadInput(nphases//2, 4)
+                self.submodules += ClockDomainsRenamer(dq_domain[prefix])(
+                    BasePHYDQWritePath(
                         dfi=wr_dq_dfi, dfi_ctrl=wr_dq_dfi_ctrl, out=out, CSRs=_csr,
                         default_write_latency=default_write_latency,
                         SyncFIFO_cls=SyncFIFO_cls,
+                        dq_dqs_ratio=4,
+                    )
+                )
+                if nibble % 2 == 0 and nibbles % 2 == 0:
+                    _csr['dly_sel'] = reduce(and_, CSRs[prefix+'dly_sel'].storage[nibble:nibble+2])
+                    self.submodules += ClockDomainsRenamer(dq_domain[prefix])(
+                        BasePHYDMPath(
+                            dfi=wr_dq_dfi, dfi_ctrl=wr_dq_dfi_ctrl, out=out, CSRs=_csr,
+                            default_write_latency=default_write_latency,
+                            SyncFIFO_cls=SyncFIFO_cls,
+                        )
                     )
 
                 self.comb += getattr(self.out, prefix+'dq_oe')[nibble].eq(
@@ -490,6 +556,8 @@ class DDR5PHY(Module, AutoCSR):
                     self.comb += getattr(self.out, prefix+'dq_o')[bit + nibble*4].eq(getattr(out, f"dq{bit}_o"))
                 self.comb += getattr(self.out, prefix+'dm_n_o')[nibble].eq(out.dm_n_o)
             self.comb += rd_fifo_valid.eq(reduce(and_, rd_fifo_valids))
+            if leds is not None:
+                self.comb += leds.eq(Cat(fifo_ready))
 
 
     def handle_ca(self, prefixes, dfi, nphases, nranks, out_CDC_primitive_cls, ca_domain):

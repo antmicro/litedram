@@ -195,6 +195,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
         SimpleCDC.set_register()
         SimpleCDCWrap.reset_latency()
 
+        prefixes = [""] if not with_sub_channels else ["A_", "B_"]
         # DoubleRateDDR5PHY outputs half-width signals (comparing to DDR5PHY) in sys2x domain.
         # This allows us to use 8:1 DDR OSERDESE2/ISERDESE2 to (de-)serialize the data.
         super().__init__(pads,
@@ -203,10 +204,16 @@ class S7DDR5PHY(DDR5PHY, S7Common):
             phytype           = self.__class__.__name__,
             with_sub_channels = with_sub_channels,
             ca_domain         = "sys2x_io",
+            dq_domain={prefix:"sys2x_90_io" for prefix in prefixes},
+            wr_dqs_domain={prefix:"sys2x_io" for prefix in prefixes},
             csr_ca_cdc        = cdc,
             csr_cdc           = cdc,
             csr_cdc_90        = cdc_90,
+            csr_dq_cdc={prefix:cdc_90 for prefix in prefixes},
+            csr_dqs_cdc={prefix:cdc for prefix in prefixes},
             ca_cdc_min_max_delay =
+                (Latency(sys2x=SimpleCDCWrap.LATENCY), Latency(sys2x=(SimpleCDCWrap.LATENCY))),
+            wr_cdc_min_max_delay =
                 (Latency(sys2x=SimpleCDCWrap.LATENCY), Latency(sys2x=(SimpleCDCWrap.LATENCY))),
             with_odelay       = with_odelay,
             with_idelay       = with_idelay,
@@ -230,7 +237,6 @@ class S7DDR5PHY(DDR5PHY, S7Common):
         self.settings.read_leveling = True
 
         # Serialization ----------------------------------------------------------------------------
-        prefixes = [""] if not with_sub_channels else ["A_", "B_"]
         pin_csr_mapping = {
             "ck_t":    ((CDCCSRs["ckdly_inc"],      CDCCSRs["ckdly_rst"]),      None),
         }
@@ -516,8 +522,8 @@ class S7DDR5PHY(DDR5PHY, S7Common):
             reset_n = self.out.reset_n[:4]
             reset_n_o = getattr(self.pads, 'reset_n')
             self.oserdese2_ddr(din=reset_n, dout=reset_n_o, **ddr)
-
-            self.iserdese2_ddr(din=self.pads.alert_n, dout=self.out.alert_n, **ddr_90)
+            self.iserdese2_ddr(din=self.pads.alert_n, dout=self.out.alert_n,
+                clkdiv="sys_io",clk="sys4x_io", rst_sig=0)
 
             prefixes = [""] if not with_sub_channels else ["A_", "B_"]
             for prefix in prefixes:
@@ -588,25 +594,9 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                 strobes = len(pads.dqs_t) if hasattr(pads, "dqs_t") else len(pads.A_dqs_t)
                 for it in range(strobes):
                     dqs_t_o = getattr(self.out, prefix+'dqs_t_o')[it*mult]
-                    cdc_dqs_t_o = Signal(len(dqs_t_o)//2)
-                    simple_cdc = SimpleCDC(
-                        clkdiv="sys", clk="sys2x_io",
-                        i_dw=len(dqs_t_o), o_dw=len(cdc_dqs_t_o),
-                        i=dqs_t_o, o=cdc_dqs_t_o,
-                        name=f"{prefix}dqs_t_o_{it}",
-                    )
-                    self.submodules += simple_cdc
-
                     out_dqs_oe = getattr(self.out, prefix+'dqs_oe')[it*mult]
-                    cdc_out_dqs_oe = Signal(len(out_dqs_oe)//2)
-                    simple_cdc = SimpleCDC(
-                        clkdiv="sys", clk="sys2x_io",
-                        i_dw=len(out_dqs_oe), o_dw=len(cdc_out_dqs_oe),
-                        i=~out_dqs_oe, o=cdc_out_dqs_oe,
-                        name=f"{prefix}dqs_t_oe",
-                    )
-                    self.submodules += simple_cdc
-
+                    out_dqs_oe_n = Signal.like(out_dqs_oe)
+                    self.comb += out_dqs_oe_n.eq(~out_dqs_oe)
                     dqs_ser   = Signal()
                     dqs_dly   = Signal()
                     dqs_i     = Signal()
@@ -614,9 +604,9 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                     dqs_t     = Signal()
 
                     self.oserdese2_ddr_with_tri(
-                        din     = cdc_dqs_t_o,
+                        din     = dqs_t_o[:4],
                         **(dict(dout_fb = dqs_ser) if with_odelay else dict(dout = dqs_dly)),
-                        tin     = cdc_out_dqs_oe,
+                        tin     = out_dqs_oe_n[:4],
                         tout    = dqs_t,
                         **ddr,
                     )
@@ -668,26 +658,12 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                 dq_oe = {}
                 for it in range(self.databits):
                     basephy_dq = getattr(self.out, prefix+'dq_o')[it]
-                    cdc_out_dq = Signal(len(basephy_dq)//2)
-                    simple_cdc = SimpleCDC(
-                        clkdiv="sys", clk="sys2x_90_io",
-                        i_dw=len(basephy_dq), o_dw=len(cdc_out_dq),
-                        i=basephy_dq, o=cdc_out_dq,
-                        name=f"{prefix}dq_o_{it}",
-                    )
-                    self.submodules += simple_cdc
 
                     if it//self.dq_dqs_ratio not in dq_oe:
                         basephy_dq_oe = getattr(self.out, prefix+'dq_oe')[(it//self.dq_dqs_ratio)*mult]
-                        cdc_out_dq_oe = Signal(len(basephy_dq_oe)//2)
-                        simple_cdc = SimpleCDC(
-                            clkdiv="sys", clk="sys2x_90_io",
-                            i_dw=len(basephy_dq_oe), o_dw=len(cdc_out_dq_oe),
-                            i=~basephy_dq_oe, o=cdc_out_dq_oe,
-                            name=f"{prefix}dq_oe{it//self.dq_dqs_ratio}",
-                        )
-                        self.submodules += simple_cdc
-                        dq_oe[it//self.dq_dqs_ratio] = cdc_out_dq_oe
+                        basephy_dq_oe_n = Signal.like(basephy_dq_oe)
+                        self.comb += basephy_dq_oe_n.eq(~basephy_dq_oe)
+                        dq_oe[it//self.dq_dqs_ratio] = basephy_dq_oe_n[:4]
 
                     dq_t     = Signal()
                     dq_ser   = Signal()
@@ -696,7 +672,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                     dq_i_dly = Signal()
 
                     self.oserdese2_ddr_with_tri(
-                        din     = cdc_out_dq,
+                        din     = basephy_dq[:4],
                         **(dict(dout_fb=dq_ser) if with_odelay else dict(dout=dq_dly)),
                         tin     = dq_oe[it//self.dq_dqs_ratio],
                         tout    = dq_t,
@@ -756,20 +732,12 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                 if hasattr(pads, "dm_n"):
                     for it in range(strobes):
                         basephy_dm = getattr(self.out, prefix+'dm_n_o')[it*mult]
-                        cdc_out_dm = Signal(len(basephy_dm)//2)
-                        simple_cdc = SimpleCDC(
-                            clkdiv="sys", clk="sys2x_90_io",
-                            i_dw=len(basephy_dm), o_dw=len(cdc_out_dm),
-                            i=basephy_dm, o=cdc_out_dm,
-                            name=f"{prefix}dm_o_{it}",
-                        )
-                        self.submodules += simple_cdc
 
                         dm_t   = Signal()
                         dm_ser = Signal()
                         dm_dly = Signal()
                         self.oserdese2_ddr_with_tri(
-                            din     = cdc_out_dm,
+                            din     = basephy_dm[:4],
                             **(dict(dout_fb=dm_ser) if with_odelay else dict(dout=dm_dly)),
                             tin     = dq_oe[it],
                             tout    = dm_t,

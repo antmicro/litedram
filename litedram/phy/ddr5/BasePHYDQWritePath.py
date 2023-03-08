@@ -23,9 +23,9 @@ class BasePHYDQWritePath(Module):
     @classmethod
     def get_min_max_supported_latencies(cls, nphases, address_delay, buffer_delay,
             ca_cdc_min_max_delay, wr_cdc_min_max_delay):
-        # Buffer incoming data + preamble buffer - address_delay - max CA CDC delay + min WDQ CDC delay
-        cls.min_write_latency = nphases + 2 - 1 - address_delay - ca_cdc_min_max_delay[1].sys4x +\
-             wr_cdc_min_max_delay[0].sys4x + buffer_delay
+        # Buffer incoming data + preamble buffer - address_delay - max CA CDC delay + min WDQ CDC delay + register output
+        cls.min_write_latency = buffer_delay + nphases + 2 - 1 - address_delay - ca_cdc_min_max_delay[1].sys4x +\
+             wr_cdc_min_max_delay[0].sys4x + nphases
         if cls.min_write_latency <  0:
             cls.write_addjust = -cls.min_write_latency
         # 64 (max CLW) + 1 (2N) + min CA CDC delay - max WDQ CDC delay
@@ -62,6 +62,7 @@ class BasePHYDQWritePath(Module):
         wr_data_window  = Signal(nphases+1)
         wr_data_delay   = Signal(max=wr_dq_max_delay + 1, reset=wr_reset_value + 2)
         wr_data_index   = Signal(max=wr_dq_max_delay // nphases + 1)
+        wr_data_index_p = Signal(max=wr_dq_max_delay // nphases + 2)
         wr_data_offset  = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
 
         self.sync += [
@@ -73,8 +74,9 @@ class BasePHYDQWritePath(Module):
             ),
         ]
 
-        self.comb += [
+        self.sync += [
             wr_data_index.eq(wr_data_delay[nphases_log:]),
+            wr_data_index_p.eq(wr_data_delay[nphases_log:] + 1),
             wr_data_offset.eq(wr_data_delay[:nphases_log]),
         ]
 
@@ -82,7 +84,7 @@ class BasePHYDQWritePath(Module):
         for i in range(nphases):
             if 1+i <= nphases: # only false for last i = nphases -1
                 wr_data_cases[i] = wr_data_window.eq(
-                    Cat(wrdata_en.taps[wr_data_index+1][nphases-(1+i):],
+                    Cat(wrdata_en.taps[wr_data_index_p][nphases-(1+i):],
                         wrdata_en.taps[wr_data_index][:nphases-i]))
 
         self.comb += [Case(wr_data_offset, wr_data_cases)]
@@ -95,7 +97,7 @@ class BasePHYDQWritePath(Module):
         self.comb += dq_pattern.window.eq(wr_data_window)
         self.submodules += dq_pattern
 
-        self.comb += [getattr(out, f'dq0_oe').eq(dq_pattern.oe)]
+        self.sync += [getattr(out, f'dq0_oe').eq(dq_pattern.oe)]
 
         # Write Data Path --------------------------------------------------------------------------
         wr_fifo = SyncFIFO_cls(width=dq_dqs_ratio*nphases*2, depth=wrtap, fwft=False)
@@ -104,7 +106,7 @@ class BasePHYDQWritePath(Module):
         self.comb += [
             wr_fifo.din.eq(
                 Cat(phase.wrdata for phase in dfi.phases)),
-            If(wr_data_index > 0,
+            If(wr_data_index != 0,
                 wr_fifo.we.eq(reduce(or_, [phase.wrdata_en for phase in dfi_ctrl.phases])),
             ),
         ]
@@ -119,7 +121,7 @@ class BasePHYDQWritePath(Module):
             [phase.wrdata for phase in dfi.phases])),
         ]
         self.comb += [
-            If(wr_data_index > 0,
+            If(wr_data_index != 0,
                 wr_fifo.re.eq(reduce(or_, wrdata_en.taps[wr_data_index-1])),
                 If(wr_fifo_data_valid,
                     wr_fifo_data.eq(wr_fifo.dout),
@@ -143,4 +145,4 @@ class BasePHYDQWritePath(Module):
         # DQ ----------------------------------------------------------------------------------------
         for bit in range(dq_dqs_ratio):
             _wrdata = [wr_data[i * dq_dqs_ratio + bit] for i in range(2*nphases)]
-            self.comb += getattr(out, f'dq{bit}_o').eq(Cat(_wrdata))
+            self.sync += getattr(out, f'dq{bit}_o').eq(Cat(_wrdata))

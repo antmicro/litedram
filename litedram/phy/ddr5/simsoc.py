@@ -252,6 +252,7 @@ def get_clocks(sys_clk_freq):
         "sys4x_ddr":       dict(freq_hz=2*4*sys_clk_freq),                  # RCD cmd sample
         "sys4x_180":       dict(freq_hz=4*sys_clk_freq, phase_deg=180),     # phy cs
         "sys4x_180_ddr":   dict(freq_hz=2*4*sys_clk_freq),                  # phy ca
+        "sys2x_90":        dict(freq_hz=2*sys_clk_freq, phase_deg=45),      # phy oe delay
         "sys4x_90":        dict(freq_hz=4*sys_clk_freq, phase_deg=90),      # phy oe delay
         "sys4x_90_ddr":    dict(freq_hz=2*4*sys_clk_freq, phase_deg=2*90),  # phy dq/dqs IO
         "sys8x_ddr":       dict(freq_hz=2*8*sys_clk_freq),

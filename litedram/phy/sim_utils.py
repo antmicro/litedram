@@ -556,10 +556,10 @@ class SimpleCDCWrap(Module, _FIFOInterface):
 
     def __init__(self, clkdiv, clk, i_dw, o_dw, name=None):
         _FIFOInterface.__init__(self, i_dw, 32)
-        _fifo = SimpleSyncFIFO(o_dw, 2, fwft=False)
-        self.submodules += ClockDomainsRenamer(clk)(_fifo)
         cross = SimpleCDC(clkdiv, clk, i_dw+2, o_dw+1, name=name, outside_reset_n=self.we)
         self.submodules += cross
+        _fifo = SimpleSyncFIFO(o_dw, 2, fwft=False)
+        self.submodules += ClockDomainsRenamer(clk)(_fifo)
         self.comb += [
             cross.i.eq(Cat(self.din[:i_dw//2], self.we, self.din[i_dw//2:], self.we)),
             _fifo.din.eq(cross.o[:-1]),

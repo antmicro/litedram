@@ -5,6 +5,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 from migen import *
+from migen.genlib.cdc import PulseSynchronizer
 
 from litex.soc.interconnect.csr import CSR
 
@@ -62,6 +63,19 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
         SimpleCDCWrap.reset_latency()
         Serializer.set_xilinx()
         prefixes = [""] if not with_sub_channels else ["A_", "B_"]
+
+        def cdc_any(target):
+            def new_cdc(i):
+                o = Signal()
+                psync = PulseSynchronizer("sys", target)
+                self.submodules += psync
+                self.comb += [
+                    psync.i.eq(i),
+                    o.eq(psync.o),
+                ]
+                return o
+            return new_cdc
+
         super().__init__(pads,
             ser_latency       = Latency(sys2x=Serializer.LATENCY+1),
             des_latency       = Latency(sys=(Deserializer.LATENCY-1 if aligned_reset_zero else Deserializer.LATENCY)),
@@ -71,7 +85,13 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
             out_CDC_primitive_cls = SimpleCDCWrap,
             ca_cdc_min_max_delay =
                 (Latency(sys2x=SimpleCDCWrap.LATENCY), Latency(sys2x=(SimpleCDCWrap.LATENCY))),
+            wr_cdc_min_max_delay =
+                (Latency(sys2x=SimpleCDCWrap.LATENCY), Latency(sys2x=(SimpleCDCWrap.LATENCY))),
             ca_domain="sys2x",
+            dq_domain={prefix:"sys2x_90" for prefix in prefixes},
+            wr_dqs_domain={prefix:"sys2x" for prefix in prefixes},
+            csr_dq_cdc={prefix:cdc_any("sys2x_90") for prefix in prefixes},
+            csr_dqs_cdc={prefix:cdc_any("sys2x") for prefix in prefixes},
             **kwargs)
 
         # fake delays (make no sense in simulation, but sdram.c expects them)
@@ -83,8 +103,8 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
         cs          = dict(clkdiv="sys2x", clk="sys4x_ddr")
         cmd         = dict(clkdiv="sys2x", clk="sys4x_ddr")
         ddr         = dict(clkdiv="sys2x", clk="sys4x_ddr")
-        ddr_90      = dict(clkdiv="sys2x", clk="sys4x_90_ddr")
         recv_ddr_90 = dict(clkdiv="sys", clk="sys4x_90_ddr")
+        ddr_90      = dict(clkdiv="sys2x_90", clk="sys4x_90_ddr")
 
         # This configuration mimics Xilinx 7-series serdes behavior
         if aligned_reset_zero:
@@ -130,15 +150,7 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
             # Tristate I/O (separate for simulation)
             for it in range(self.databits//dq_dqs_ratio):
                 dqs_t_o = getattr(self.out, prefix+'dqs_t_o')[it*mult]
-                cdc_dqs_t_o = Signal(len(dqs_t_o)//2)
-                simple_cdc = SimpleCDC(
-                    clkdiv="sys", clk="sys2x",
-                    i_dw=len(dqs_t_o), o_dw=len(cdc_dqs_t_o),
-                    i=dqs_t_o, o=cdc_dqs_t_o,
-                    name=f"{prefix}dqs_t_o_{it}",
-                )
-                self.submodules += simple_cdc
-                self.ser(i=cdc_dqs_t_o,
+                self.ser(i=dqs_t_o[:4],
                          o=getattr(self.pads, prefix+'dqs_t_o')[it],
                          name=f'{prefix}dqs_t_o{it}', **ddr)
                 self.des(o=getattr(self.out, prefix+'dqs_t_i')[it*mult],
@@ -146,15 +158,7 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
                          name=f'{prefix}dqs_t_i{it}', reset_cnt=0, **recv_ddr_90)
 
                 dqs_c_o = getattr(self.out, prefix+'dqs_c_o')[it*mult]
-                cdc_dqs_c_o = Signal(len(dqs_c_o)//2)
-                simple_cdc = SimpleCDC(
-                    clkdiv="sys", clk="sys2x",
-                    i_dw=len(dqs_c_o), o_dw=len(cdc_dqs_c_o),
-                    i=dqs_c_o, o=cdc_dqs_c_o,
-                    name=f"{prefix}dqs_c_o_{it}",
-                )
-                self.submodules += simple_cdc
-                self.ser(i=cdc_dqs_c_o,
+                self.ser(i=dqs_c_o[:4],
                          o=getattr(self.pads, prefix+'dqs_c_o')[it],
                          name=f'{prefix}dqs_c_o{it}', **ddr)
                 self.des(o=getattr(self.out, prefix+'dqs_c_i')[it*mult],
@@ -164,17 +168,10 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
                 basephy_dm = getattr(self.out, prefix+'dm_n_o')[it*mult]
                 delay_dm = Signal.like(basephy_dm)
                 out_dm = Signal.like(basephy_dm)
-                self.sync += delay_dm.eq(basephy_dm[1:])
-                self.comb += out_dm.eq(Cat(delay_dm[:-1], basephy_dm[0]))
-                cdc_out_dm = Signal(len(out_dm)//2)
-                simple_cdc = SimpleCDC(
-                    clkdiv="sys", clk="sys2x",
-                    i_dw=len(out_dm), o_dw=len(cdc_out_dm),
-                    i=out_dm, o=cdc_out_dm,
-                    name=f"{prefix}dm_o_{it}",
-                )
-                self.submodules += simple_cdc
-                self.ser(i=cdc_out_dm, o=getattr(self.pads, prefix+'dm_n_o')[it],
+                dq_domain = getattr(self.sync, "sys2x_90")
+                dq_domain += delay_dm.eq(basephy_dm[1:4])
+                dq_domain += out_dm.eq(Cat(delay_dm[:3], basephy_dm[0]))
+                self.ser(i=out_dm[:4], o=getattr(self.pads, prefix+'dm_n_o')[it],
                          name=f'{prefix}dm_n_o{it}', **ddr_90)
 
                 basephy_dm_i =  getattr(self.out, prefix+'dm_n_i')[it*mult]
@@ -189,17 +186,10 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
                 basephy_dq = getattr(self.out, prefix+'dq_o')[it]
                 delay_dq = Signal.like(basephy_dq)
                 out_dq = Signal.like(basephy_dq)
-                self.sync += delay_dq.eq(basephy_dq[1:])
-                self.comb += out_dq.eq(Cat(delay_dq[:-1], basephy_dq[0]))
-                cdc_out_dq = Signal(len(out_dq)//2)
-                simple_cdc = SimpleCDC(
-                    clkdiv="sys", clk="sys2x",
-                    i_dw=len(out_dq), o_dw=len(cdc_out_dq),
-                    i=out_dq, o=cdc_out_dq,
-                    name=f"{prefix}dq_o_{it}",
-                )
-                self.submodules += simple_cdc
-                self.ser(i=cdc_out_dq, o=getattr(self.pads, prefix+'dq_o')[it],
+                dq_domain = getattr(self.sync, "sys2x_90")
+                dq_domain += delay_dq.eq(basephy_dq[1:4])
+                dq_domain += out_dq.eq(Cat(delay_dq[:3], basephy_dq[0]))
+                self.ser(i=out_dq[:4], o=getattr(self.pads, prefix+'dq_o')[it],
                          name=f'{prefix}dq_o{it}', **ddr_90)
 
                 basephy_dq_i =  getattr(self.out, prefix+'dq_i')[it]
@@ -209,48 +199,25 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
             # Output enable signals can be and should be serialized as well
             for strobe in range(databits//dq_dqs_ratio):
                 out_dqs_t_oe = getattr(self.out, prefix+'dqs_oe')[strobe*mult]
-                cdc_out_dqs_t_oe = Signal(len(out_dqs_t_oe)//2)
-                simple_cdc = SimpleCDC(
-                    clkdiv="sys", clk="sys2x",
-                    i_dw=len(out_dqs_t_oe), o_dw=len(cdc_out_dqs_t_oe),
-                    i=out_dqs_t_oe, o=cdc_out_dqs_t_oe,
-                    name=f"{prefix}dqs_t_oe",
-                )
-                self.submodules += simple_cdc
-                self.ser(i=cdc_out_dqs_t_oe,
+                self.ser(i=out_dqs_t_oe[:4],
                          o=getattr(self.pads, prefix+'dqs_t_oe')[strobe],
                          name=f'{prefix}dqs_t_oe', **ddr)
 
                 out_dqs_c_oe = getattr(self.out, prefix+'dqs_oe')[strobe*mult]
-                cdc_out_dqs_c_oe = Signal(len(out_dqs_c_oe)//2)
-                simple_cdc = SimpleCDC(
-                    clkdiv="sys", clk="sys2x",
-                    i_dw=len(out_dqs_c_oe), o_dw=len(cdc_out_dqs_c_oe),
-                    i=out_dqs_c_oe, o=cdc_out_dqs_c_oe,
-                    name=f"{prefix}dqs_c_oe",
-                )
-                self.submodules += simple_cdc
-                self.ser(i=cdc_out_dqs_c_oe,
+                self.ser(i=out_dqs_c_oe[:4],
                          o=getattr(self.pads, prefix+'dqs_c_oe')[strobe],
                          name=f'{prefix}dqs_c_oe', **ddr)
 
                 basephy_dq_oe = getattr(self.out, prefix+'dq_oe')[strobe*mult]
                 delay_dq_oe = Signal.like(basephy_dq_oe)
                 out_dq_oe = Signal.like(basephy_dq_oe)
-                self.sync += delay_dq_oe.eq(basephy_dq_oe[1:])
-                self.comb += out_dq_oe.eq(Cat(delay_dq_oe[:-1], basephy_dq_oe[0]))
-                cdc_out_dq_oe = Signal(len(out_dq_oe)//2)
-                simple_cdc = SimpleCDC(
-                    clkdiv="sys", clk="sys2x",
-                    i_dw=len(out_dq_oe), o_dw=len(cdc_out_dq_oe),
-                    i=out_dq_oe, o=cdc_out_dq_oe,
-                    name=f"{prefix}dq_oe",
-                )
-                self.submodules += simple_cdc
-                self.ser(i=cdc_out_dq_oe,
+                dq_domain = getattr(self.sync, "sys2x_90")
+                dq_domain += delay_dq_oe.eq(basephy_dq_oe[1:4])
+                dq_domain += out_dq_oe.eq(Cat(delay_dq_oe[:3], basephy_dq_oe[0]))
+                self.ser(i=out_dq_oe[:4],
                          o=getattr(self.pads, prefix+'dq_oe')[strobe],
                          name=f'{prefix}dq_oe', **ddr_90)
 
-                self.ser(i=cdc_out_dq_oe,
+                self.ser(i=out_dq_oe[:4],
                          o=getattr(self.pads, prefix+'dm_n_oe')[strobe],
                          name=f'{prefix}dm_n_oe', **ddr_90)
