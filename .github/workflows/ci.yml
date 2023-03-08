@@ -103,7 +103,6 @@ jobs:
           - 'test/test_ddr5_rcd_decoder.py'
           - 'test/test_ddr5_rcd_actor_mrw.py'
           - 'test/test_ddr5_rcd_sideband.py'
-          #- 'test/test_ddr5_rcd_submodules.py'
           - 'test/test_ddr5_rdimm_regression.py'
           - 'test/test_ddr5_rdimm_phy.py'
 
