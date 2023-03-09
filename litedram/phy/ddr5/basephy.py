@@ -136,12 +136,12 @@ class DDR5PHY(Module, AutoCSR):
             return csr_ca_cdc(i)
 
         def cdc_dq(i, prefix):
-            if csr_dq_cdc is None:
+            if csr_dq_cdc is None or csr_dq_cdc[prefix] is None:
                 return i
             return csr_dq_cdc[prefix](i)
 
         def cdc_dqs(i, prefix):
-            if csr_dqs_cdc is None:
+            if csr_dqs_cdc is None or csr_dq_cdc[prefix] is None:
                 return i
             return csr_dqs_cdc[prefix](i)
 
@@ -287,6 +287,7 @@ class DDR5PHY(Module, AutoCSR):
             t_ctrl_delay        = addr_pre_ser_delay,
         )
 
+        self.nranks      = nranks      = len(pads.cs_n) if hasattr(pads, "cs_n") else len(pads.A_cs_n) if hasattr(pads, "A_cs_n") else 1
         # DFI Interface ----------------------------------------------------------------------------
         self.dfi = dfi = Interface(14, 1, nranks, 2*combined_data_bits, nphases=nphases, with_sub_channels=with_sub_channels)
 
@@ -594,7 +595,7 @@ class DDR5PHY(Module, AutoCSR):
                 for key, _ in ca_out.phases[i].layout:
                     if "ca0" == key:
                         key = 'ca'
-                    elif "cs0" in key:
+                    elif "cs0" in key or "cs1" in key:
                         key = 'cs_n'
                     elif "ca" in key or "ca" in key:
                         continue
