@@ -4,6 +4,9 @@
 # Copyright (c) 2022 Antmicro <www.antmicro.com>
 # SPDX-License-Identifier: BSD-2-Clause
 
+from operator import and_
+from functools import reduce
+
 from migen import *
 from migen.genlib.fifo import _FIFOInterface
 from migen.genlib.cdc import PulseSynchronizer, MultiReg
@@ -20,8 +23,8 @@ from litedram.phy.ddr5.basephy import DDR5PHY
 from litedram.phy.s7common import S7Common
 
 class Xilinx7SeriesAsyncFIFO(Module):
-    LATENCY=4 # 3 to pass through memory and 1 for output register
-    WCL_LATENCY=5
+    LATENCY=5 # 3 to pass through memory and 1 for output register
+    WCL_LATENCY=6
 
     def __init__(self, wclk, rclk, width=72):
         assert type(wclk) == str
@@ -29,6 +32,7 @@ class Xilinx7SeriesAsyncFIFO(Module):
         assert width in [4, 9, 18, 36, 72], f"Xilinx 7 Sereis FIFO primitive supports widtths: "\
             "4,9,18,36, or 72, you tried {width}"
 
+        self.width = width
         self.DI = Signal(width)
         self.WREN = Signal()
         self.FULL = Signal()
@@ -36,6 +40,7 @@ class Xilinx7SeriesAsyncFIFO(Module):
         self.DO = Signal(width)
         self.RDEN = Signal()
         self.EMPTY = Signal()
+        self._rst  = Signal()
 
         fifo_primitive = "FIFO18E1"
         fifo_mode = "FIFO18"
@@ -47,6 +52,7 @@ class Xilinx7SeriesAsyncFIFO(Module):
 
         i_cd = getattr(self.sync, wclk)
         rst = Signal(reset_less=True)
+
         w_rst = Signal(reset=1)
         w_cnt = Signal(3)
         i_cd += [
@@ -68,13 +74,26 @@ class Xilinx7SeriesAsyncFIFO(Module):
             )
         ]
 
+        rst_comb = Signal(reset_less=True)
+        self.comb += rst_comb.eq(r_rst | w_rst)
+
+        self.specials += Instance(
+            "FDPE",
+            p_INIT          = 1,
+            o_Q             = rst,
+            i_C             = ClockSignal(rclk),
+            i_CE            = 1,
+            i_PRE           = self._rst,
+            i_D             = rst_comb,
+        )
+
         self.specials += Instance(
             fifo_primitive,
             p_EN_SYN        = "FALSE",
             p_DO_REG        = 1,
             p_FIFO_MODE     = fifo_mode,
             p_DATA_WIDTH    = width,
-            i_RST           = ResetSignal(wclk),
+            i_RST           = rst,
             i_WRCLK         = ClockSignal(wclk),
             i_WREN          = self.WREN,
             o_FULL          = self.FULL,
@@ -95,15 +114,14 @@ class Xilinx7SeriesAsyncFIFOWrap(Module, _FIFOInterface):
     def __init__(self, wclk, rclk, i_dw, o_dw, name=None):
         _FIFOInterface.__init__(self, max(i_dw, o_dw), 512)
         width = max(i_dw, o_dw)
-        fifo_72 = width//72
-        fifo_36 = 0
-        if width > 36:
-            fifo_72 += 1
-        elif width > 0:
-            fifo_36 = 1
-        cdcs = [Xilinx7SeriesAsyncFIFO(wclk, rclk) for _ in range(fifo_72)] + \
-               [Xilinx7SeriesAsyncFIFO(wclk, rclk, width=36) for _ in range(fifo_36)]
+        fifo_72 = (width+71)//72
+        cdcs = [Xilinx7SeriesAsyncFIFO(wclk, rclk) for _ in range(fifo_72)]
         self.submodules += cdcs
+
+        self._rst = Signal()
+        for cdc in cdcs:
+            self.comb += cdc._rst.eq(self._rst)
+
         intermediate_din  = Signal(width)
         intermediate_dout = Signal(width)
         do_read           = Signal(reset=1)
@@ -116,12 +134,12 @@ class Xilinx7SeriesAsyncFIFOWrap(Module, _FIFOInterface):
         o_cd = getattr(self.sync, rclk)
 
         self.comb += [
-            self.readable.eq(reduce(and_, [~cdc.EMPTY for cdc in cdcs]) | r_cnt),
+            self.readable.eq(reduce(and_, [~cdc.EMPTY for cdc in cdcs])),
             *[cdc.RDEN.eq(self.re & do_read) for cdc in cdcs],
             self.writable.eq(reduce(and_, [~cdc.FULL for cdc in cdcs])),
             *[cdc.WREN.eq(self.we & do_write) for cdc in cdcs],
-            Cat([cdc.DI for cdc in cdcs])[:width].eq(intermediate_din),
-            intermediate_dout.eq(Cat([cdc.DO for cdc in cdcs])[:width]),
+            *[cdc.DI.eq(intermediate_din[i*72:(i+1)*72]) for i, cdc in enumerate(cdcs)],
+            *[intermediate_dout[i*72:(i+1)*72].eq(cdc.DO) for i, cdc in enumerate(cdcs)],
         ]
         if i_dw < width:
             self.comb += self.dout.eq(intermediate_dout)
