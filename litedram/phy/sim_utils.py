@@ -592,18 +592,18 @@ class SimpleCDCrWrap(Module, _FIFOInterface):
 
 
 class AsyncFIFOXilinx7(Module):
-    LATENCY=4 # 3 to pass through memory and 1 for output register
-    WCL_LATENCY=4
+    LATENCY=5 # 4 to pass through memory and 1 for output register
+    WCL_LATENCY=5
     RANDOMIZE=False
 
     @classmethod
     def randomize_delay(cls):
         cls.RANDOMIZE=True
-        cls.LATENCY=4
-        cls.WCL_LATENCY=5
+        cls.LATENCY=5
+        cls.WCL_LATENCY=6
 
     def __init__(self, wclk, rclk, randomize=False):
-        delay = 3
+        delay = 4
         if self.RANDOMIZE:
             from random import random
             if 0.5 < random():
@@ -639,17 +639,14 @@ class AsyncFIFOXilinx7(Module):
         self.comb += r_port.adr.eq(rclk_r_cnt[:9])
         self.comb += r_port.re.eq(self.RDEN)
 
-        empty = [Signal(reset=1) for _ in range(delay)]
-        full  = [Signal() for _ in range(delay)]
+        empty = Signal(reset=1)
+        full  = Signal()
 
-        sampled_empty = Signal()
-        sampled_full  = Signal()
-
-        self.comb += self.FULL.eq(reduce(or_, full))
-        self.comb += self.EMPTY.eq(reduce(or_, empty))
+        self.comb += self.FULL.eq(full)
+        self.comb += self.EMPTY.eq(empty)
         self.comb += [
-            full[0].eq((rclk_r_cnt[9] != wclk_w_cnt[9]) & (rclk_r_cnt[:9] == wclk_w_cnt[:9]) | sampled_full),
-            empty[0].eq((rclk_r_cnt[9] == wclk_w_cnt[9]) & (rclk_r_cnt[:9] == wclk_w_cnt[:9]) | sampled_empty),
+            full[0].eq((wclk_r_cnt[-1][9] != wclk_w_cnt[9]) & (wclk_r_cnt[-1][:9] == wclk_w_cnt[:9])),
+            empty[0].eq((rclk_r_cnt[9] == rclk_w_cnt[-1][9]) & (rclk_r_cnt[:9] == rclk_w_cnt[-1][:9])),
         ]
 
         cd_wclk = getattr(self.sync, wclk)
@@ -657,15 +654,8 @@ class AsyncFIFOXilinx7(Module):
             If(self.WREN,
                 wclk_w_cnt.eq(wclk_w_cnt+1),
             ),
-            *[full[i+1].eq(full[i]) for i in range(delay-1)],
             wclk_r_cnt[0].eq(rclk_r_cnt),
             *[wclk_r_cnt[i+1].eq(wclk_r_cnt[i]) for i in range(delay-2)],
-            If(empty[0],
-                sampled_empty.eq(empty[0]),
-            ),
-            If(sampled_full,
-                sampled_full.eq(0),
-            )
         ]
 
         cd_rclk = getattr(self.sync, rclk)
@@ -673,15 +663,8 @@ class AsyncFIFOXilinx7(Module):
             If(self.RDEN,
                 rclk_r_cnt.eq(rclk_r_cnt+1),
             ),
-            *[empty[i+1].eq(empty[i]) for i in range(delay-1)],
             rclk_w_cnt[0].eq(wclk_w_cnt),
             *[rclk_w_cnt[i+1].eq(rclk_w_cnt[i]) for i in range(delay-2)],
-            If(full[0],
-                sampled_full.eq(full[0]),
-            ),
-            If(sampled_empty,
-                sampled_empty.eq(0),
-            )
         ]
 
 
@@ -700,6 +683,11 @@ class AsyncFIFOXilinx7Wrap(Module, _FIFOInterface):
         number_of_fifos = (width + 71)//72
         cdcs = [AsyncFIFOXilinx7(wclk, rclk) for _ in range(number_of_fifos)]
         self.submodules += cdcs
+
+        self._rst = Signal()
+        for cdc in cdcs:
+            self.comb += cdc._rst.eq(self._rst)
+
         intermediate_din  = Signal(width)
         intermediate_dout = Signal(width)
         do_read           = Signal(reset=1)
@@ -716,8 +704,8 @@ class AsyncFIFOXilinx7Wrap(Module, _FIFOInterface):
             *[cdc.RDEN.eq(self.re & do_read) for cdc in cdcs],
             self.writable.eq(reduce(and_, [~cdc.FULL for cdc in cdcs])),
             *[cdc.WREN.eq(self.we & do_write) for cdc in cdcs],
-            Cat([cdc.DI for cdc in cdcs])[:width].eq(intermediate_din),
-            intermediate_dout.eq(Cat([cdc.DO for cdc in cdcs])[:width]),
+            *[cdc.DI.eq(intermediate_din[i*72:(i+1)*72]) for i, cdc in enumerate(cdcs)],
+            *[intermediate_dout[i*72:(i+1)*72].eq(cdc.DO) for i, cdc in enumerate(cdcs)],
         ]
         if i_dw < width:
             self.comb += self.dout.eq(intermediate_dout)
