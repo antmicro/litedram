@@ -83,6 +83,7 @@ class DDR5PHY(Module, AutoCSR):
                  sys_clk_freq, ser_latency, des_latency, phytype, direct_control,
                  ca_cdc_min_max_delay, wr_cdc_min_max_delay,
                  ca_domain, wr_dqs_domain, dq_domain,
+                 out_CDC_CA_primitive_cls=SimpleCDCWrap,
                  out_CDC_primitive_cls=SimpleCDCWrap,
                  with_sub_channels=False, cmd_delay=None, masked_write=False,
                  extended_overlaps_check=False, with_odelay=False,
@@ -315,7 +316,7 @@ class DDR5PHY(Module, AutoCSR):
         self.comb += CSRs['alert'].status.eq(_alert_reduce)
 
         # Handle CA/CS/PAR
-        self.handle_ca(prefixes, dfi, nphases, nranks, out_CDC_primitive_cls, ca_domain)
+        self.handle_ca(prefixes, dfi, nphases, nranks, out_CDC_CA_primitive_cls, ca_domain)
 
         # Handle read/write DQ/DQS paths
         def rep(sig, cnt):
@@ -556,6 +557,7 @@ class DDR5PHY(Module, AutoCSR):
                 for bit in range(4):
                     self.comb += getattr(self.out, prefix+'dq_o')[bit + nibble*4].eq(getattr(out, f"dq{bit}_o"))
                 self.comb += getattr(self.out, prefix+'dm_n_o')[nibble].eq(out.dm_n_o)
+
             self.comb += rd_fifo_valid.eq(reduce(and_, rd_fifo_valids))
             if leds is not None:
                 self.comb += leds.eq(Cat(fifo_ready))

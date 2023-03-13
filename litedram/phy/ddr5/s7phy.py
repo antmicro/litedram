@@ -134,7 +134,7 @@ class Xilinx7SeriesAsyncFIFOWrap(Module, _FIFOInterface):
         o_cd = getattr(self.sync, rclk)
 
         self.comb += [
-            self.readable.eq(reduce(and_, [~cdc.EMPTY for cdc in cdcs])),
+            self.readable.eq(reduce(and_, [~cdc.EMPTY for cdc in cdcs]) | r_cnt),
             *[cdc.RDEN.eq(self.re & do_read) for cdc in cdcs],
             self.writable.eq(reduce(and_, [~cdc.FULL for cdc in cdcs])),
             *[cdc.WREN.eq(self.we & do_write) for cdc in cdcs],
@@ -235,8 +235,9 @@ class S7DDR5PHY(DDR5PHY, S7Common):
             csr_cdc_90        = cdc_90,
             csr_dq_cdc        = {prefix:cdc_90 for prefix in prefixes},
             csr_dqs_cdc       = {prefix:cdc for prefix in prefixes},
+            out_CDC_CA_primitive_cls = Xilinx7SeriesAsyncFIFOWrap,
             ca_cdc_min_max_delay =
-                (Latency(sys2x=SimpleCDCWrap.LATENCY), Latency(sys2x=(SimpleCDCWrap.LATENCY))),
+                (Latency(sys2x=Xilinx7SeriesAsyncFIFOWrap.LATENCY), Latency(sys2x=(Xilinx7SeriesAsyncFIFOWrap.WCL_LATENCY))),
             wr_cdc_min_max_delay =
                 (Latency(sys2x=SimpleCDCWrap.LATENCY), Latency(sys2x=(SimpleCDCWrap.LATENCY))),
             with_odelay       = with_odelay,
