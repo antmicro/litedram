@@ -123,7 +123,7 @@ class PHYAddressSlicer(Module):
             for rank in range(nranks):
                 cs_n = getattr(phase, f'cs{rank}_n')
                 self.sync += [
-                    If(~cmd_buff.phases[j].mode_2n,
+                    If(~cmd_buff.phases[j].mode_2n | rdimm_mode,
                         cs_n[0].eq(cmd_buff.phases[j].cs_n[rank]),
                     ).Else(
                         cs_n[0].eq(carry_cs_n[rank] if j == 0 else cmd_buff.phases[j-1].cs_n[rank]),
