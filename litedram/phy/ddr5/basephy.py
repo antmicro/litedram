@@ -89,8 +89,8 @@ class DDR5PHY(Module, AutoCSR):
                  extended_overlaps_check=False, with_odelay=False,
                  with_clock_odelay=False, with_address_odelay=False,
                  with_idelay=False, with_per_dq_idelay=False,
-                 csr_cdc=None, csr_cdc_90=None,
-                 csr_ca_cdc=None, csr_dq_cdc=None, csr_dqs_cdc=None,
+                 csr_ca_cdc=None, csr_dqs_cdc=None,
+                 csr_dq_rd_cdc=None, csr_dq_wr_cdc=None,
                  rd_extra_delay=Latency(sys=0), address_lines=13,
                  i_domain=None, i_domain_ratio=1, o_doamin=None, o_domain_ratio=1,
                  SyncFIFO_cls=SyncFIFO,
@@ -98,8 +98,7 @@ class DDR5PHY(Module, AutoCSR):
 
         self.pads        = pads
         self.memtype     = memtype     = "DDR5"
-        self.nranks      = nranks      = 1 # no support for multiple ranks
-        #self.nranks      = nranks      = len(pads.cs_n) if hasattr(pads, "cs_n") else len(pads.A_cs_n) if hasattr(pads, "A_cs_n") else 1
+        self.nranks      = nranks      = len(pads.cs_n) if hasattr(pads, "cs_n") else len(pads.A_cs_n) if hasattr(pads, "A_cs_n") else 1
         self.databits    = databits    = len(pads.dq) if hasattr(pads, "dq") else len(pads.A_dq)
         self.strobes     = strobes     = len(pads.dqs_t) if hasattr(pads, "dqs_t") else len(pads.A_dqs_t)
         self.addressbits = addressbits = 18 # for activate row address
@@ -136,57 +135,49 @@ class DDR5PHY(Module, AutoCSR):
                 return i
             return csr_ca_cdc(i)
 
-        def cdc_dq(i, prefix):
-            if csr_dq_cdc is None or csr_dq_cdc[prefix] is None:
+        def cdc_dq_wr(i, prefix):
+            if csr_dq_wr_cdc is None or csr_dq_wr_cdc[prefix] is None:
                 return i
-            return csr_dq_cdc[prefix](i)
+            return csr_dq_wr_cdc[prefix](i)
 
-        def cdc_dqs(i, prefix):
-            if csr_dqs_cdc is None or csr_dq_cdc[prefix] is None:
+        def cdc_dqs_wr(i, prefix):
+            if csr_dqs_cdc is None or csr_dqs_cdc[prefix] is None:
                 return i
             return csr_dqs_cdc[prefix](i)
 
-        def cdc(i):
-            if csr_cdc is None:
+        def cdc_dq_rd(i, prefix):
+            if csr_dq_rd_cdc is None or csr_dq_rd_cdc[prefix] is None:
                 return i
-            return csr_cdc(i)
+            return csr_dq_rd_cdc[prefix](i)
 
-        def cdc_90(i):
-            if csr_cdc_90 is None:
-                return i
-            return csr_cdc_90(i)
-
-        self._rst_cdc       = cdc(CSRs['_rst'].storage)
-        self._rst_cdc_90    = cdc_90(CSRs['_rst'].storage)
         self.CDCCSRs = CDCCSRs = dict()
 
         for key, CSR in CSRs.items():
             if reduce(or_, [i in key for i in ["preamble", "wlevel_en", "dly_sel", "dq_dly_sel"]]):
                 continue
             if reduce(or_, [i in key for i in ["ckdly", "cadly", "csdly", "pardly"]]):
-                if "_inc" in key:
-                    CDCCSRs[key] = cdc_ca(CSR.re)
-                else:
-                    CDCCSRs[key] = cdc_ca(CSR.re | CSRs["_rst"].storage)
+                continue
             elif "ck_wdly" in key:
                 for prefix in prefixes:
                     if prefix in key:
                         if "_inc" in key:
-                            CDCCSRs[key] = cdc_dqs(CSR.re, prefix)
-                        else:
-                            CDCCSRs[key] = cdc_dqs(CSR.re | CSRs["_rst"].storage, prefix)
-            elif "rd" not in key:
+                            CDCCSRs[key] = cdc_dqs_wr(CSR.re, prefix)
+                        elif "_rst" in key:
+                            CDCCSRs[key] = cdc_dqs_wr(CSR.re | CSRs["_rst"].storage, prefix)
+            elif "ck_wddly" in key:
                 for prefix in prefixes:
                     if prefix in key:
                         if "_inc" in key:
-                            CDCCSRs[key] = cdc_dq(CSR.re, prefix)
-                        else:
-                            CDCCSRs[key] = cdc_dq(CSR.re | CSRs["_rst"].storage, prefix)
-            elif "ck_" not in key and "dly" in key and "_inc" in key:
-                CDCCSRs[key] = cdc(CSR.re)
-            elif "ck_" not in key and "dly" in key and "_rst" in key:
-                CDCCSRs[key] = cdc(CSR.re | CSRs['_rst'].storage)
-
+                            CDCCSRs[key] = cdc_dq_wr(CSR.re, prefix)
+                        elif "_rst" in key:
+                            CDCCSRs[key] = cdc_dq_wr(CSR.re | CSRs["_rst"].storage, prefix)
+            elif "ck_rdly" in key:
+                for prefix in prefixes:
+                    if prefix in key:
+                        if "_inc" in key:
+                            CDCCSRs[key] = cdc_dq_rd(CSR.re, prefix)
+                        elif "_rst" in key:
+                            CDCCSRs[key] = cdc_dq_rd(CSR.re | CSRs['_rst'].storage, prefix)
 
         # PHY settings -----------------------------------------------------------------------------
 
@@ -288,7 +279,6 @@ class DDR5PHY(Module, AutoCSR):
             t_ctrl_delay        = addr_pre_ser_delay,
         )
 
-        self.nranks      = nranks      = len(pads.cs_n) if hasattr(pads, "cs_n") else len(pads.A_cs_n) if hasattr(pads, "A_cs_n") else 1
         # DFI Interface ----------------------------------------------------------------------------
         self.dfi = dfi = Interface(14, 1, nranks, 2*combined_data_bits, nphases=nphases, with_sub_channels=with_sub_channels)
 
