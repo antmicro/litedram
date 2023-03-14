@@ -23,8 +23,8 @@ from litedram.phy.ddr5.basephy import DDR5PHY
 from litedram.phy.s7common import S7Common
 
 class Xilinx7SeriesAsyncFIFO(Module):
-    LATENCY=5 # 3 to pass through memory and 1 for output register
-    WCL_LATENCY=6
+    LATENCY=4 # 3 to pass through memory and 1 for output register
+    WCL_LATENCY=5
 
     def __init__(self, wclk, rclk, width=72):
         assert type(wclk) == str
