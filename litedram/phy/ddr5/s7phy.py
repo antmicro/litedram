@@ -276,6 +276,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
             ca_domain         = ca_domain,
             wr_dqs_domain     = wr_dqs_domains,
             dq_domain         = dq_wr_domains,
+            per_pin_ca_domain = per_pin_ca_domain,
 
             csr_ca_cdc        = cdc_any(ca_domain),
             csr_dq_rd_cdc     = {prefix: cdc_any(dom) for prefix, dom in dq_rd_domains.items()},

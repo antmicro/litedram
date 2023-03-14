@@ -66,8 +66,8 @@ class PHYAddressSlicerOutput(Record):
     def data_layout(nranks, nphases):
         dfi_layout = [
             *[(f"ca{i}", 2) for i in range(14)],
-            *[(f"cs{i}_n", 2) for i in range(nranks)],
-            ("par", 2),
+            *[(f"cs_n{i}", 2) for i in range(nranks)],
+            ("par0", 2),
         ]
         return dfi_layout
     def __init__(self, nphases, nranks):
@@ -77,10 +77,13 @@ class PHYAddressSlicerOutput(Record):
         self.phases = [getattr(self, f"p{i}") for i in range(nphases)]
         for phase in self.phases:
             for i in range(nranks):
-                getattr(phase, f"cs{i}_n").reset = 3
+                getattr(phase, f"cs_n{i}").reset = 3
 
 
 class PHYAddressSlicerRemap(Module):
+    @classmethod
+    def get_delay(cls, nphases):
+        return 0
     def __init__(self, dfi_in, slicer_out, prefix):
         layout = [name for name, _ in slicer_out.layout[0][1]]
         for s_phase, t_phase in zip(dfi_in.phases, slicer_out.phases):
@@ -105,7 +108,7 @@ class _DFIAddressBuffer(Module):
 
 class PHYAddressSlicer(Module):
     @classmethod
-    def dfi_delay(cls, nphases):
+    def get_delay(cls, nphases):
         return _DFIAddressBuffer.get_delay(nphases) + nphases # base buffer + Slicer delay
 
     def __init__(self, slicer_out, slicer_in, rdimm_mode, nphases, nranks):
@@ -121,7 +124,7 @@ class PHYAddressSlicer(Module):
 
         for j, phase in enumerate(slicer_out.phases):
             for rank in range(nranks):
-                cs_n = getattr(phase, f'cs{rank}_n')
+                cs_n = getattr(phase, f'cs_n{rank}')
                 self.sync += [
                     If(~cmd_buff.phases[j].mode_2n | rdimm_mode,
                         cs_n[0].eq(cmd_buff.phases[j].cs_n[rank]),
@@ -198,5 +201,5 @@ class PHYAddressSlicer(Module):
 
         # DDR5 PAR ---------------------------------------------------------------------------------
         self.sync += [
-            phase.par.eq(reduce(xor, cmd_buff.phases[n_phase].address[7*i:7+7*i]))
+            phase.par0.eq(reduce(xor, cmd_buff.phases[n_phase].address[7*i:7+7*i]))
                     for n_phase, phase in enumerate(slicer_out.phases) for i in range(2)]

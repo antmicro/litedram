@@ -83,6 +83,7 @@ class DDR5PHY(Module, AutoCSR):
                  sys_clk_freq, ser_latency, des_latency, phytype, direct_control,
                  ca_cdc_min_max_delay, wr_cdc_min_max_delay,
                  ca_domain, wr_dqs_domain, dq_domain,
+                 per_pin_ca_domain,
                  out_CDC_CA_primitive_cls=SimpleCDCWrap,
                  out_CDC_primitive_cls=SimpleCDCWrap,
                  with_sub_channels=False, cmd_delay=None, masked_write=False,
@@ -180,7 +181,6 @@ class DDR5PHY(Module, AutoCSR):
                             CDCCSRs[key] = cdc_dq_rd(CSR.re | CSRs['_rst'].storage, prefix)
 
         # PHY settings -----------------------------------------------------------------------------
-
         combined_data_bits = databits if not with_sub_channels else 2*databits
         combined_strobes = strobes if not with_sub_channels else 2*strobes
 
@@ -207,9 +207,17 @@ class DDR5PHY(Module, AutoCSR):
         cl              = get_cl_cw(memtype, tck)
         cwl = cl - 2
 
+        # DFI Interface ----------------------------------------------------------------------------
+        self.dfi = dfi = Interface(14, 1, nranks, 2*combined_data_bits, nphases=nphases, with_sub_channels=with_sub_channels)
+
+        # Now prepare the data by converting the sequences on adapters into sequences on the pads.
+        # We have to ignore overlapping commands, and module timings have to ensure that there are
+        # no overlapping commands anyway.
+        self.out = BasePHYOutput(nphases, databits, nranks, nibbles, with_sub_channels, name="basephy")
+
         # Address path delay before serialization
-        addr_pre_ser_delay = PHYAddressSlicer.dfi_delay(nphases)
-        assert addr_pre_ser_delay == 8
+        # Handle CA/CS/PAR
+        addr_pre_ser_delay = self.handle_ca(prefixes, dfi, nphases, nranks, out_CDC_CA_primitive_cls, ca_domain, per_pin_ca_domain)
 
         self.des_latency          = des_latency
         self.ser_latency          = ser_latency
@@ -253,7 +261,7 @@ class DDR5PHY(Module, AutoCSR):
             memtype       = memtype,
             databits      = combined_data_bits,
             dfi_databits  = 2*combined_data_bits,
-            nranks        = nranks,
+            nranks        = 1, #nranks,
             nphases       = nphases,
             rdphase       = CSRs['_rdphase'].storage,
             wrphase       = CSRs['_wrphase'].storage,
@@ -279,14 +287,6 @@ class DDR5PHY(Module, AutoCSR):
             t_ctrl_delay        = addr_pre_ser_delay,
         )
 
-        # DFI Interface ----------------------------------------------------------------------------
-        self.dfi = dfi = Interface(14, 1, nranks, 2*combined_data_bits, nphases=nphases, with_sub_channels=with_sub_channels)
-
-        # Now prepare the data by converting the sequences on adapters into sequences on the pads.
-        # We have to ignore overlapping commands, and module timings have to ensure that there are
-        # no overlapping commands anyway.
-        self.out = BasePHYOutput(nphases, databits, nranks, nibbles, with_sub_channels, name="basephy")
-
         # Clocks -----------------------------------------------------------------------------------
         self.clk_pattern = bitpattern("-_-_-_-_")
 
@@ -304,9 +304,6 @@ class DDR5PHY(Module, AutoCSR):
             )
         ]
         self.comb += CSRs['alert'].status.eq(_alert_reduce)
-
-        # Handle CA/CS/PAR
-        self.handle_ca(prefixes, dfi, nphases, nranks, out_CDC_CA_primitive_cls, ca_domain)
 
         # Handle read/write DQ/DQS paths
         def rep(sig, cnt):
@@ -553,7 +550,7 @@ class DDR5PHY(Module, AutoCSR):
                 self.comb += leds.eq(Cat(fifo_ready))
 
 
-    def handle_ca(self, prefixes, dfi, nphases, nranks, out_CDC_primitive_cls, ca_domain):
+    def handle_ca(self, prefixes, dfi, nphases, nranks, out_CDC_primitive_cls, ca_domain, per_pin_ca_domain):
         ca_outs = []
         rst_in  = PHYResetInput(nphases)
         for t_phase, s_phase in zip(rst_in.phases, dfi.phases):
@@ -581,24 +578,21 @@ class DDR5PHY(Module, AutoCSR):
             for _, ca_out in ca_outs:
                 input_arr.append(Cat(ca_out.phases[i].flatten()))
 
-        output_arr = []
+        ca_outs_intermediate = []
+        inter_rst_out = PHYResetOutput(nphases//2)
+        ca_outs_intermediate.append(("", inter_rst_out))
+        for prefix in prefixes:
+            inter_slicer_out = PHYAddressSlicerOutput(nphases//2, nranks)
+            ca_outs_intermediate.append((prefix, inter_slicer_out))
+
+        intermediate_arr = []
         for i in range(nphases//2):
-            for prefix, ca_out in ca_outs:
-                for key, _ in ca_out.phases[i].layout:
-                    if "ca0" == key:
-                        key = 'ca'
-                    elif "cs0" in key or "cs1" in key:
-                        key = 'cs_n'
-                    elif "ca" in key or "ca" in key:
-                        continue
-                    sig_or_list = getattr(self.out, prefix+key)
-                    if not isinstance(sig_or_list, list):
-                        sig_or_list = [sig_or_list]
-                    for sig in sig_or_list:
-                        output_arr.append(sig[2*i:2*i+2])
+            for _, inter_ca_out in ca_outs_intermediate:
+                intermediate_arr.append(Cat(inter_ca_out.phases[i].flatten()))
 
         switch_to_fifo = Signal()
         ca_async = out_CDC_primitive_cls("sys", ca_domain, width, width//2)
+        self.comb += ca_async._rst.eq(self.CSRs["_rst"].storage)
         self.submodules.ca_async = ca_async
 
         cd_ca_dom = getattr(self.sync, ca_domain)
@@ -607,10 +601,31 @@ class DDR5PHY(Module, AutoCSR):
             ca_async.din.eq(Cat(input_arr)),
             ca_async.we.eq(self.CSRs["_enable_fifos"].storage),
             If(switch_to_fifo,
-                Cat(output_arr).eq(ca_async.dout),
+                Cat(intermediate_arr).eq(ca_async.dout),
             ),
             ca_async.re.eq(ca_async.readable),
         ]
+
+        translate = {}
+        translate['reset_n'] = [Cat(phase.reset_n for phase in ca_outs_intermediate[0][1].phases)]
+        for prefix, _ca_async in ca_outs_intermediate[1:]:
+            for func, count in [("ca", 14), ("cs_n", nranks), ("par", 1)]:
+                translate[prefix+func] = []
+                for i in range(count):
+                    translate[prefix+func].append(Cat([getattr(phase, func+str(i)) for phase in _ca_async.phases]))
+
+        for func, sigs in translate.items():
+            for i, sig in enumerate(sigs):
+                out_sig = getattr(self.out, func)
+                if isinstance(out_sig, list):
+                    out_sig = out_sig[i]
+                if per_pin_ca_domain is not None and func in per_pin_ca_domain and len(per_pin_ca_domain[func]) > i:
+                    _cd = getattr(self.sync, per_pin_ca_domain[func][i])
+                    _cd += out_sig.eq(sig)
+                else:
+                    self.comb += out_sig.eq(sig)
+
+        return PHYAddressSlicerRemap.get_delay(nphases) + PHYAddressSlicer.get_delay(nphases) + nphases//2
 
 
     def get_rst(self, byte, rst, prefix="", clk="sys", dq=False):
