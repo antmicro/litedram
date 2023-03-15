@@ -41,7 +41,11 @@ class VerilatorDDR5Tests(unittest.TestCase):
 
         command = ["python3", simsoc.__file__, *args]
         timeout = 3 * 60 * 60  # give more than enough time for CI
+
         p = pexpect.spawn(" ".join(command), timeout=timeout, **kwargs)
+
+        # Useful for debugging: increase the size of the buffer printed to standard output upon fail.
+        # p.str_last_chars = 2000
 
         res = p.expect(["Memtest OK", "Memtest KO"])
         self.assertEqual(res, 0, msg="{}\nGot '{}'".format(p.before.decode(), p.after.decode()))

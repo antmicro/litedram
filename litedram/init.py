@@ -11,6 +11,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 import math
+import warnings
 from contextlib import contextmanager
 
 from migen import *
@@ -1279,12 +1280,12 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
         r.define("DDRX_MR_WRLVL_BIT", 6)
         r.newline()
 
-    for signature, sequence in [
-        ("static inline void reset_sequence(void)", reset_sequence),
-        ("static inline void setup_dram_mrs_sequence(void)", setup_dram_mrs_sequence),
-    ]:
-        with r.block(signature) as b:
-            if phy_settings.memtype != "DDR5":
+
+    if phy_settings.memtype != "DDR5":
+        for signature, sequence in [
+            ("static inline void reset_sequence(void)", reset_sequence),
+        ]:
+            with r.block(signature) as b:
                 for comment, a, ba, cmd, delay in sequence:
                     invert_masks = [(0, 0), ]
                     if phy_settings.is_rdimm:
@@ -1312,7 +1313,12 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
                         if delay:
                             b += f"cdelay({delay});\n"
                         b.newline()
-            else:
+    else:
+        for signature, sequence in [
+            ("static inline void reset_sequence(void)", reset_sequence),
+            ("static inline void setup_dram_mrs_sequence(void)", setup_dram_mrs_sequence),
+        ]:
+            with r.block(signature) as b:
                 for comment, prefixes, cs, ca, phases, cmd, delay in sequence:
                     b += f"/* {comment} */"
                     if delay > -1:
@@ -1338,6 +1344,7 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
                     if delay > 0:
                         b += f"cdelay({delay});\n"
                     b.newline()
+
 
     if isinstance(init_sequence, tuple):
         for i in range(2):
@@ -1480,6 +1487,8 @@ def get_sdram_phy_py_header(phy_settings, timing_settings):
             for a_inv, ba_inv in invert_masks:
                 r += f"    (\"{comment}\", {a ^ a_inv:d}, {ba ^ ba_inv:d}, {cmd.lower()}, {delay}),\n"
     else:
+        warnings.warn("f:get_sdram_phy_py_header is not implemented for DDR5")
         pass # to be filled out for DDR5
+
     r += "]\n"
     return r
