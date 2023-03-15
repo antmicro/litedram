@@ -566,6 +566,7 @@ class DDR5PHY(Module, AutoCSR):
             slicer_out = PHYAddressSlicerOutput(nphases, nranks)
             address_slicer = PHYAddressSlicer(slicer_out, slicer_in,
                 self.CSRs['_rdimm_mode'].storage, self.CSRs[prefix+'par_enable'].storage,
+                self.CSRs[prefix+'par_value'].storage,
                 nphases, nranks)
             self.submodules += address_slicer
             ca_outs.append((prefix, slicer_out))
