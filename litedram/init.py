@@ -878,7 +878,10 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
     dfii_control_1n = '|'.join(dfii_control_1n)
 
     all_cs        = 2**phy_settings.nranks-1
-    # all_cs        = 2
+    if phy_settings.is_rdimm:
+        # RDIMM has 2 CS_n
+        all_cs        = 3
+
     all_phases    = 2**phy_settings.nphases-1
 
     def cmd_vca():
