@@ -261,7 +261,7 @@ class DDR5PHY(Module, AutoCSR):
             memtype       = memtype,
             databits      = combined_data_bits,
             dfi_databits  = 2*combined_data_bits,
-            nranks        = 1, #nranks,
+            nranks        = nranks,
             nphases       = nphases,
             rdphase       = CSRs['_rdphase'].storage,
             wrphase       = CSRs['_wrphase'].storage,

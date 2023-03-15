@@ -93,7 +93,7 @@ class LiteDRAMController(Module):
         self.settings.geom   = geom_settings
         self.settings.timing = timing_settings
 
-        nranks = phy_settings.nranks
+        nranks = 1 #phy_settings.nranks
         nbanks = 2**geom_settings.bankbits
 
         # Registers --------------------------------------------------------------------------------
