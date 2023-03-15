@@ -286,8 +286,9 @@ class S7DDR5PHY(DDR5PHY, S7Common):
             out_CDC_CA_primitive_cls = Xilinx7SeriesAsyncFIFOWrap,
             ca_cdc_min_max_delay =
                 (Latency(sys2x=Xilinx7SeriesAsyncFIFOWrap.LATENCY), Latency(sys2x=(Xilinx7SeriesAsyncFIFOWrap.WCL_LATENCY))),
+            out_CDC_primitive_cls = Xilinx7SeriesAsyncFIFOWrap,
             wr_cdc_min_max_delay =
-                (Latency(sys2x=SimpleCDCWrap.LATENCY), Latency(sys2x=(SimpleCDCWrap.LATENCY))),
+                (Latency(sys2x=Xilinx7SeriesAsyncFIFOWrap.LATENCY), Latency(sys2x=(Xilinx7SeriesAsyncFIFOWrap.WCL_LATENCY))),
 
             with_odelay       = with_odelay,
             with_idelay       = with_idelay,
