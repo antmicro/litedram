@@ -292,12 +292,14 @@ class DDR5PHY(Module, AutoCSR):
 
         # Simple commands --------------------------------------------------------------------------
         self.comb += [phase.alert_n.eq(reduce(or_, self.out.alert_n[i*2:(i+1)*2])) for i, phase in enumerate(self.dfi.phases)]
+        _alert = Signal.like(self.out.alert_n)
+        self.sync += _alert.eq(self.out.alert_n)
 
         op = Signal()
         self._sample_memory = Signal()
         self.sync += [
             If(CSRs['reset_alert'].re,
-                _sample_memory.eq(CSRs['alert_reduce'].fields.initial_state),
+                self._sample_memory.eq(CSRs['alert_reduce'].fields.initial_state),
                 op.eq(CSRs['alert_reduce'].fields.operation),
             ).Elif(CSRs['sample_alert'].storage,
                 If(op,
@@ -306,11 +308,7 @@ class DDR5PHY(Module, AutoCSR):
                     self._sample_memory.eq(self._sample_memory | reduce(or_, _alert))
                 ),
             ).Else(
-                If(op,
-                    CSRs['alert'].status.eq(self._sample_memory),
-                ).Else(
-                    CSRs['alert'].status.eq(self._sample_memory),
-                ),
+                CSRs['alert'].status.eq(self._sample_memory),
             )
         ]
 
