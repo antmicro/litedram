@@ -6,7 +6,7 @@
 
 
 from migen.fhdl.module import Module
-from litex.soc.interconnect.csr import AutoCSR, CSR, CSRStorage, CSRStatus
+from litex.soc.interconnect.csr import AutoCSR, CSR, CSRStorage, CSRField, CSRStatus
 
 
 class BasePHYCSR(Module, AutoCSR):
