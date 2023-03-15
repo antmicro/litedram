@@ -293,17 +293,26 @@ class DDR5PHY(Module, AutoCSR):
         # Simple commands --------------------------------------------------------------------------
         self.comb += [phase.alert_n.eq(reduce(or_, self.out.alert_n[i*2:(i+1)*2])) for i, phase in enumerate(self.dfi.phases)]
 
-        _alert_reduce = Signal()
-        _alert = Signal.like(self.out.alert_n)
-        self.sync += _alert.eq(self.out.alert_n)
+        op = Signal()
+        self._sample_memory = Signal()
         self.sync += [
-            If(CSRs['alert_reduce'].storage,
-                _alert_reduce.eq(reduce(and_, _alert))
+            If(CSRs['reset_alert'].re,
+                _sample_memory.eq(CSRs['alert_reduce'].fields.initial_state),
+                op.eq(CSRs['alert_reduce'].fields.operation),
+            ).Elif(CSRs['sample_alert'].storage,
+                If(op,
+                    self._sample_memory.eq(self._sample_memory & reduce(and_, _alert))
+                ).Else(
+                    self._sample_memory.eq(self._sample_memory | reduce(or_, _alert))
+                ),
             ).Else(
-                _alert_reduce.eq(reduce(or_, _alert))
+                If(op,
+                    CSRs['alert'].status.eq(self._sample_memory),
+                ).Else(
+                    CSRs['alert'].status.eq(self._sample_memory),
+                ),
             )
         ]
-        self.comb += CSRs['alert'].status.eq(_alert_reduce)
 
         # Handle read/write DQ/DQS paths
         def rep(sig, cnt):

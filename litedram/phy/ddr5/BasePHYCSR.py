@@ -25,7 +25,12 @@ class BasePHYCSR(Module, AutoCSR):
         self._wrphase = CSRStorage(nphases.bit_length()-1, reset=0)
 
         self.alert = CSRStatus(1)
-        self.alert_reduce = CSRStorage(1)
+        self.alert_reduce = CSRStorage(fields=[
+            CSRField("initial_state", size=1,  description="Initial value of all bits"),
+            CSRField("operation",     size=1,  description="0 - `or` (default), 1 -`and`"),
+        ])
+        self.sample_alert = CSRStorage()
+        self.reset_alert = CSR()
 
         if with_odelay or with_clock_odelay:
             setattr(self, 'ckdly_rst' , CSR(name='ckdly_rst'))
