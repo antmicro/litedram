@@ -111,7 +111,7 @@ class PHYAddressSlicer(Module):
     def get_delay(cls, nphases):
         return _DFIAddressBuffer.get_delay(nphases) + nphases # base buffer + Slicer delay
 
-    def __init__(self, slicer_out, slicer_in, rdimm_mode, nphases, nranks):
+    def __init__(self, slicer_out, slicer_in, rdimm_mode, par_enable, nphases, nranks):
         # Buffer DFI -------------------------------------------------------------------------------
         cmd_buff = PHYAddressSlicerInput(nphases, nranks)
         self.submodules += _DFIAddressBuffer(slicer_in, cmd_buff)
@@ -201,5 +201,5 @@ class PHYAddressSlicer(Module):
 
         # DDR5 PAR ---------------------------------------------------------------------------------
         self.sync += [
-            phase.par0.eq(reduce(xor, cmd_buff.phases[n_phase].address[7*i:7+7*i]))
+            phase.par0.eq(reduce(xor, cmd_buff.phases[n_phase].address[7*i:7+7*i]) & par_enable)
                     for n_phase, phase in enumerate(slicer_out.phases) for i in range(2)]
