@@ -150,7 +150,8 @@ class DDR5Tests(unittest.TestCase):
         # wait 2 cycles for reset + cycle delay + cmd buffering and slicing + CDC + serialization
         ca_CDC_latency   = self.phy.ca_cdc_min_max_delay[0].sys4x
         self.reset_n_latency: str  = self.xs + 'x' * (self.NPHASES*Serializer.LATENCY) + \
-            '1' * self.NPHASES + '1' * self.NPHASES + '1' * ca_CDC_latency
+            '1' * self.cmd_delay + '1' * ca_CDC_latency
+
         self.ca_latency:       str = self.xs + 'x' * self.NPHASES + self.dfi + \
             'x' * ca_CDC_latency + 'x' * (self.NPHASES*Serializer.LATENCY)
         self.cs_n_latency:     str = self.xs + 'x' * self.NPHASES + self.dfi + \
