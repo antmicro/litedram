@@ -632,7 +632,7 @@ class DDR5PHY(Module, AutoCSR):
                     _cd = getattr(self.sync, per_pin_ca_domain[func][i])
                     _cd += out_sig.eq(sig)
                 else:
-                    self.comb += out_sig.eq(sig)
+                    cd_ca_dom += out_sig.eq(sig)
 
         return PHYAddressSlicerRemap.get_delay(nphases) + PHYAddressSlicer.get_delay(nphases) + nphases//2
 

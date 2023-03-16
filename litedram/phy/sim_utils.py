@@ -592,15 +592,15 @@ class SimpleCDCrWrap(Module, _FIFOInterface):
 
 
 class AsyncFIFOXilinx7(Module):
-    LATENCY=5 # 4 to pass through memory and 1 for output register
-    WCL_LATENCY=5
-    RANDOMIZE=False
+    LATENCY     = 4 # 4 to pass through memory and 1 for output register
+    WCL_LATENCY = 4
+    RANDOMIZE   = False
 
     @classmethod
     def randomize_delay(cls):
-        cls.RANDOMIZE=True
-        cls.LATENCY=5
-        cls.WCL_LATENCY=6
+        cls.RANDOMIZE   = True
+        cls.LATENCY     = 4
+        cls.WCL_LATENCY = 5
 
     def __init__(self, wclk, rclk, randomize=False):
         delay = 4
@@ -618,6 +618,8 @@ class AsyncFIFOXilinx7(Module):
         self.DO = Signal(72)
         self.RDEN = Signal()
         self.EMPTY = Signal(reset=1)
+
+        self._rst = Signal()
 
         wclk_w_cnt = Signal(10)
         rclk_r_cnt = Signal(10)
@@ -653,6 +655,8 @@ class AsyncFIFOXilinx7(Module):
         cd_wclk += [
             If(self.WREN,
                 wclk_w_cnt.eq(wclk_w_cnt+1),
+            ).Elif(self._rst,
+                wclk_w_cnt.eq(0),
             ),
             wclk_r_cnt[0].eq(rclk_r_cnt),
             *[wclk_r_cnt[i+1].eq(wclk_r_cnt[i]) for i in range(delay-2)],
@@ -662,6 +666,8 @@ class AsyncFIFOXilinx7(Module):
         cd_rclk += [
             If(self.RDEN,
                 rclk_r_cnt.eq(rclk_r_cnt+1),
+            ).Elif(self._rst,
+                rclk_r_cnt.eq(0),
             ),
             rclk_w_cnt[0].eq(wclk_w_cnt),
             *[rclk_w_cnt[i+1].eq(rclk_w_cnt[i]) for i in range(delay-2)],

@@ -82,17 +82,25 @@ class DDR5SimPHY(SimSerDesMixin, DDR5PHY):
             des_latency       = Latency(sys=(Deserializer.LATENCY-1 if aligned_reset_zero else Deserializer.LATENCY)),
             phytype           = "DDR5SimPHY",
             with_sub_channels = with_sub_channels,
-            rd_extra_delay    = Latency(sys2x=2),
-            out_CDC_primitive_cls = SimpleCDCWrap,
+            ca_domain         = "sys2x",
+            dq_domain         = {prefix:"sys2x_90" for prefix in prefixes},
+            wr_dqs_domain     = {prefix:"sys2x" for prefix in prefixes},
+            per_pin_ca_domain = None,
+
+            csr_ca_cdc        = cdc_any("sys2x"),
+            csr_dq_rd_cdc     = {prefix: cdc_any("sys") for prefix in prefixes},
+            csr_dq_wr_cdc     = {prefix: cdc_any("sys2x_90") for prefix in prefixes},
+            csr_dqs_cdc       = {prefix: cdc_any("sys2x") for prefix in prefixes},
+
+            out_CDC_CA_primitive_cls = AsyncFIFOXilinx7Wrap,
             ca_cdc_min_max_delay =
-                (Latency(sys2x=SimpleCDCWrap.LATENCY), Latency(sys2x=(SimpleCDCWrap.LATENCY))),
+                (Latency(sys2x=AsyncFIFOXilinx7Wrap.LATENCY), Latency(sys2x=(AsyncFIFOXilinx7Wrap.WCL_LATENCY))),
+
+            out_CDC_primitive_cls = AsyncFIFOXilinx7Wrap,
             wr_cdc_min_max_delay =
-                (Latency(sys2x=SimpleCDCWrap.LATENCY), Latency(sys2x=(SimpleCDCWrap.LATENCY))),
-            ca_domain="sys2x",
-            dq_domain={prefix:"sys2x_90" for prefix in prefixes},
-            wr_dqs_domain={prefix:"sys2x" for prefix in prefixes},
-            csr_dq_cdc={prefix:cdc_any("sys2x_90") for prefix in prefixes},
-            csr_dqs_cdc={prefix:cdc_any("sys2x") for prefix in prefixes},
+                (Latency(sys2x=AsyncFIFOXilinx7Wrap.LATENCY), Latency(sys2x=(AsyncFIFOXilinx7Wrap.LATENCY))),
+
+            rd_extra_delay    = Latency(sys2x=2),
             **kwargs)
 
         # fake delays (make no sense in simulation, but sdram.c expects them)
