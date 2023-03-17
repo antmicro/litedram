@@ -996,8 +996,8 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
         return int(math.ceil(sec * fmax))
 
     reset_sequence = [
-        ("Assert reset", prefixes, 0, 0, 0, "0", ck(3e-6)),
-        ("Assert CS in reset", prefixes, all_cs, 0, 2**4-1, dfii_control_2n, ck(40e-9)),
+        ("Assert reset", prefixes, 0, 0, 0, "0", ck(3e-3)),
+        ("Assert CS in reset", prefixes, all_cs, 0, 2**4-1, dfii_control_2n, ck(40e-6)),
         ("Release reset", prefixes, all_cs, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N",ck(6e-3)),
         ("Release CS", prefixes, 0, 0x3FFF, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(5e-6)),
         # TODO check timing of release CS:
