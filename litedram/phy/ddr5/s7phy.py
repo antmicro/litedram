@@ -169,27 +169,6 @@ class Xilinx7SeriesAsyncFIFOWrap(Module, _FIFOInterface):
             ]
 
 
-class PHYSpecificPS(Module):
-    def __init__(self, idomain, odomain):
-        self.i = Signal()
-        self.o = Signal()
-
-        ###
-
-        toggle_i = Signal(reset_less=True)
-        toggle_i.attr.add("ps_sf")
-        toggle_o = Signal()  # registered reset_less by MultiReg
-        toggle_o_r = Signal(reset_less=True)
-
-        sync_i = getattr(self.sync, idomain)
-        sync_o = getattr(self.sync, odomain)
-
-        sync_i += If(self.i, toggle_i.eq(~toggle_i))
-        self.specials += MultiReg(toggle_i, toggle_o, odomain)
-        sync_o += toggle_o_r.eq(toggle_o)
-        self.comb += self.o.eq(toggle_o ^ toggle_o_r)
-
-
 class S7DDR5PHY(DDR5PHY, S7Common):
     def __init__(self, pads, *, iodelay_clk_freq, with_odelay,
                  with_idelay=True, with_per_dq_idelay=False,
@@ -203,7 +182,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
         def cdc_any(target):
             def new_cdc(i):
                 o = Signal()
-                psync = PHYSpecificPS("sys", target)
+                psync = PulseSynchronizer("sys", target)
                 self.submodules += psync
                 self.comb += [
                     psync.i.eq(i),
