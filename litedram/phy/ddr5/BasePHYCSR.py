@@ -89,6 +89,10 @@ class BasePHYCSR(Module, AutoCSR):
                 setattr(self, prefix+'pardly_rst', CSR(name=prefix+'pardly_rst'))
                 setattr(self, prefix+'pardly_inc', CSR(name=prefix+'pardly_inc'))
 
+                setattr(self, prefix+'csdly', CSRStatus(16, name=prefix+'csdly'))
+                getattr(self, prefix+'csdly').status.attr.add("slow_in")
+                getattr(self, prefix+'csdly').status.attr.add("keep")
+
                 setattr(self, prefix+'cadly', CSRStatus(16, name=prefix+'cadly'))
                 getattr(self, prefix+'cadly').status.attr.add("slow_in")
                 getattr(self, prefix+'cadly').status.attr.add("keep")
