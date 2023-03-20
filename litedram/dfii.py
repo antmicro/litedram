@@ -662,9 +662,6 @@ class DFIInjector(Module, AutoCSR):
                 ddr5_dfi.create_sub_channels()
                 ddr5_dfi.remove_common_signals()
 
-            for prefix in prefixes:
-                setattr(self.submodules, prefix.lower()+"dfisampler",  DFISamplerDDR5(self.master.phases, prefix))
-
             self.comb += [
                 Case(self._control.fields.sel, {
                     # Software Control (through CSRs).
