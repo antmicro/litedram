@@ -59,7 +59,7 @@ class PhaseInjector(Module, AutoCSR):
 # CommandsInjector ------------------------------------------------------------------------------
 
 class CmdInjector(Module, AutoCSR):
-    def __init__(self, phases, masked_writes=False):
+    def __init__(self, phases, force_issue, masked_writes=False):
         num_phases = len(phases)
         assert num_phases > 0
         cs_width = len(phases[0].cs_n)
@@ -95,7 +95,7 @@ class CmdInjector(Module, AutoCSR):
         self._singleshot_phase_signals = Array(Signal(14 + cs_width + 2 + wrdata_mask_width) for _ in range(8)) # BL 16 needs at most 8 DFI transactions (2 for command and 8 for wrdata/rddata)
 
         self.sync += [
-            If(self._issue_command.re & ~self._single_shot.storage,
+            If(((self._issue_command.re | force_issue) & ~self._single_shot.storage),
                 [self._continuous_phase_signals[i].eq(self._continuous_intermediate_store[i]) for i in range(4)]
             )
         ]
@@ -109,7 +109,7 @@ class CmdInjector(Module, AutoCSR):
         singleshot_issue = Signal(2)
 
         self.sync += [
-            If((singleshot_issue == 0) & self._issue_command.re & self._single_shot.storage,
+            If((singleshot_issue == 0) & (self._issue_command.re | force_issue) & self._single_shot.storage,
                 singleshot_issue.eq(1),
             ).Elif((singleshot_issue == 1) & singleshot_counter == singleshot_max-1,
                 singleshot_issue.eq(2),
@@ -444,8 +444,6 @@ class DFIInjector(Module, AutoCSR):
 
             adapters = [DFIPhaseAdapter(phase, masked_writes) for phase in self.intermediate.phases]
             self.submodules += adapters
-
-        if memtype == "DDR5":
             self.master = dfi.Interface(14, 1, nranks, databits, nphases, with_sub_channels)
 
         extra_fields = []
@@ -473,6 +471,9 @@ class DFIInjector(Module, AutoCSR):
             CSRField("reset_n", size=1, description="DFI clock reset bus"),
         ] + extra_fields,
         description="Control DFI signals common to all phases")
+
+        if memtype == "DDR5":
+            self._force_issue = CSR()
 
         if memtype != "DDR5":
             for n, phase in enumerate(csr1_dfi.phases):
@@ -515,7 +516,11 @@ class DFIInjector(Module, AutoCSR):
             ]
 
             for prefix in prefixes:
-                setattr(self.submodules, prefix.lower()+"cmdinjector", CmdInjector(csr2_dfi.get_subchannel(prefix), masked_writes))
+                setattr(self.submodules, prefix.lower()+"cmdinjector",
+                    CmdInjector(
+                        phases=csr2_dfi.get_subchannel(prefix),
+                        force_issue=self._force_issue.re,
+                        masked_writes=masked_writes))
 
             # DRAM controller is not DFI compliant. It creats only single wrdata_en/rddata_en strobe,
             # but DFI requires wrdata_en/rddata_en per each data slice,

@@ -1331,7 +1331,7 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
                                  f"| {ca} << CSR_SDRAM_DFII_{prefix.upper()}CMDINJECTOR_COMMAND_STORAGE_CA_OFFSET);"
                             b += f"sdram_dfii_{prefix}cmdinjector_phase_addr_write({phases});"
                             b += f"sdram_dfii_{prefix}cmdinjector_store_continuous_cmd_write(1);"
-                            b += f"sdram_dfii_{prefix}cmdinjector_issue_command_write(1);"
+                        b += f"sdram_dfii_force_issue_write(1);"
                     else:
                         for prefix in prefixes:
                             b += f"sdram_dfii_{prefix}cmdinjector_command_storage_write(" \
@@ -1341,7 +1341,10 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
                             b += f"sdram_dfii_{prefix}cmdinjector_store_singleshot_cmd_write(1);"
                             if delay == -2:
                                 b += f"sdram_dfii_{prefix}cmdinjector_single_shot_write(1);"
-                                b += f"sdram_dfii_{prefix}cmdinjector_issue_command_write(1);"
+                        if delay == -2:
+                            b += f"sdram_dfii_force_issue_write(1);"
+                        for prefix in prefixes:
+                            if delay == -2:
                                 b += f"sdram_dfii_{prefix}cmdinjector_single_shot_write(0);"
                     b += f"sdram_dfii_control_write({cmd});"
                     if delay > 0:
@@ -1361,7 +1364,7 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
                                  f"| {ca} << CSR_SDRAM_DFII_{prefix.upper()}CMDINJECTOR_COMMAND_STORAGE_CA_OFFSET);"
                             b += f"sdram_dfii_{prefix}cmdinjector_phase_addr_write({phases});"
                             b += f"sdram_dfii_{prefix}cmdinjector_store_continuous_cmd_write(1);"
-                            b += f"sdram_dfii_{prefix}cmdinjector_issue_command_write(1);"
+                        b += f"sdram_dfii_force_issue_write(1);"
                     else:
                         for prefix in prefixes:
                             b += f"sdram_dfii_{prefix}cmdinjector_command_storage_write(" \
@@ -1371,7 +1374,10 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
                             b += f"sdram_dfii_{prefix}cmdinjector_store_singleshot_cmd_write(1);"
                             if delay == -2:
                                 b += f"sdram_dfii_{prefix}cmdinjector_single_shot_write(1);"
-                                b += f"sdram_dfii_{prefix}cmdinjector_issue_command_write(1);"
+                        if delay == -2:
+                            b += f"sdram_dfii_force_issue_write(1);"
+                        for prefix in prefixes:
+                            if delay == -2:
                                 b += f"sdram_dfii_{prefix}cmdinjector_single_shot_write(0);"
                     b += f"sdram_dfii_control_write({cmd});"
                     if delay > 0:
