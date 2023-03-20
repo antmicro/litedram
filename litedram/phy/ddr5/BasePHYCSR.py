@@ -17,6 +17,7 @@ class BasePHYCSR(Module, AutoCSR):
         self._enable_fifos = CSRStorage(reset=0)
         self._rst           = CSRStorage(1)
         self._rst.storage.attr.add("slow_ff")
+        self._rst.storage.attr.add("keep")
         self._rdimm_mode    = CSRStorage()
         self._rdimm_mode.storage.attr.add("slow_ff")
         self._rdimm_mode.storage.attr.add("keep")
