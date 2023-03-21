@@ -464,11 +464,11 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                 dout = _output,
                 rst  = rst_sig,
                 inc  = inc_sig,
-                clk  = cd_out[0],
+                clk  = "sys",
             )
         return _output, _tri_state
 
-    def handle_iser(self, cd_in, in_sig, *, inc_sig=None, rst_sig=None, idelay_cd=None):
+    def handle_iser(self, cd_in, in_sig, *, inc_sig=None, rst_sig=None):
         _input = Signal()
         _delayed_input = Signal()
         self.idelaye2(
@@ -477,7 +477,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
             rst  = rst_sig,
             inc  = inc_sig,
             init = self.max_delay_taps-1,
-            clk  = cd_in[0] if idelay_cd is None else idelay_cd,
+            clk  = "sys",
             dec  = True,
         )
 
@@ -532,7 +532,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
 
         inc_sig, rst_sig = None, None
         if self.with_odelay and pin in self.pin_csr_mapping:
-            inc_sig, rst_sig = self.get_out_inc_rst(pin, offset=offset, cd=cd_out[0])
+            inc_sig, rst_sig = self.get_out_inc_rst(pin, offset=offset, cd="sys")
 
         to_pad, to_pad_oe = self.handle_oser(
             cd_out, out_sig, oe_sig=oe_sig, inc_sig=inc_sig, rst_sig=rst_sig)
@@ -545,7 +545,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
     def handle_i(self, cd_in, in_sig, pin, *, offset=None):
         pad_t, pad_c = self.get_pads(pin, offset=offset)
 
-        inc_sig, rst_sig = self.get_in_inc_rst(pin, offset=offset, cd=cd_in[0])
+        inc_sig, rst_sig = self.get_in_inc_rst(pin, offset=offset, cd="sys")
         from_pad = self.handle_iser(
             cd_in=cd_in, in_sig=in_sig, inc_sig=inc_sig, rst_sig=rst_sig)
 
@@ -559,14 +559,14 @@ class S7DDR5PHY(DDR5PHY, S7Common):
 
         inc_sig, rst_sig = None, None
         if self.with_odelay and pin in self.pin_csr_mapping:
-            inc_sig, rst_sig = self.get_out_inc_rst(pin, offset=offset, cd=cd_out[0])
+            inc_sig, rst_sig = self.get_out_inc_rst(pin, offset=offset, cd="sys")
 
         to_pad, to_pad_oe = self.handle_oser(
             cd_out=cd_out, out_sig=out_sig, oe_sig=oe_sig, inc_sig=inc_sig, rst_sig=rst_sig)
 
-        inc_sig, rst_sig = self.get_in_inc_rst(pin, offset=offset, cd=cd_out[0])
+        inc_sig, rst_sig = self.get_in_inc_rst(pin, offset=offset, cd="sys")
         from_pad = self.handle_iser(
-            cd_in=cd_in, in_sig=in_sig, inc_sig=inc_sig, rst_sig=rst_sig, idelay_cd=cd_out[0])
+            cd_in=cd_in, in_sig=in_sig, inc_sig=inc_sig, rst_sig=rst_sig)
 
         if pad_c is not None:
             self.handle_diff(pad_t, pad_c, out_sig=to_pad, oe_sig=to_pad_oe, in_sig=from_pad)
