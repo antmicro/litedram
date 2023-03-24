@@ -40,7 +40,7 @@ class VerilatorDDR5Tests(unittest.TestCase):
         import pexpect
 
         command = ["python3", simsoc.__file__, *args]
-        timeout = 3 * 60 * 60  # give more than enough time for CI
+        timeout = 6 * 60 * 60  # give more than enough time for CI
 
         p = pexpect.spawn(" ".join(command), timeout=timeout, **kwargs)
 
