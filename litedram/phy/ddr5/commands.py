@@ -27,6 +27,17 @@ class SpecialCmd(enum.IntEnum):
     MRR = 1
 
 @enum.unique
+class CMD(enum.IntEnum):
+    """
+        Op codes for DDR5 commands
+    """
+
+    MPC       = 0b01111    # MPC command prefix
+    VREF      = 0b00011    # VrefCA/VrefCS
+    MRW       = 0b00101    # MRW
+    NOP       = 0b11111    # NOP
+
+@enum.unique
 class MPC(enum.IntEnum):
     """Op codes for DDR5 multipurpose command
 
@@ -36,6 +47,7 @@ class MPC(enum.IntEnum):
 
     CS_EX     = 0b00000000 # Exit CS training mode
     CS_EN     = 0b00000001 # Enter CS training mode
+    DLL_SET   = 0b10000000 # Set DLL, "or" new value with this enum
     DLL_RST   = 0b00000010
     CA_EN     = 0b00000011 # Enter CA training mode
     ZQC_LATCH = 0b00000100

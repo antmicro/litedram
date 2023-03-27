@@ -864,7 +864,7 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
         (0, 3, 0b000)
     ])
 
-    from litedram.phy.ddr5.commands import SpecialCmd, MPC
+    from litedram.phy.ddr5.commands import SpecialCmd, MPC, CMD
 
     if not phy_settings.with_sub_channels:
         prefixes = [""]
@@ -887,47 +887,47 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
     def cmd_vca():
         op = mr[11]&0x3f
         cmds = []
-        cmds.append(("Set CA Vref", prefixes, 0, 0x3|(op<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1)),
-        cmds.append(("Set CA Vref", prefixes, all_cs, 0x3|(op<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2)),
-        cmds.append(("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1)),
-        cmds.append(("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
+        cmds.append(("Set CA Vref",       prefixes, 0,      CMD.VREF | (op<<5), 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N",  10)),
+        cmds.append(("Set CA Vref",       prefixes, all_cs, CMD.VREF | (op<<5), 2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -2)),
+        cmds.append(("Reset Single Shot", prefixes, 0,      0,                  2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1)),
+        cmds.append(("Zeros",             prefixes, 0,      0,                  2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
         return cmds
 
     def cmd_vcs():
         op = (mr[12]&0x3f)|0x80
         cmds = []
-        cmds.append(("Set CS Vref", prefixes, 0, 0x3|(op<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1)),
-        cmds.append(("Set CS Vref", prefixes, all_cs, 0x3|(op<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2)),
-        cmds.append(("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1)),
-        cmds.append(("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
+        cmds.append(("Set CS Vref",       prefixes, 0,      CMD.VREF | (op<<5), 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N",  10)),
+        cmds.append(("Set CS Vref",       prefixes, all_cs, CMD.VREF | (op<<5), 2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -2)),
+        cmds.append(("Reset Single Shot", prefixes, 0,      0,                  2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1)),
+        cmds.append(("Zeros",             prefixes, 0,      0,                  2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
         return cmds
 
     if phy_settings.direct_control:
         def cmd_ck_odt():
             op = (mr[32]&0x7) | 0x4<<3
             cmds = []
-            cmds.append(("Set RTT_CK", prefixes, 0, 0xf|(op<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1)),
-            cmds.append(("Set RTT_CK", prefixes, all_cs, 0xf|(op<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2)),
-            cmds.append(("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1)),
-            cmds.append(("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
+            cmds.append(("Set RTT_CK",        prefixes, 0,      CMD.MPC | (op<<5), 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N",  10)),
+            cmds.append(("Set RTT_CK",        prefixes, all_cs, CMD.MPC | (op<<5), 2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -2)),
+            cmds.append(("Reset Single Shot", prefixes, 0,      0,                 2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1)),
+            cmds.append(("Zeros",             prefixes, 0,      0,                 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
             return cmds
 
         def cmd_cs_odt():
             op = ((mr[32]&0x38)>>3) | 0x6<<3
             cmds = []
-            cmds.append(("Set RTT_CS", prefixes, 0, 0xf|(op<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1)),
-            cmds.append(("Set RTT_CS", prefixes, all_cs, 0xf|(op<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2)),
-            cmds.append(("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1)),
-            cmds.append(("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
+            cmds.append(("Set RTT_CS",        prefixes, 0,      CMD.MPC | (op<<5), 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N",  10)),
+            cmds.append(("Set RTT_CS",        prefixes, all_cs, CMD.MPC | (op<<5), 2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -2)),
+            cmds.append(("Reset Single Shot", prefixes, 0,      0,                 2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1)),
+            cmds.append(("Zeros",             prefixes, 0,      0,                 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
             return cmds
 
         def cmd_ca_odt():
             op = (mr[33]&0x7) | 0x8<<3
             cmds = []
-            cmds.append(("Set RTT_CA", prefixes, 0, 0xf|(op<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1)),
-            cmds.append(("Set RTT_CA", prefixes, all_cs, 0xf|(op<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2)),
-            cmds.append(("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1)),
-            cmds.append(("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
+            cmds.append(("Set RTT_CA",        prefixes, 0,      CMD.MPC | (op<<5), 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N",  10)),
+            cmds.append(("Set RTT_CA",        prefixes, all_cs, CMD.MPC | (op<<5), 2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -2)),
+            cmds.append(("Reset Single Shot", prefixes, 0,      0,                 2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1)),
+            cmds.append(("Zeros",             prefixes, 0,      0,                 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
             return cmds
 
     else:
@@ -941,19 +941,19 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
     def cmd_dqs_odt():
         op = ((mr[33]&0x38)>>3) | (0b01010<<3)
         cmds = []
-        cmds.append(("Set DQS_RTT_PARK", prefixes, 0, 0xf|(op<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1)),
-        cmds.append(("Set DQS_RTT_PARK", prefixes, all_cs, 0xf|(op<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2)),
-        cmds.append(("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1)),
-        cmds.append(("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
+        cmds.append(("Set DQS_RTT_PARK",  prefixes, 0,      CMD.MPC | (op<<5), 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N",  10)),
+        cmds.append(("Set DQS_RTT_PARK",  prefixes, all_cs, CMD.MPC | (op<<5), 2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -2)),
+        cmds.append(("Reset Single Shot", prefixes, 0,      0,                 2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1)),
+        cmds.append(("Zeros",             prefixes, 0,      0,                 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
         return cmds
 
     def cmd_load_vref_odt():
         op = 0x1f
         cmds = []
-        cmds.append(("Load CA, CS Vrefs", prefixes, 0, 0xf|(op<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1)),
-        cmds.append(("Load CA, CS Vrefs", prefixes, all_cs, 0xf|(op<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2)),
-        cmds.append(("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1)),
-        cmds.append(("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
+        cmds.append(("Load CA, CS Vrefs", prefixes, 0,      CMD.MPC | (op<<5), 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N",  10)),
+        cmds.append(("Load CA, CS Vrefs", prefixes, all_cs, CMD.MPC | (op<<5), 2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -2)),
+        cmds.append(("Reset Single Shot", prefixes, 0,      0,                 2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1)),
+        cmds.append(("Zeros",             prefixes, 0,      0,                 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
         return cmds
 
     def cmd_mr_2n(ma):
@@ -962,14 +962,14 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
         assert ma < 2**8, "MR address too big: {}".format(ma)
         assert op < 2**8, "MR opcode too big: {}".format(op)
         # we are running in 2N mode
-        CA = [5 | (ma << 5), op]
+        CA = [CMD.MRW | (ma << 5), op]
         cmds = []
-        cmds.append((f"Load Mode Register {ma}", prefixes, all_cs, CA[0], 1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1))
-        cmds.append((f"Load Mode Register {ma}", prefixes, 0, CA[0], 2, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1))
-        cmds.append((f"Load Mode Register {ma}", prefixes, 0, CA[1], 4|8, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1))
-        cmds.append((f"Issue load mode register command", prefixes, 0, 0, 0, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2))
-        cmds.append(("Reset Single Shot", prefixes, 0, 0, all_phases, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1))
-        cmds.append((f"Wait after load mode register command", prefixes, 0, 0, 0, dfii_control_2n+"|DFII_CONTROL_RESET_N", 200))
+        cmds.append((f"Load Mode Register {ma}", prefixes, all_cs, CA[0], 1,          dfii_control_2n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Load Mode Register {ma}", prefixes, 0,      CA[0], 2,          dfii_control_2n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Load Mode Register {ma}", prefixes, 0,      CA[1], 4|8,        dfii_control_2n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Issue MRW command",       prefixes, 0,      0,     0,          dfii_control_2n+"|DFII_CONTROL_RESET_N", -2))
+        cmds.append(("Reset Single Shot",        prefixes, 0,      0,     all_phases, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Wait after MRW command",  prefixes, 0,      0,     0,          dfii_control_2n+"|DFII_CONTROL_RESET_N",  200))
 
         return cmds
 
@@ -979,14 +979,14 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
         assert ma < 2**8, "MR address too big: {}".format(ma)
         assert op < 2**8, "MR opcode too big: {}".format(op)
         # we are running in 2N mode
-        CA = [5 | (ma << 5), op]
+        CA = [CMD.MRW | (ma << 5), op]
         cmds = []
-        cmds.append((f"Load Mode Register {ma}", prefixes, all_cs, CA[0], 1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1))
-        cmds.append((f"Load Mode Register {ma}", prefixes, 0, CA[1], 2, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1))
-        cmds.append((f"Load Mode Register {ma}", prefixes, 0, CA[1], 4|8, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1))
-        cmds.append((f"Issue load mode register command", prefixes, 0, 0, 0, dfii_control_1n+"|DFII_CONTROL_RESET_N", -2))
-        cmds.append(("Reset Single Shot", prefixes, 0, 0, all_phases, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1))
-        cmds.append((f"Wait after load mode register command", prefixes, 0, 0, 0, dfii_control_1n+"|DFII_CONTROL_RESET_N", 200))
+        cmds.append((f"Load Mode Register {ma}", prefixes, all_cs, CA[0], 1,          dfii_control_1n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Load Mode Register {ma}", prefixes, 0,      CA[1], 2,          dfii_control_1n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Load Mode Register {ma}", prefixes, 0,      CA[1], 4|8,        dfii_control_1n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Issue MRW command",       prefixes, 0,      0,     0,          dfii_control_1n+"|DFII_CONTROL_RESET_N", -2))
+        cmds.append(("Reset Single Shot",        prefixes, 0,      0,     all_phases, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Wait after MRW command",  prefixes, 0,      0,     0,          dfii_control_1n+"|DFII_CONTROL_RESET_N",  200))
 
         return cmds
 
@@ -996,39 +996,41 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
         return int(math.ceil(sec * fmax))
 
     reset_sequence = [
-        ("Assert reset", prefixes, 0, 0, 0, "0", ck(3e-3)),
-        ("Assert CS in reset", prefixes, all_cs, 0, 2**4-1, dfii_control_2n, ck(40e-6)),
-        ("Release reset", prefixes, all_cs, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N",ck(6e-3)),
-        ("Release CS", prefixes, 0, 0x3FFF, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(5e-6)),
+        ("Assert reset",       prefixes, 0,      0,      0,      "0",                                     ck(3e-3)),
+        ("Assert CS in reset", prefixes, all_cs, 0,      2**4-1, dfii_control_2n,                         ck(40e-6)),
+        ("Release reset",      prefixes, all_cs, 0,      2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(6e-3)),
+        ("Release CS",         prefixes, 0,      0x3FFF, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(5e-6)),
         # TODO check timing of release CS:
         # 3u means 11u
         # 4u means 15u
     ]
 
+    dram_start_sequene = [
+        ("NOPs",     prefixes, all_cs, CMD.NOP, 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(50)),
+        ("NOPs end", prefixes, 0,      CMD.NOP, 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", 3),
+        ("Zeros",    prefixes, 0,      0,       2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(1e-6)),
+    ]
+
     setup_dram_mrs_sequence = [
-        ("NOPs", prefixes, all_cs, 0x1F, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 3),
-        ("NOPs end", prefixes, 0, 0x1F, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 3),
-        ("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(1e-6)),
+        ("Setup MR13",        prefixes, 0,           CMD.MPC | ((MPC.DLL_SET | 0)<<5), 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(50)),
+        ("Setup MR13",        prefixes, "(1<<rank)", CMD.MPC | ((MPC.DLL_SET | 0)<<5), 2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -2),
+        ("Reset Single Shot", prefixes, 0,           0,                                2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1),
+        ("Zeros",             prefixes, 0,           0,                                2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(1e-6)),
 
-        ("Setup MR13", prefixes, 0, 0xf|(((0b1000<<4)|0)<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1),
-        ("Setup MR13", prefixes, all_cs, 0xf|(((0b1000<<4)|0)<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2),
-        ("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1),
-        ("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(1e-6)),
+        ("Reset DLL",         prefixes, 0,           CMD.MPC | (MPC.DLL_RST<<5), 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(50)),
+        ("Reset DLL",         prefixes, "(1<<rank)", CMD.MPC | (MPC.DLL_RST<<5), 2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -2),
+        ("Reset Single Shot", prefixes, 0,           0,                          2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1),
+        ("Zeros",             prefixes, 0,           0,                          2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", 1024),
 
-        ("Reset DLL", prefixes, 0, 0xf|(MPC.DLL_RST<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1),
-        ("Reset DLL", prefixes, all_cs, 0xf|(MPC.DLL_RST<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2),
-        ("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1),
-        ("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1024),
+        ("ZQ Calibration start", prefixes, 0,           CMD.MPC | (MPC.ZQC_START<<5), 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(50)),
+        ("ZQ Calibration start", prefixes, "(1<<rank)", CMD.MPC | (MPC.ZQC_START<<5), 2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -2),
+        ("Reset Single Shot",    prefixes, 0,           0,                            2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1),
+        ("Zeros",                prefixes, 0,           0,                            2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(10e-6)),
 
-        ("ZQ Calibration start", prefixes, 0, 0xf|(MPC.ZQC_START<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1),
-        ("ZQ Calibration start", prefixes, all_cs, 0xf|(MPC.ZQC_START<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2),
-        ("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1),
-        ("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(10e-6)),
-
-        ("ZQ Calibration latch", prefixes, 0, 0xf|(MPC.ZQC_LATCH<<5), 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", 1),
-        ("ZQ Calibration latch", prefixes, all_cs, 0xf|(MPC.ZQC_LATCH<<5), 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -2),
-        ("Reset Single Shot", prefixes, 0, 0, 2**8-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1),
-        ("Zeros", prefixes, 0, 0, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", max(8, ck(30e-9))),
+        ("ZQ Calibration latch", prefixes, 0,           CMD.MPC | (MPC.ZQC_LATCH<<5), 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(50)),
+        ("ZQ Calibration latch", prefixes, "(1<<rank)", CMD.MPC | (MPC.ZQC_LATCH<<5), 2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -2),
+        ("Reset Single Shot",    prefixes, 0,           0,                            2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1),
+        ("Zeros",                prefixes, 0,           0,                            2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", max(8, ck(30e-9))),
     ]
     setup_dram_mrs_sequence.extend(cmd_vca())
     setup_dram_mrs_sequence.extend(cmd_vcs())
@@ -1047,7 +1049,7 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
     for cmds in (cmd_mr_1n(ma) for ma in sorted(mr.keys()) if ma not in [11, 12, 13, 32, 33]):
         init_sequence_1n.extend(cmds)
 
-    return reset_sequence, setup_dram_mrs_sequence, (init_sequence_1n, init_sequence_2n), mr
+    return reset_sequence, dram_start_sequene, setup_dram_mrs_sequence, (init_sequence_1n, init_sequence_2n), mr
 
 # Init Sequence ------------------------------------------------------------------------------------
 
@@ -1262,7 +1264,8 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
     if phy_settings.memtype != "DDR5":
         init_sequence, mr = get_sdram_phy_init_sequence(phy_settings, timing_settings)
     else:
-        reset_sequence, setup_dram_mrs_sequence, init_sequence, mr = get_sdram_phy_init_sequence(phy_settings, timing_settings)
+        reset_sequence, dram_start_sequene, setup_dram_mrs_sequence, init_sequence, mr = \
+            get_sdram_phy_init_sequence(phy_settings, timing_settings)
 
     if phy_settings.memtype in ["DDR3", "DDR4"]:
         # The value of MR1[7] needs to be modified during write leveling
@@ -1319,7 +1322,8 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
     else:
         for signature, sequence in [
             ("static inline void reset_sequence(void)", reset_sequence),
-            ("static inline void setup_dram_mrs_sequence(void)", setup_dram_mrs_sequence),
+            ("static inline void dram_start_sequence(void)", dram_start_sequene),
+            ("static inline void setup_dram_mrs_sequence(int rank)", setup_dram_mrs_sequence),
         ]:
             with r.block(signature) as b:
                 for comment, prefixes, cs, ca, phases, cmd, delay in sequence:
@@ -1466,7 +1470,7 @@ def get_sdram_phy_py_header(phy_settings, timing_settings):
     if phy_settings.memtype != "DDR5":
         init_sequence, mr = get_sdram_phy_init_sequence(phy_settings, timing_settings)
     else:
-        reset_sequence, setup_dram_mrs_sequence, init_sequence, mr = get_sdram_phy_init_sequence(phy_settings, timing_settings)
+        reset_sequence, dram_start_sequene, setup_dram_mrs_sequence, init_sequence, mr = get_sdram_phy_init_sequence(phy_settings, timing_settings)
 
     if mr is not None and 1 in mr:
         r += "ddrx_mr1 = 0x{:x}\n".format(mr[1])
