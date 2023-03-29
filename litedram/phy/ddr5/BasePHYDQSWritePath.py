@@ -111,6 +111,7 @@ class BasePHYWritePathDQS(Module):
             ).Elif(CSRs['dly_sel'] & CSRs['ck_wdly_rst'],
                 wr_delay.eq(wr_reset_value),
             ),
+            CSRs['ck_wdly_dqs'].eq(wr_delay),
         ]
 
         self.comb += [

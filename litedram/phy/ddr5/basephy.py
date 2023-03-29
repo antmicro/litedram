@@ -392,10 +392,14 @@ class DDR5PHY(Module, AutoCSR):
 
             for nibble in range(nibbles):
                 # Read Path ------------------------------------------------------------------------
+                rd_dq_cnt = Signal(16)
+                rd_preamble_cnt = Signal(16)
                 _csr = {}
                 _csr['dly_sel'] = CSRs[prefix+'dly_sel'].storage[nibble]
                 _csr['ck_rdly_inc'] = CSRs[prefix+'ck_rdly_inc'].re
                 _csr['ck_rdly_rst'] = CSRs[prefix+'ck_rdly_rst'].re
+                _csr['ck_rddly_dq'] = rd_dq_cnt
+                _csr['ck_rddly_preamble'] = rd_preamble_cnt
                 _csr['preamble'] = CSRs[prefix+'preamble'].status
                 _csr['wlevel_en'] = CSRs[prefix+'wlevel_en'].storage
 
@@ -419,6 +423,12 @@ class DDR5PHY(Module, AutoCSR):
                     CSRs=_csr,
                     default_read_latency=default_read_latency,
                 )
+                self.sync += [
+                    If(CSRs[prefix+'dly_sel'].storage[nibble],
+                        CSRs[prefix+'ck_rddly_dq'].status.eq(rd_dq_cnt),
+                        CSRs[prefix+'ck_rddly_preamble'].status.eq(rd_preamble_cnt),
+                    ),
+                ]
 
                 rddata_start = nibble*8
                 rddata_end   = (nibble+1)*8
@@ -443,10 +453,12 @@ class DDR5PHY(Module, AutoCSR):
 
                 # Write Path -----------------------------------------------------------------------
                 # DQS ------------------------------------------------------------------------------
+                wr_dqs_cnt = Signal(16)
                 _csr = {}
                 _csr['dly_sel'] = CSRs[prefix+'dly_sel'].storage[nibble]
                 _csr['ck_wdly_inc'] = CDCCSRs[prefix+'ck_wdly_inc']
                 _csr['ck_wdly_rst'] = CDCCSRs[prefix+'ck_wdly_rst']
+                _csr['ck_wdly_dqs'] = wr_dqs_cnt
                 _csr['wlevel_en'] = CSRs[prefix+'wlevel_en'].storage
 
                 out = BasePHYWritePathDQSOutput(nphases//2)
@@ -457,6 +469,12 @@ class DDR5PHY(Module, AutoCSR):
                         SyncFIFO_cls=SyncFIFO_cls,
                    )
                 )
+                self.sync += [
+                    If(CSRs[prefix+'dly_sel'].storage[nibble],
+                        CSRs[prefix+'ck_wdly_dqs'].status.eq(wr_dqs_cnt),
+                    ),
+                ]
+
                 self.comb += [
                     getattr(self.out, prefix+'dqs_t_o')[nibble].eq(out.dqs_t_o),
                     getattr(self.out, prefix+'dqs_c_o')[nibble].eq(out.dqs_c_o),
@@ -464,10 +482,12 @@ class DDR5PHY(Module, AutoCSR):
                 ]
 
                 # DQ -------------------------------------------------------------------------------
+                wr_dq_cnt = Signal(16)
                 _csr = {}
                 _csr['dly_sel'] = CSRs[prefix+'dly_sel'].storage[nibble]
                 _csr['ck_wddly_inc'] = CDCCSRs[prefix+'ck_wddly_inc']
                 _csr['ck_wddly_rst'] = CDCCSRs[prefix+'ck_wddly_rst']
+                _csr['ck_wdly_dq'] = wr_dq_cnt
                 _csr['wlevel_en'] = CSRs[prefix+'wlevel_en'].storage
 
                 wrdata_start = nibble*8
@@ -536,6 +556,12 @@ class DDR5PHY(Module, AutoCSR):
                         dq_dqs_ratio=4,
                     )
                 )
+                self.sync += [
+                    If(CSRs[prefix+'dly_sel'].storage[nibble],
+                        CSRs[prefix+'ck_wdly_dq'].status.eq(wr_dq_cnt),
+                    ),
+                ]
+
                 if nibble % 2 == 0 and nibbles % 2 == 0:
                     _csr['dly_sel'] = reduce(and_, CSRs[prefix+'dly_sel'].storage[nibble:nibble+2])
                     self.submodules += ClockDomainsRenamer(dq_domain[prefix])(

@@ -71,11 +71,23 @@ class BasePHYCSR(Module, AutoCSR):
 
             setattr(self, prefix+'ck_rdly_inc', CSR(name=prefix+'ck_rdly_inc'))
             setattr(self, prefix+'ck_rdly_rst', CSR(name=prefix+'ck_rdly_rst'))
+            setattr(self, prefix+'ck_rddly_dq', CSRStatus(16, name=prefix+'ck_rddly'))
+            getattr(self, prefix+'ck_rddly_dq').status.attr.add("slow_in")
+            getattr(self, prefix+'ck_rddly_dq').status.attr.add("keep")
+            setattr(self, prefix+'ck_rddly_preamble', CSRStatus(16, name=prefix+'ck_rddly_preamble'))
+            getattr(self, prefix+'ck_rddly_preamble').status.attr.add("slow_in")
+            getattr(self, prefix+'ck_rddly_preamble').status.attr.add("keep")
+
             setattr(self, prefix+'ck_wdly_inc', CSR(name=prefix+'ck_wdly_inc'))
             setattr(self, prefix+'ck_wdly_rst', CSR(name=prefix+'ck_wdly_rst'))
+            setattr(self, prefix+'ck_wdly_dqs', CSRStatus(16, name=prefix+'ck_wdly_dqs'))
+            getattr(self, prefix+'ck_wdly_dqs').status.attr.add("slow_in")
+            getattr(self, prefix+'ck_wdly_dqs').status.attr.add("keep")
             setattr(self, prefix+'ck_wddly_inc', CSR(name=prefix+'ck_wddly_inc'))
             setattr(self, prefix+'ck_wddly_rst', CSR(name=prefix+'ck_wddly_rst'))
-
+            setattr(self, prefix+'ck_wdly_dq', CSRStatus(16, name=prefix+'ck_wdly_dq'))
+            getattr(self, prefix+'ck_wdly_dq').status.attr.add("slow_in")
+            getattr(self, prefix+'ck_wdly_dq').status.attr.add("keep")
 
             if with_per_dq_idelay :
                 setattr(self, prefix+'dq_dly_sel', CSRStorage(dq_dqs_ratio, name=prefix+'dq_dly_sel'))

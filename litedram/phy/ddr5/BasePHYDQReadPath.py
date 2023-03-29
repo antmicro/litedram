@@ -101,6 +101,7 @@ class BasePHYDQReadPath(Module):
             ).Elif(CSRs['dly_sel'] & CSRs['ck_rdly_rst'],
                 rd_delay.eq(rd_reset_value),
             ),
+            CSRs['ck_rddly_dq'].eq(rd_delay),
             rd_index_plus.eq(rd_index + 1),
         ]
 
@@ -220,6 +221,7 @@ class _BasePHYDQSPreambleReadPath(Module):
             ).Elif(CSRs['dly_sel'] & CSRs['ck_rdly_rst'],
                 rd_preamble.eq(reset_value),
             ),
+            CSRs['ck_rddly_preamble'].eq(rd_preamble),
             rd_preamble_p_index.eq(rd_preamble_index + 1),
         ]
         self.comb += [

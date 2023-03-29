@@ -72,6 +72,7 @@ class BasePHYDQWritePath(Module):
             ).Elif(CSRs['dly_sel'] & CSRs['ck_wddly_rst'],
                 wr_data_delay.eq(wr_reset_value + 2),
             ),
+            CSRs['ck_wdly_dq'].eq(wr_data_delay),
         ]
 
         self.sync += [
