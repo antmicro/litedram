@@ -543,6 +543,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
         to_pad, to_pad_oe, delay_state = self.handle_oser(
             cd_out, out_sig, oe_sig=oe_sig, inc_sig=inc_sig, rst_sig=rst_sig)
 
+        offset = offset if offset else 0
         if self.with_odelay:
             if "ca" == _pin_func:
                 self.sync += [
