@@ -458,19 +458,23 @@ class S7DDR5PHY(DDR5PHY, S7Common):
             clk     = cd_out[1],
             rst_sig = self.pin_csr_mapping["rst_NOT_PIN"],
         )
+        delay_state = None
         if _with_odelay:
+            delay_state = Signal(5)
             self.odelaye2(
                 din  = delay,
                 dout = _output,
                 rst  = rst_sig,
                 inc  = inc_sig,
                 clk  = "sys",
+                cnt_value_out = delay_state,
             )
-        return _output, _tri_state
+        return _output, _tri_state, delay_state
 
     def handle_iser(self, cd_in, in_sig, *, inc_sig=None, rst_sig=None):
         _input = Signal()
         _delayed_input = Signal()
+        delay_state = Signal(5)
         self.idelaye2(
             din  = _input,
             dout = _delayed_input,
@@ -479,6 +483,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
             init = self.max_delay_taps-1,
             clk  = "sys",
             dec  = True,
+            cnt_value_out = delay_state,
         )
 
         self.iserdese2_ddr(
@@ -488,7 +493,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
             clkdiv = cd_in[0],
             rst_sig = self.pin_csr_mapping["rst_NOT_PIN"],
         )
-        return _input
+        return _input, delay_state
 
     def get_pads(self, pin, *, offset=None):
         if offset is None:
@@ -534,8 +539,23 @@ class S7DDR5PHY(DDR5PHY, S7Common):
         if self.with_odelay and pin in self.pin_csr_mapping:
             inc_sig, rst_sig = self.get_out_inc_rst(pin, offset=offset, cd="sys")
 
-        to_pad, to_pad_oe = self.handle_oser(
+        prefix, _pin_func = ("", pin) if len(self.prefixes) == 1 else (pin[:2], pin[2:])
+        to_pad, to_pad_oe, delay_state = self.handle_oser(
             cd_out, out_sig, oe_sig=oe_sig, inc_sig=inc_sig, rst_sig=rst_sig)
+
+        if self.with_odelay:
+            if "ca" == _pin_func:
+                self.sync += [
+                    If(self.CSRs[prefix+'dly_sel'].storage[offset],
+                        self.CSRs[prefix+'cadly'].status.eq(delay_state),
+                    ),
+                ]
+            elif "cs_n" == _pin_func:
+                self.sync += [
+                    If(self.CSRs[prefix+'dly_sel'].storage[offset],
+                        self.CSRs[prefix+'csdly'].status.eq(delay_state),
+                    ),
+                ]
 
         if pad_c is not None:
             self.handle_diff(pad_t, pad_c, out_sig=to_pad, oe_sig=to_pad_oe)
@@ -546,7 +566,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
         pad_t, pad_c = self.get_pads(pin, offset=offset)
 
         inc_sig, rst_sig = self.get_in_inc_rst(pin, offset=offset, cd="sys")
-        from_pad = self.handle_iser(
+        from_pad, delay_state = self.handle_iser(
             cd_in=cd_in, in_sig=in_sig, inc_sig=inc_sig, rst_sig=rst_sig)
 
         if pad_c is not None:
@@ -561,12 +581,40 @@ class S7DDR5PHY(DDR5PHY, S7Common):
         if self.with_odelay and pin in self.pin_csr_mapping:
             inc_sig, rst_sig = self.get_out_inc_rst(pin, offset=offset, cd="sys")
 
-        to_pad, to_pad_oe = self.handle_oser(
+        prefix, _pin_func = ("", pin) if len(self.prefixes) == 1 else (pin[:2], pin[2:])
+        to_pad, to_pad_oe, odelay_state = self.handle_oser(
             cd_out=cd_out, out_sig=out_sig, oe_sig=oe_sig, inc_sig=inc_sig, rst_sig=rst_sig)
 
         inc_sig, rst_sig = self.get_in_inc_rst(pin, offset=offset, cd="sys")
-        from_pad = self.handle_iser(
+        from_pad, idelay_state = self.handle_iser(
             cd_in=cd_in, in_sig=in_sig, inc_sig=inc_sig, rst_sig=rst_sig)
+
+        offset = offset if offset else 0
+        if "dq" == _pin_func:
+            if offset%self.dq_dqs_ratio == 0:
+                self.sync += [
+                    If(self.CSRs[prefix+'dly_sel'].storage[offset//self.dq_dqs_ratio],
+                        self.CSRs[prefix+'rdly_dq'].status.eq(idelay_state),
+                    ),
+                ]
+                if self.with_odelay:
+                    self.sync += [
+                        If(self.CSRs[prefix+'dly_sel'].storage[offset//self.dq_dqs_ratio],
+                            self.CSRs[prefix+'wdly_dq'].status.eq(odelay_state),
+                        ),
+                    ]
+        elif "dqs" in _pin_func:
+            self.sync += [
+                If(self.CSRs[prefix+'dly_sel'].storage[offset],
+                    self.CSRs[prefix+'rdly_dqs'].status.eq(idelay_state),
+                ),
+            ]
+            if self.with_odelay:
+                self.sync += [
+                    If(self.CSRs[prefix+'dly_sel'].storage[offset//self.dq_dqs_ratio],
+                        self.CSRs[prefix+'wdly_dqs'].status.eq(odelay_state),
+                    ),
+                ]
 
         if pad_c is not None:
             self.handle_diff(pad_t, pad_c, out_sig=to_pad, oe_sig=to_pad_oe, in_sig=from_pad)
