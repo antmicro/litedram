@@ -1488,6 +1488,26 @@ class M329R8GA0BB0(DDR5RegisteredModule):
     }
     speedgrade_timings["default"] = speedgrade_timings["4800"]
 
+class MTC10F1084S1RC(DDR5RegisteredModule):
+    #geometry
+    ngroupbanks = 4
+    ngroups     = 8
+    nbanks      = ngroups * ngroupbanks
+    nrows       = 2 ** 16
+    ncols       = 2 ** 10
+    # timings
+    trefi = {"1x": 32e6/8192, "2x": (32e6/8192)/2}
+    trfc  = {"1x": 295, "2x": 160}
+
+    # TODO: tZQCS - performing ZQC during runtime will require modifying Refresher, as ZQC has to be done in 2 phases
+    # 1. ZQCAL START is issued 2. ZQCAL LATCH updates the values, the time START->LATCH tZQCAL=1us, so we cannot block
+    # the controller during this time, after ZQCAL LATCH we have to wait tZQLAT=max(8ck, 30ns)
+    technology_timings = _TechnologyTimings(tREFI=trefi, tWTR=(16, 10), tCCD=(32, 20), tRRD=(8, 5), tZQCS=None)
+    speedgrade_timings = {
+        "4800": _SpeedgradeTimings(tRP=16, tRCD=16, tWR=30, tRFC=trfc, tFAW=(32, 13.333), tRAS=32),  # TODO: tRAS_max
+    }
+    speedgrade_timings["default"] = speedgrade_timings["4800"]
+
 class DDR5SimX8(MT60B2G8HB48B):
     # modified so simulation uses less memory in CI
     nrows       = 2 ** 13
