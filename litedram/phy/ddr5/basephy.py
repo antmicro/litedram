@@ -627,7 +627,6 @@ class DDR5PHY(Module, AutoCSR):
 
         switch_to_fifo = Signal()
         ca_async = out_CDC_primitive_cls("sys", ca_domain, width, width//2)
-        self.comb += ca_async._rst.eq(self.CSRs["_rst"].storage)
         self.submodules.ca_async = ca_async
 
         cd_ca_dom = getattr(self.sync, ca_domain)

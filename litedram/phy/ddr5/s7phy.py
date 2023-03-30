@@ -50,42 +50,58 @@ class Xilinx7SeriesAsyncFIFO(Module):
             fifo_mode = "FIFO36_72"
             fifo_primitive = "FIFO36E1"
 
-        i_cd = getattr(self.sync, wclk)
-        rst = Signal(reset_less=True)
+        r_done = Signal()
+        r_finished = Signal()
+        r_ready = PulseSynchronizer(rclk, wclk)
+        self.submodules += r_ready
+        self.comb += [
+            r_ready.i.eq(r_done),
+            r_finished.eq(r_ready.o),
+        ]
 
-        w_rst = Signal(reset=1)
-        w_cnt = Signal(3)
+        w_done = Signal()
+        w_finished = Signal()
+        w_ready = PulseSynchronizer(wclk, rclk)
+        self.submodules += w_ready
+        self.comb += [
+            w_ready.i.eq(w_done),
+            w_finished.eq(w_ready.o),
+        ]
+
+        i_cd = getattr(self.sync, wclk)
+        w_cnt = Signal(4, reset=15)
         i_cd += [
-            If(w_cnt<5,
+            If(r_finished,
+                w_cnt.eq(0),
+            ).Elif(w_cnt<10,
                 w_cnt.eq(w_cnt+1),
+            ).Elif(w_cnt == 10,
+                w_cnt.eq(w_cnt+1),
+                w_done.eq(1),
             ).Else(
-                w_rst.eq(0),
-            )
+                w_done.eq(0),
+            ),
         ]
 
         o_cd = getattr(self.sync, rclk)
         r_rst = Signal(reset=1)
-        r_cnt = Signal(3)
+        r_cnt = Signal(4)
         o_cd += [
-            If(r_cnt<5,
+            If(self._rst,
+                r_cnt.eq(0),
+                r_rst.eq(1),
+            ).Elif(r_cnt<10,
+                r_cnt.eq(r_cnt+1),
+            ).Elif(r_cnt == 10,
+                r_done.eq(1),
                 r_cnt.eq(r_cnt+1),
             ).Else(
+                r_done.eq(0),
+            ),
+            If(w_finished,
                 r_rst.eq(0),
-            )
+            ),
         ]
-
-        rst_comb = Signal(reset_less=True)
-        self.comb += rst_comb.eq(r_rst | w_rst)
-
-        self.specials += Instance(
-            "FDPE",
-            p_INIT          = 1,
-            o_Q             = rst,
-            i_C             = ClockSignal(rclk),
-            i_CE            = 1,
-            i_PRE           = self._rst,
-            i_D             = rst_comb,
-        )
 
         self.specials += Instance(
             fifo_primitive,
@@ -93,7 +109,7 @@ class Xilinx7SeriesAsyncFIFO(Module):
             p_DO_REG        = 1,
             p_FIFO_MODE     = fifo_mode,
             p_DATA_WIDTH    = width,
-            i_RST           = rst,
+            i_RST           = r_rst,
             i_WRCLK         = ClockSignal(wclk),
             i_WREN          = self.WREN,
             o_FULL          = self.FULL,
@@ -110,17 +126,14 @@ class Xilinx7SeriesAsyncFIFO(Module):
 class Xilinx7SeriesAsyncFIFOWrap(Module, _FIFOInterface):
     LATENCY     = Xilinx7SeriesAsyncFIFO.LATENCY
     WCL_LATENCY = Xilinx7SeriesAsyncFIFO.WCL_LATENCY
+    _rst        = None
 
     def __init__(self, wclk, rclk, i_dw, o_dw, name=None):
         _FIFOInterface.__init__(self, max(i_dw, o_dw), 512)
         width = max(i_dw, o_dw)
         fifo_72 = (width+71)//72
-        cdcs = [Xilinx7SeriesAsyncFIFO(wclk, rclk) for _ in range(fifo_72)]
+        self.cdcs = cdcs = [Xilinx7SeriesAsyncFIFO(wclk, rclk) for _ in range(fifo_72)]
         self.submodules += cdcs
-
-        self._rst = Signal()
-        for cdc in cdcs:
-            self.comb += cdc._rst.eq(self._rst)
 
         intermediate_din  = Signal(width)
         intermediate_dout = Signal(width)
@@ -167,6 +180,11 @@ class Xilinx7SeriesAsyncFIFOWrap(Module, _FIFOInterface):
                     r_cnt_i.eq(1),
                 )
             ]
+
+    def do_finalize(self):
+        for cdc in self.cdcs:
+            self.comb += cdc._rst.eq(self._rst)
+
 
 
 class S7DDR5PHY(DDR5PHY, S7Common):
@@ -283,6 +301,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
 
         CSRs    = self.CSRs
         CDCCSRs = self.CDCCSRs
+        Xilinx7SeriesAsyncFIFOWrap._rst = CSRs['_rst'].storage
 
         self.settings.delays = max_delay_taps
         self.settings.write_leveling = True
