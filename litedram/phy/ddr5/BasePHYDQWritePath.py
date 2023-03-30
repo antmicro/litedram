@@ -83,10 +83,9 @@ class BasePHYDQWritePath(Module):
 
         wr_data_cases = {}
         for i in range(nphases):
-            if 1+i <= nphases: # only false for last i = nphases -1
-                wr_data_cases[i] = wr_data_window.eq(
-                    Cat(wrdata_en.taps[wr_data_index_p][nphases-(1+i):],
-                        wrdata_en.taps[wr_data_index][:nphases-i]))
+            wr_data_cases[i] = wr_data_window.eq(
+                Cat(wrdata_en.taps[wr_data_index_p][nphases-(1+i):],
+                    wrdata_en.taps[wr_data_index][:nphases-i]))
 
         self.comb += [Case(wr_data_offset, wr_data_cases)]
 
