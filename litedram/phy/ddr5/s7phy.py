@@ -320,6 +320,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
         self.with_odelay     = with_odelay
 
         self.cdc_cache  = cdc_cache = {}
+        self.SERDES_rst_cache = {}
         pin_oe_cache = {}
         for pin, count in pads.layout:
             if pin in ["mir", "cai", "ca_odt"]:
@@ -450,13 +451,18 @@ class S7DDR5PHY(DDR5PHY, S7Common):
             _tri_state = Signal()
             oser_method = self.oserdese2_ddr_with_tri
 
+        if cd_out[0] not in self.SERDES_rst_cache:
+            self.SERDES_rst_cache[cd_out[0]] = rst = Signal()
+            self.specials += MultiReg(self.pin_csr_mapping["rst_NOT_PIN"], rst, cd_out[0])
+        rst = self.SERDES_rst_cache[cd_out[0]]
+
         oserdes = oser_method(
             din = out_sig,
             **(dict(dout_fb=delay) if _with_odelay else dict(dout=_output)),
             **(dict(tout=_tri_state, tin=oe_sig) if oe_sig is not None else dict()),
             clkdiv  = cd_out[0],
             clk     = cd_out[1],
-            rst_sig = self.pin_csr_mapping["rst_NOT_PIN"],
+            rst_sig = rst,
         )
         delay_state = None
         if _with_odelay:
@@ -486,12 +492,17 @@ class S7DDR5PHY(DDR5PHY, S7Common):
             cnt_value_out = delay_state,
         )
 
+        if cd_in[0] not in self.SERDES_rst_cache:
+            self.SERDES_rst_cache[cd_in[0]] = rst = Signal()
+            self.specials += MultiReg(self.pin_csr_mapping["rst_NOT_PIN"], rst, cd_in[0])
+        rst = self.SERDES_rst_cache[cd_in[0]]
+
         self.iserdese2_ddr(
             din    = _delayed_input,
             dout   = in_sig,
             clk    = cd_in[1],
             clkdiv = cd_in[0],
-            rst_sig = self.pin_csr_mapping["rst_NOT_PIN"],
+            rst_sig = rst,
         )
         return _input, delay_state
 
