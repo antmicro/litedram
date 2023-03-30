@@ -188,7 +188,7 @@ class BasePHYDQReadPath(Module):
                 ),
             ),
             rd_readable.eq(rd_fifo.readable),
-            rd_fifo.re.eq(rd_re),
+            rd_fifo.re.eq(rd_re & rd_fifo.readable),
             Cat(phase.rddata for phase in dfi.phases).eq(rd_fifo.dout),
         ]
 

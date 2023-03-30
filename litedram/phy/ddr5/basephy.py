@@ -327,7 +327,7 @@ class DDR5PHY(Module, AutoCSR):
             rd_fifo_valids = []
             _csr = {}
             _csr['wlevel_en'] = CSRs[prefix+'wlevel_en'].storage
-            _csr['discard_rd_fifo'] = 0
+            _csr['discard_rd_fifo'] = CSRs[prefix+'discard_rd_fifo'].storage
             self.submodules += BasePHYDQRetimeReadPath(
                 read_latency=read_latency,
                 dfi=self.dfi,
