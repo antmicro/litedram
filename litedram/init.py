@@ -945,6 +945,13 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
         cmds.append(("Set DQS_RTT_PARK",  prefixes, all_cs, CMD.MPC | (op<<5), 2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -2)),
         cmds.append(("Reset Single Shot", prefixes, 0,      0,                 2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1)),
         cmds.append(("Zeros",             prefixes, 0,      0,                 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
+    def cmd_dq_odt():
+        op = ((mr[34]&0x7)) | (0b01011<<3)
+        cmds = []
+        cmds.append(("Set DQ_RTT_PARK",  prefixes, 0,           CMD.MPC | (op<<5), 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", 10)),
+        cmds.append(("Set DQ_RTT_PARK",  prefixes, "(1<<rank)", CMD.MPC | (op<<5), 2**8-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(50))),
+        cmds.append(("Set DQ_RTT_PARK",  prefixes, 0,           CMD.MPC | (op<<5), 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", 10)),
+        cmds.append(("Zeros",            prefixes, 0,                           0, 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(10e-6))),
         return cmds
 
     def cmd_load_vref_odt():
@@ -1039,6 +1046,7 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
     setup_dram_mrs_sequence.extend(cmd_ca_odt())
     setup_dram_mrs_sequence.extend(cmd_load_vref_odt())
     setup_dram_mrs_sequence.extend(cmd_dqs_odt())
+    setup_dram_mrs_sequence.extend(cmd_dq_odt())
 
     # comment, prefixes, cs, ca, phases, cmd, delay/single
     init_sequence_2n = []
