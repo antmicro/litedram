@@ -58,7 +58,6 @@ class BasePHYDMPath(Module):
         wr_dq_max_delay = self.max_write_latency + self.write_addjust + 2
         wr_reset_value = 0 if default_write_latency < self.min_write_latency else default_write_latency - self.min_write_latency
 
-        wr_data_window  = Signal(nphases+1)
         wr_data_delay   = Signal(max=wr_dq_max_delay + 1, reset=wr_reset_value + 2)
         wr_data_index   = Signal(max=wr_dq_max_delay // nphases + 1)
         wr_data_offset  = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
@@ -76,15 +75,6 @@ class BasePHYDMPath(Module):
             wr_data_index.eq(wr_data_delay[nphases_log:]),
             wr_data_offset.eq(wr_data_delay[:nphases_log]),
         ]
-
-        wr_data_cases = {}
-        for i in range(nphases):
-            if 1+i <= nphases: # only false for last i = nphases -1
-                wr_data_cases[i] = wr_data_window.eq(
-                    Cat(wrdata_en.taps[wr_data_index+1][nphases-(1+i):],
-                        wrdata_en.taps[wr_data_index][:nphases-i]))
-
-        self.comb += [Case(wr_data_offset, wr_data_cases)]
 
         # Write Mask Path --------------------------------------------------------------------------
         wr_fifo = SyncFIFO_cls(width=nphases*2, depth=wrtap, fwft=False)
