@@ -940,6 +940,10 @@ class DDR5Tests(unittest.TestCase):
                             self.dq_pattern(j, dfi_data[0], "wrdata") + self.zeros +
                             self.dq_pattern(j, dfi_data[2], "wrdata") + self.dq_pattern(j, dfi_data[3], "wrdata") +
                             self.zeros for j in range(self.BURST_LENGTH)
+                    } | {
+                        'dq_oe': self.dq_wr_latency + (i - min_wr_delay) * 'xx' +
+                            12 * '1' + self.zeros[4:] +
+                            8 * '1' + 12 * '1' + self.zeros[4:]
                     }
                 },
                 vcd_name=f"ddr5_cmd_write_1N.vcd"

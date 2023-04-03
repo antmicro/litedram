@@ -12,12 +12,12 @@ from migen.fhdl.module import Module
 
 class DQOePattern(Module):
     def __init__(self, nphases, wlevel_en):
-        self.window = window = Signal(nphases + 1)
+        self.window = window = Signal(nphases + 2)
         self.oe = Signal(2*nphases)
         for i in range(nphases):
             self.comb += [
                 If(~wlevel_en,
-                    self.oe[2*i:2*i+2].eq(Cat(Replicate(reduce(or_, [window[i], window[i+1]]), 2))),
+                    self.oe[2*i:2*i+2].eq(Cat(Replicate(reduce(or_, window[i: i+3]), 2))),
                 ),
             ]
 
