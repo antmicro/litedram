@@ -173,12 +173,13 @@ class DDR5PHY(Module, AutoCSR):
                         elif "_rst" in key:
                             CDCCSRs[key] = cdc_dq_wr(CSR.re | CSRs["_rst"].storage, prefix)
             elif "ck_rdly" in key:
-                for prefix in prefixes:
-                    if prefix in key:
-                        if "_inc" in key:
-                            CDCCSRs[key] = cdc_dq_rd(CSR.re, prefix)
-                        elif "_rst" in key:
-                            CDCCSRs[key] = cdc_dq_rd(CSR.re | CSRs['_rst'].storage, prefix)
+                continue # use CDCs when DQ Read path is in its own domain
+                #for prefix in prefixes:
+                #    if prefix in key:
+                #        if "_inc" in key:
+                #            CDCCSRs[key] = cdc_dq_rd(CSR.re, prefix)
+                #        elif "_rst" in key:
+                #            CDCCSRs[key] = cdc_dq_rd(CSR.re | CSRs['_rst'].storage, prefix)
 
         # PHY settings -----------------------------------------------------------------------------
         combined_data_bits = databits if not with_sub_channels else 2*databits
