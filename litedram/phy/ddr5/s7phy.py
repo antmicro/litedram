@@ -130,6 +130,7 @@ class Xilinx7SeriesAsyncFIFOWrap(Module, _FIFOInterface):
 
     def __init__(self, wclk, rclk, i_dw, o_dw, name=None):
         _FIFOInterface.__init__(self, max(i_dw, o_dw), 512)
+        self.rclk = rclk
         width = max(i_dw, o_dw)
         fifo_72 = (width+71)//72
         self.cdcs = cdcs = [Xilinx7SeriesAsyncFIFO(wclk, rclk) for _ in range(fifo_72)]
@@ -182,8 +183,10 @@ class Xilinx7SeriesAsyncFIFOWrap(Module, _FIFOInterface):
             ]
 
     def do_finalize(self):
+        _rst = Signal()
+        self.specials += MultiReg(self._rst, _rst, self.rclk)
         for cdc in self.cdcs:
-            self.comb += cdc._rst.eq(self._rst)
+            self.comb += cdc._rst.eq(_rst)
 
 
 
