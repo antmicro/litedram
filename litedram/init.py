@@ -881,11 +881,6 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
     dfii_control_1n = [f"DFII_CONTROL_{prefix.upper()}CMDINJECTOR" for prefix in prefixes]
     dfii_control_1n = '|'.join(dfii_control_1n)
 
-    all_cs        = 2**phy_settings.nranks-1
-    if phy_settings.is_rdimm:
-        # RDIMM has 2 CS_n
-        all_cs        = 3
-
     all_phases    = 2**phy_settings.nphases-1
 
     def cmd_vca():
@@ -977,12 +972,12 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
         # we are running in 2N mode
         CA = [CMD.MRW | (ma << 5), op]
         cmds = []
-        cmds.append((f"Load Mode Register {ma}", prefixes, all_cs, CA[0], 1,          dfii_control_2n+"|DFII_CONTROL_RESET_N", -1))
-        cmds.append((f"Load Mode Register {ma}", prefixes, 0,      CA[0], 2,          dfii_control_2n+"|DFII_CONTROL_RESET_N", -1))
-        cmds.append((f"Load Mode Register {ma}", prefixes, 0,      CA[1], 4|8,        dfii_control_2n+"|DFII_CONTROL_RESET_N", -1))
-        cmds.append((f"Issue MRW command",       prefixes, 0,      0,     0,          dfii_control_2n+"|DFII_CONTROL_RESET_N", -2))
-        cmds.append(("Reset Single Shot",        prefixes, 0,      0,     all_phases, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1))
-        cmds.append((f"Wait after MRW command",  prefixes, 0,      0,     0,          dfii_control_2n+"|DFII_CONTROL_RESET_N",  200))
+        cmds.append((f"Load Mode Register {ma}", prefixes, "((1<<ranks) - 1)", CA[0], 1,          dfii_control_2n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Load Mode Register {ma}", prefixes, 0,                  CA[0], 2,          dfii_control_2n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Load Mode Register {ma}", prefixes, 0,                  CA[1], 4|8,        dfii_control_2n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Issue MRW command",       prefixes, 0,                  0,     0,          dfii_control_2n+"|DFII_CONTROL_RESET_N", -2))
+        cmds.append(("Reset Single Shot",        prefixes, 0,                  0,     all_phases, dfii_control_2n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Wait after MRW command",  prefixes, 0,                  0,     0,          dfii_control_2n+"|DFII_CONTROL_RESET_N",  200))
 
         return cmds
 
@@ -994,12 +989,12 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
         # we are running in 2N mode
         CA = [CMD.MRW | (ma << 5), op]
         cmds = []
-        cmds.append((f"Load Mode Register {ma}", prefixes, all_cs, CA[0], 1,          dfii_control_1n+"|DFII_CONTROL_RESET_N", -1))
-        cmds.append((f"Load Mode Register {ma}", prefixes, 0,      CA[1], 2,          dfii_control_1n+"|DFII_CONTROL_RESET_N", -1))
-        cmds.append((f"Load Mode Register {ma}", prefixes, 0,      CA[1], 4|8,        dfii_control_1n+"|DFII_CONTROL_RESET_N", -1))
-        cmds.append((f"Issue MRW command",       prefixes, 0,      0,     0,          dfii_control_1n+"|DFII_CONTROL_RESET_N", -2))
-        cmds.append(("Reset Single Shot",        prefixes, 0,      0,     all_phases, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1))
-        cmds.append((f"Wait after MRW command",  prefixes, 0,      0,     0,          dfii_control_1n+"|DFII_CONTROL_RESET_N",  200))
+        cmds.append((f"Load Mode Register {ma}", prefixes, "((1<<ranks) - 1)", CA[0], 1,          dfii_control_1n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Load Mode Register {ma}", prefixes, 0,                  CA[1], 2,          dfii_control_1n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Load Mode Register {ma}", prefixes, 0,                  CA[1], 4|8,        dfii_control_1n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Issue MRW command",       prefixes, 0,                  0,     0,          dfii_control_1n+"|DFII_CONTROL_RESET_N", -2))
+        cmds.append(("Reset Single Shot",        prefixes, 0,                  0,     all_phases, dfii_control_1n+"|DFII_CONTROL_RESET_N", -1))
+        cmds.append((f"Wait after MRW command",  prefixes, 0,                  0,     0,          dfii_control_1n+"|DFII_CONTROL_RESET_N",  200))
 
         return cmds
 
@@ -1009,19 +1004,19 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
         return int(math.ceil(sec * fmax))
 
     reset_sequence = [
-        ("Assert reset",       prefixes, 0,      0,      0,      "0",                                     ck(3e-3)),
-        ("Assert CS in reset", prefixes, all_cs, 0,      2**4-1, dfii_control_2n,                         ck(40e-6)),
-        ("Release reset",      prefixes, all_cs, 0,      2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(6e-3)),
-        ("Release CS",         prefixes, 0,      0x3FFF, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(5e-6)),
+        ("Assert reset",       prefixes, 0,                  0,      0,      "0",                                     ck(3e-3)),
+        ("Assert CS in reset", prefixes, "((1<<ranks) - 1)", 0,      2**4-1, dfii_control_2n,                         ck(40e-6)),
+        ("Release reset",      prefixes, "((1<<ranks) - 1)", 0,      2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(6e-3)),
+        ("Release CS",         prefixes, 0,                  0x3FFF, 2**4-1, dfii_control_2n+"|DFII_CONTROL_RESET_N", ck(5e-6)),
         # TODO check timing of release CS:
         # 3u means 11u
         # 4u means 15u
     ]
 
     dram_start_sequene = [
-        ("NOPs",     prefixes, all_cs, CMD.NOP, 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(50)),
-        ("NOPs end", prefixes, 0,      CMD.NOP, 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", 3),
-        ("Zeros",    prefixes, 0,      0,       2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(1e-6)),
+        ("NOPs",     prefixes, "((1<<ranks) - 1)", CMD.NOP, 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(50)),
+        ("NOPs end", prefixes, 0,                  CMD.NOP, 2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", 3),
+        ("Zeros",    prefixes, 0,                  0,       2**4-1, dfii_control_1n+"|DFII_CONTROL_RESET_N", ck(1e-6)),
     ]
 
     setup_dram_mrs_sequence = [
@@ -1335,8 +1330,8 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
                         b.newline()
     else:
         for signature, sequence in [
-            ("static inline void reset_sequence(void)", reset_sequence),
-            ("static inline void dram_start_sequence(void)", dram_start_sequene),
+            ("static inline void reset_sequence(int ranks)", reset_sequence),
+            ("static inline void dram_start_sequence(int ranks)", dram_start_sequene),
             ("static inline void setup_dram_mrs_sequence(int rank)", setup_dram_mrs_sequence),
         ]:
             with r.block(signature) as b:
@@ -1372,7 +1367,7 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
 
     if isinstance(init_sequence, tuple):
         for i in range(2):
-            with r.block(f"static inline void init_sequence_{i+1}n(void)") as b:
+            with r.block(f"static inline void init_sequence_{i+1}n(int ranks)") as b:
                 for comment, prefixes, cs, ca, phases, cmd, delay in init_sequence[i]:
                     b += f"/* {comment} */"
                     if delay > -1:
