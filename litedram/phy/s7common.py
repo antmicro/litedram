@@ -72,7 +72,10 @@ class S7Common(Module):
 
         self.specials += Instance("ODELAYE2", **params)
 
-    def oserdese2_ddr_with_tri(self, *, din, clk, tin, tout, dout=None, dout_fb=None, clkdiv="sys2x", rst_sig=None):
+    def oserdese2_ddr_with_tri(self, *,
+        din, clk, tin, tout, dout=None,
+        dout_fb=None, clkdiv="sys2x", rst_sig=None, ce=None):
+
         data_width = len(din)
         assert data_width == 4, (data_width, din)
         assert not ((dout is None) and (dout_fb is None)), "Output to OQ (-> IOB) and/or to OFB (-> ISERDESE2/ODELAYE2)"
@@ -97,6 +100,10 @@ class S7Common(Module):
             i_TCE    = 1,
         )
 
+        if ce is not None:
+            params["i_OCE"] = ce
+            params["i_TCE"] = ce
+
         for i in range(data_width):
             params[f"i_D{i+1}"] = din[i]
             params[f"i_T{i+1}"] = tin[i]
@@ -104,7 +111,7 @@ class S7Common(Module):
         self.specials += Instance("OSERDESE2", **params)
 
     def oserdese2_ddr(self, *, din, clk, dout=None, dout_fb=None, tin=None, tout=None,
-                      clkdiv="sys2x", invert_clk=False, rst_sig=None):
+                      clkdiv="sys2x", invert_clk=False, rst_sig=None, ce=None):
         data_width = len(din)
         assert data_width in [4, 8], (data_width, din)
         assert not ((tin is None) ^ (tout is None)), "When using tristate specify both `tin` and `tout`"
@@ -135,6 +142,11 @@ class S7Common(Module):
             # with DATA_RATE_TQ=BUF tristate is asynchronous, so it should be delayed by OSERDESE2 latency
             params.update(dict(i_TCE=1, i_T1=tin, o_TQ=tout))
 
+        if ce is not None:
+            params["i_OCE"] = ce
+            if "i_TCE" in params:
+                params["i_TCE"] = ce
+
         self.specials += Instance("OSERDESE2", **params)
 
     def oserdese2_sdr(self, **kwargs):
@@ -148,7 +160,7 @@ class S7Common(Module):
         self.comb += din_ddr.eq(Cat(*[Replicate(bit, ratio) for bit in din]))
         self.oserdese2_ddr(**kwargs)
 
-    def iserdese2_ddr(self, *, din, dout, clk, clkdiv="sys2x", rst_sig=None):
+    def iserdese2_ddr(self, *, din, dout, clk, clkdiv="sys2x", rst_sig=None, ce=None):
         data_width = len(dout)
         assert data_width in [4, 8], (data_width, dout)
 
@@ -172,6 +184,11 @@ class S7Common(Module):
         for i in range(data_width):
             # invert order
             params[f"o_Q{i+1}"] = dout[(data_width - 1) - i]
+
+        if ce is not None:
+            params["i_CE1"]    = ce
+            params["i_CE2"]    = ce
+            params["p_NUM_CE"] = 2
 
         self.specials += Instance("ISERDESE2", **params)
 
