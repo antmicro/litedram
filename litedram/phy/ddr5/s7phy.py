@@ -546,10 +546,16 @@ class S7DDR5PHY(DDR5PHY, S7Common):
         if pin not in self.pin_csr_mapping:
             return None, None
         if (pin, not_out, cd) not in self.cdc_cache:
-            self.cdc_cache[(pin, not_out, cd)] = (
-                self.cdc_any(cd)(self.pin_csr_mapping[pin][not_out][0]),
-                self.cdc_any(cd)(self.pin_csr_mapping[pin][not_out][1])
-            )
+            if cd != "sys":
+                self.cdc_cache[(pin, not_out, cd)] = (
+                    self.cdc_any(cd)(self.pin_csr_mapping[pin][not_out][0]),
+                    self.cdc_any(cd)(self.pin_csr_mapping[pin][not_out][1])
+                )
+            else:
+                self.cdc_cache[(pin, not_out, cd)] = (
+                    self.pin_csr_mapping[pin][not_out][0],
+                    self.pin_csr_mapping[pin][not_out][1]
+                )
         inc_sig, rst_sig = self.cdc_cache[(pin, not_out, cd)]
         if offset is not None:
             inc = self.get_inc(offset, inc_sig, prefix, cd, dq=dq)
