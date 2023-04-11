@@ -13,6 +13,7 @@ from migen.genlib.record import Record
 from migen.genlib.fifo import SyncFIFO
 
 from litedram.common import ShiftRegister
+from litedram.phy.ddr5.BasePHYDQInterfaces import BasePHYDQPadOutputBuffer, BasePHYDQPadOutput
 
 class BasePHYDQReadPath(Module):
     min_read_latency = None
@@ -33,7 +34,7 @@ class BasePHYDQReadPath(Module):
         # plus preamble
         # plus data deserialization and CDC
         cls.min_read_latency_no_CDC = address_delay + ca_CDC_delay[0].sys4x + ser_latency.sys4x + 1 + \
-            2
+            2 + BasePHYDQPadOutputBuffer.get_delay(nphases)
         cls.min_read_latency = cls.min_read_latency_no_CDC + des_latency.sys4x + rd_CDC_delay[0].sys4x
         # Delay added by rddata_en buffer and by CDC, same as for wrdata_en
         cls.buffer_delay = buffer_delay + rd_en_CDC_delay[0].sys4x
@@ -44,7 +45,7 @@ class BasePHYDQReadPath(Module):
         cls.max_read_latency = cls.max_read_latency_no_CDC + rd_CDC_delay[1].sys4x + des_latency.sys4x
         cls.read_latency = (cls.max_read_latency + nphases - 1) // nphases
 
-        return cls.min_read_latency, cls.max_read_latency
+        return cls.min_read_latency - BasePHYDQPadOutputBuffer.get_delay(nphases), cls.max_read_latency
 
     # Read Control Path ------------------------------------------------------------------------
     # Creates a delay line of read commands coming from the DFI interface. The output is used to
@@ -57,18 +58,20 @@ class BasePHYDQReadPath(Module):
         nphases = len(dfi.phases)
         nphases_log = nphases.bit_length() - 1
         assert nphases > 1 and (nphases & (nphases-1)) == 0
+        buffer_phy = BasePHYDQPadOutput(phy.nphases, phy.dq_dqs_ratio)
+        self.submodules += BasePHYDQPadOutputBuffer(phy, buffer_phy)
 
         read_latency = (self.max_read_latency_no_CDC - self.buffer_delay + \
                         self.des_latency + nphases -1) // nphases
 
-        default_read_latency = default_read_latency - 2 if default_read_latency > 2 else 0
+        default_read_latency = default_read_latency - 2 if default_read_latency > 1 else 0
         preamble_reset_value = self.min_read_latency_no_CDC + self.des_latency + \
             default_read_latency - 2 - self.buffer_delay
 
         self.submodules.dqs_preamble = _BasePHYDQSPreambleReadPath(
             preamble_reset_value, read_latency,
             self.max_read_latency_no_CDC - 2 - self.buffer_delay,
-            dfi_ctrl, phy, CSRs
+            dfi_ctrl, buffer_phy, CSRs
         )
 
         # Read Path
@@ -154,8 +157,8 @@ class BasePHYDQReadPath(Module):
                 rddata_cnt_and_tmp[i].eq(rddata_cnt + rddata_cnt_tmps[i]),
                 If(rd_window[i] & ~rddata_cnt_and_tmp[i][nphases_log] & rddata_cnt_all_valid[nphases_log],
                     rddata_sel[rddata_cnt_and_tmp[i][:nphases_log]].eq(
-                        Cat([getattr(phy, f'dq{dq}_i')[2*i] for dq in range(dq_dqs_ratio)],
-                            [getattr(phy, f'dq{dq}_i')[2*i+1] for dq in range(dq_dqs_ratio)])),
+                        Cat([getattr(buffer_phy, f'dq{dq}_i')[2*i] for dq in range(dq_dqs_ratio)],
+                            [getattr(buffer_phy, f'dq{dq}_i')[2*i+1] for dq in range(dq_dqs_ratio)])),
                 ),
                 If(i < rddata_cnt,
                     rddata_sel[i].eq(rddata_intermediate[i]),
@@ -165,8 +168,8 @@ class BasePHYDQReadPath(Module):
             self.sync += [
                 If(rd_window[i] & (rddata_cnt_and_tmp[i][nphases_log] | ~rddata_cnt_all_valid[nphases_log]),
                     rddata_intermediate[rddata_cnt_and_tmp[i][:nphases_log]].eq(
-                        Cat([getattr(phy, f'dq{dq}_i')[2*i] for dq in range(dq_dqs_ratio)],
-                            [getattr(phy, f'dq{dq}_i')[2*i+1] for dq in range(dq_dqs_ratio)])),
+                        Cat([getattr(buffer_phy, f'dq{dq}_i')[2*i] for dq in range(dq_dqs_ratio)],
+                            [getattr(buffer_phy, f'dq{dq}_i')[2*i+1] for dq in range(dq_dqs_ratio)])),
                 )
             ]
 

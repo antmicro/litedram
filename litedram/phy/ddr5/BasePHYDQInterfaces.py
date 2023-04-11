@@ -33,7 +33,18 @@ class BasePHYDQPadOutput(Record):
         return base_layout
     def __init__(self, nphases, dq_dqs_ratio):
         phy = self.data_layout(nphases, dq_dqs_ratio)
+        self.nphases = nphases
+        self.dq_dqs_ratio = dq_dqs_ratio
         Record.__init__(self, phy)
+
+
+class BasePHYDQPadOutputBuffer(Module):
+    @classmethod
+    def get_delay(cls, nphases):
+        return nphases
+    def __init__(self, src, target):
+        for name, _ in src.layout:
+            self.sync += getattr(target, name).eq(getattr(src, name))
 
 
 class BasePHYDQPhyInput(Record):
