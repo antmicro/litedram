@@ -481,7 +481,6 @@ class S7DDR5PHY(DDR5PHY, S7Common):
             clkdiv  = cd_out[0],
             clk     = cd_out[1],
             rst_sig = self.crg.get_rst(cd_out[0]),
-            ce      = self.crg.get_ce(cd_out[0]),
         )
         delay_state = None
         if _with_odelay:
