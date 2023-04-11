@@ -102,6 +102,9 @@ class BasePHYWritePathDQS(Module):
         wr_window       = Signal(nphases + 3)
         wr_delay        = Signal(max=wr_dqs_max_delay + 1, reset=wr_reset_value)
         wr_index        = Signal(max=wr_dqs_max_delay // nphases + 1)
+        wr_index_1p     = Signal(max=wr_dqs_max_delay // nphases + 2)
+        wr_index_2p     = Signal(max=wr_dqs_max_delay // nphases + 3)
+        wr_index_3p     = Signal(max=wr_dqs_max_delay // nphases + 4)
         wr_offset       = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
 
         self.sync += [
@@ -116,6 +119,9 @@ class BasePHYWritePathDQS(Module):
 
         self.comb += [
             wr_index.eq(wr_delay[nphases_log:]),
+            wr_index_1p.eq(wr_delay[nphases_log:] + 1),
+            wr_index_2p.eq(wr_delay[nphases_log:] + 2),
+            wr_index_3p.eq(wr_delay[nphases_log:] + 3),
             wr_offset.eq(wr_delay[:nphases_log]),
         ]
 
@@ -124,24 +130,24 @@ class BasePHYWritePathDQS(Module):
             for i in range(nphases):
                 if 3+i <= nphases:
                     wr_cases[i] = wr_window.eq(
-                        Cat(wrdata_en.taps[wr_index+1][nphases-(3+i):],
+                        Cat(wrdata_en.taps[wr_index_1p][nphases-(3+i):],
                             wrdata_en.taps[wr_index][:nphases-i]
                     ))
                 else:
                     wr_cases[i] = wr_window.eq(
-                        Cat(wrdata_en.taps[wr_index+2][2*nphases-(3+i):],
-                            wrdata_en.taps[wr_index+1],
+                        Cat(wrdata_en.taps[wr_index_2p][2*nphases-(3+i):],
+                            wrdata_en.taps[wr_index_1p],
                             wrdata_en.taps[wr_index][:nphases-i]
                     ))
         else:
             wr_cases[0] = wr_window.eq(
-                Cat(wrdata_en.taps[wr_index+3],
-                    wrdata_en.taps[wr_index+2],
-                    wrdata_en.taps[wr_index+1],
+                Cat(wrdata_en.taps[wr_index_3p],
+                    wrdata_en.taps[wr_index_2p],
+                    wrdata_en.taps[wr_index_1p],
                     wrdata_en.taps[wr_index]
                 ))
 
-        self.comb += [
+        self.sync += [
             Case(wr_offset,
                 wr_cases,
             )
@@ -155,8 +161,8 @@ class BasePHYWritePathDQS(Module):
         self.comb += dqs_pattern.window.eq(wr_window)
         self.submodules += dqs_pattern
 
-        self.sync += [
-            out.dqs_t_o.eq(dqs_pattern.o,),
-            out.dqs_c_o.eq(~dqs_pattern.o,),
+        self.comb += [
+            out.dqs_t_o.eq(dqs_pattern.o),
+            out.dqs_c_o.eq(~dqs_pattern.o),
             out.dqs_oe.eq(dqs_pattern.oe),
         ]

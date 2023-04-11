@@ -61,6 +61,7 @@ class BasePHYDQWritePath(Module):
 
         wr_data_window   = Signal(nphases+2)
         wr_data_delay    = Signal(max=wr_dq_max_delay + 1, reset=wr_reset_value + 2)
+        wr_data_index_n  = Signal(max=wr_dq_max_delay // nphases + 0)
         wr_data_index    = Signal(max=wr_dq_max_delay // nphases + 1)
         wr_data_index_p  = Signal(max=wr_dq_max_delay // nphases + 2)
         wr_data_index_2p = Signal(max=wr_dq_max_delay // nphases + 3)
@@ -77,6 +78,7 @@ class BasePHYDQWritePath(Module):
         ]
 
         self.sync += [
+            wr_data_index_n.eq(wr_data_delay[nphases_log:] - 1),
             wr_data_index.eq(wr_data_delay[nphases_log:]),
             wr_data_index_p.eq(wr_data_delay[nphases_log:] + 1),
             wr_data_index_2p.eq(wr_data_delay[nphases_log:] + 2),
@@ -130,7 +132,7 @@ class BasePHYDQWritePath(Module):
         ]
         self.comb += [
             If(wr_data_index != 0,
-                wr_fifo.re.eq(reduce(or_, wrdata_en.taps[wr_data_index-1])),
+                wr_fifo.re.eq(reduce(or_, wrdata_en.taps[wr_data_index_n])),
                 If(wr_fifo_data_valid,
                     wr_fifo_data.eq(wr_fifo.dout),
                 ),
