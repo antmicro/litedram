@@ -20,6 +20,7 @@ class S7PHYCRG(Module):
         self.reset_clock_domain = reset_clock_domain
         self.domain_resets      = {}
         self.domain_CEs         = {}
+        self.domain_OCEs        = {}
         self.div_factors        = {}
 
         # BUFR with BUFMRCE reset sequence
@@ -149,23 +150,22 @@ class S7PHYCRG(Module):
                 ),
                 _reset.eq(reduce(or_, counter)),
             ]
-            self.domain_resets[clock_domain] = _reset
+            self.specials += Instance(
+                "FDPE",
+                p_INIT  = 1,
+                i_PRE   = self.bufr_clr,
+                i_CE    = 1,
+                i_D     = _reset,
+                i_C     = ClockSignal(clock_domain),
+                o_Q     = reset,
+            )
+            self.domain_resets[clock_domain] = reset
 
-        self.specials += Instance(
-            "FDPE",
-            p_INIT  = 1,
-            i_PRE   = self.bufr_clr,
-            i_CE    = 1,
-            i_D     = self.domain_resets[clock_domain],
-            i_C     = ClockSignal(clock_domain),
-            o_Q     = reset,
-        )
-        return reset
+        return self.domain_resets[clock_domain]
 
 
     def get_ce(self, clock_domain):
         CE = Signal()
-
         if clock_domain not in self.domain_CEs:
             _CE = Signal()
             counter = Signal(max=(256//self.div_factors[clock_domain]))
@@ -187,19 +187,64 @@ class S7PHYCRG(Module):
                 ),
                 _CE.eq(~(reduce(or_, counter))),
             ]
-            self.domain_CEs[clock_domain] = _CE
+            self.specials += Instance(
+                "FDCE",
+                p_INIT  = 0,
+                i_CLR   = self.bufr_clr,
+                i_CE    = 1,
+                i_D     = _CE,
+                i_C     = ClockSignal(clock_domain),
+                o_Q     = CE,
+            )
+            self.domain_CEs[clock_domain] = CE
 
-        self.specials += Instance(
-            "FDCE",
-            p_INIT  = 0,
-            i_CLR   = self.bufr_clr,
-            i_CE    = 1,
-            i_D     = self.domain_CEs[clock_domain],
-            i_C     = ClockSignal(clock_domain),
-            o_Q     = CE,
-        )
+        return self.domain_CEs[clock_domain]
 
-        return CE
+
+    def get_oce(self, clock_domain):
+        CE = Signal()
+        if clock_domain not in self.domain_CEs:
+            _CE = Signal()
+            counter = Signal(max=(256//self.div_factors[clock_domain]))
+            _counter = Signal.like(counter)
+            for i in range(len(counter)):
+                self.specials += Instance(
+                    "FDPE",
+                    p_INIT  = 1,
+                    i_PRE   = self.bufr_clr,
+                    i_CE    = 1,
+                    i_D     = _counter[i],
+                    i_C     = ClockSignal(clock_domain),
+                    o_Q     = counter[i],
+                )
+
+            self.comb += [
+                If(counter != 0,
+                    _counter.eq(counter - 1),
+                ),
+                _CE.eq(~(reduce(or_, counter))),
+            ]
+            self.specials += Instance(
+                "FDCE",
+                p_INIT  = 0,
+                i_CLR   = self.bufr_clr,
+                i_CE    = 1,
+                i_D     = _CE,
+                i_C     = ClockSignal(clock_domain),
+                o_Q     = CE,
+            )
+            self.domain_CEs[clock_domain] = CE
+
+        if clock_domain not in self.domain_OCEs:
+            CE = Signal()
+            self.specials += Instance(
+                "BUFH",
+                i_I     = self.domain_CEs[clock_domain],
+                o_O     = CE,
+            )
+            self.domain_OCEs[clock_domain] = CE
+
+        return self.domain_OCEs[clock_domain]
 
 
     def add_rst(self, reset_signal):
