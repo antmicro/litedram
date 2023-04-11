@@ -290,10 +290,11 @@ class S7DDR5PHY(DDR5PHY, S7Common):
             wr_cdc_min_max_delay =
                 (Latency(sys2x=Xilinx7SeriesAsyncFIFOWrap.LATENCY), Latency(sys2x=(Xilinx7SeriesAsyncFIFOWrap.WCL_LATENCY))),
 
-            with_odelay       = with_odelay,
-            with_idelay       = with_idelay,
-            rd_extra_delay    = Latency(sys2x=3),
-            with_per_dq_idelay=with_per_dq_idelay,
+            with_odelay        = with_odelay,
+            with_idelay        = with_idelay,
+            rd_extra_delay     = Latency(sys2x=3),
+            with_per_dq_idelay = with_per_dq_idelay,
+            SyncFIFO_cls       = SimpleSyncFIFO,
             **kwargs
         )
 
