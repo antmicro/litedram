@@ -45,10 +45,10 @@ class TestRefresh(unittest.TestCase):
         trfc = 2
         class Obj: pass
         cmds = Obj()
-        starts   = "_-______________"
-        cmds.cas = "___-____________"
-        cmds.ras = "__--____________"
-        dones    = "_____-__________"
+        starts   = "_-_______________"
+        cmds.cas = "____-____________"
+        cmds.ras = "___--____________"
+        dones    = "_______-_________"
         self.refresh_sequencer_test(trp, trfc, starts, dones, cmds)
 
     def refresh_timer_test(self, trefi):

@@ -33,10 +33,24 @@ class RefreshExecuter(Module):
 
         tlc = TimelineCounter(max(trp.nbits, trfc.nbits) + 1)
         self.submodules += tlc
+        trp_max_val = 0
+        trfc_max_val = 0
+        if isinstance(trp, int):
+            trp_max_val = trp
+        else:
+            trp_max_val = 2**trp.nbits
+
+        if isinstance(trfc, int):
+            trfc_max_val = trfc
+        else:
+            trfc_max_val = 2**trfc.nbits
+
+        counter = Signal(max=trp_max_val+trfc_max_val)
+        self.sync += counter.eq(trp+trfc)
 
         self.comb += [
             tlc.trigger.eq(self.start),
-            tlc.target.eq(trp+trfc),
+            tlc.target.eq(counter),
         ]
 
         self.sync += [
@@ -98,8 +112,8 @@ class RefreshSequencer(Module):
                 )
             )
         ]
-        self.comb += executer.start.eq(self.start | (count != 0))
-        self.comb += self.done.eq(executer.done & (count == 0))
+        self.sync += executer.start.eq(self.start | (count != 0))
+        self.sync += self.done.eq(executer.done & (count == 0))
 
 # RefreshTimer -------------------------------------------------------------------------------------
 
