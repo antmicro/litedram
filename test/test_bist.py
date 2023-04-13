@@ -69,9 +69,9 @@ class GenCheckCSRDriver:
         yield from self.module.end.write(end)
         yield from self.module.length.write(length)
         if random_addr is not None:
-            yield from self.module.random.addr.write(random_addr)
+            yield self.module.random.fields.addr.eq(random_addr)
         if random_data is not None:
-            yield from self.module.random.data.write(random_data)
+            yield self.module.random.fields.data.eq(random_data)
 
     def run(self):
         yield from self.module.start.write(1)
@@ -96,6 +96,7 @@ class TestBIST(MemoryTestDataMixin, unittest.TestCase):
             # Test incr
             yield dut.ce.eq(1)
             yield dut.random_enable.eq(0)
+            yield
             yield
             for i in range(1024):
                 data = (yield dut.o)
@@ -405,6 +406,90 @@ class TestBIST(MemoryTestDataMixin, unittest.TestCase):
         # DUT
         dut = DUT()
         mem = DRAMMemory(32, 48)
+
+        # Simulation
+        generators = [
+            main_generator(dut, mem),
+            mem.write_handler(dut.write_port),
+            mem.read_handler(dut.read_port)
+        ]
+        run_simulation(dut, generators)
+
+    def bist_test_rand(self, generator, checker, mem):
+        # write
+        yield from generator.reset()
+        yield from generator.configure(base=16, length=256, random_data=True)
+        yield from generator.run()
+
+        # Read (no errors)
+        yield from checker.reset()
+        yield from checker.configure(base=16, length=256, random_data=True)
+        yield from checker.run()
+        self.assertEqual(checker.errors, 0)
+
+        # Corrupt memory (using generator)
+        yield from generator.reset()
+        yield from generator.configure(base=16 + 48, length=64, random_data=True)
+        yield from generator.run()
+
+        # Read (errors)
+        yield from checker.reset()
+        yield from checker.configure(base=16, length=64, random_data=True)
+        yield from checker.run()
+        # Errors for words:
+        # from (16 + 48) / 4 = 16  (corrupting generator start)
+        # to   (16 + 64) / 4 = 20  (first generator end)
+        self.assertEqual(checker.errors, 2)
+
+        # Read (no errors)
+        yield from checker.reset()
+        yield from checker.configure(base=16 + 48, length=64, random_data=True)
+        yield from checker.run()
+        self.assertEqual(checker.errors, 0)
+
+    def test_bist_base_rand(self):
+        # Verify BIST (Generator and Checker) with control from the logic.
+        class DUT(Module):
+            def __init__(self):
+                self.write_port = LiteDRAMNativeWritePort(address_width=32, data_width=64)
+                self.read_port  = LiteDRAMNativeReadPort(address_width=32, data_width=64)
+                self.submodules.generator = _LiteDRAMBISTGenerator(self.write_port)
+                self.submodules.checker   = _LiteDRAMBISTChecker(self.read_port)
+
+        def main_generator(dut, mem):
+            generator = GenCheckDriver(dut.generator)
+            checker   = GenCheckDriver(dut.checker)
+            yield from self.bist_test_rand(generator, checker, mem)
+
+        # DUT
+        dut = DUT()
+        mem = DRAMMemory(64, 256)
+
+        # Simulation
+        generators = [
+            main_generator(dut, mem),
+            mem.write_handler(dut.write_port),
+            mem.read_handler(dut.read_port)
+        ]
+        run_simulation(dut, generators, vcd_name="test_bist_base_rand.vcd")
+
+    def test_bist_csr_rand(self):
+        # Verify BIST (Generator and Checker) with control from CSRs.
+        class DUT(Module):
+            def __init__(self):
+                self.write_port = LiteDRAMNativeWritePort(address_width=32, data_width=64)
+                self.read_port  = LiteDRAMNativeReadPort(address_width=32, data_width=64)
+                self.submodules.generator = LiteDRAMBISTGenerator(self.write_port)
+                self.submodules.checker   = LiteDRAMBISTChecker(self.read_port)
+
+        def main_generator(dut, mem):
+            generator = GenCheckCSRDriver(dut.generator)
+            checker   = GenCheckCSRDriver(dut.checker)
+            yield from self.bist_test_rand(generator, checker, mem)
+
+        # DUT
+        dut = DUT()
+        mem = DRAMMemory(64, 256)
 
         # Simulation
         generators = [

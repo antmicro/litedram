@@ -106,7 +106,7 @@ class Generator(Module):
         count = Counter(n_out)
         self.submodules += lfsr, count
 
-        self.comb += \
+        self.sync += \
             If(self.random_enable,
                 self.o.eq(lfsr.o)
             ).Else(
@@ -154,7 +154,7 @@ class _LiteDRAMBISTGenerator(Module):
 
         # mask random address to the range <base, end), range size must be power of 2
         addr_mask = Signal(awidth)
-        self.comb += addr_mask.eq((self.end - self.base) - 1)
+        self.sync += addr_mask.eq((self.end - self.base) - 1)
 
         # DMA --------------------------------------------------------------------------------------
         dma = LiteDRAMDMAWriter(dram_port)
@@ -168,17 +168,22 @@ class _LiteDRAMBISTGenerator(Module):
         fsm.act("IDLE",
             If(self.start,
                 NextValue(cmd_counter, 0),
-                NextState("RUN")
+                data_gen.ce.eq(1),
+                addr_gen.ce.eq(1),
+                NextState("WAIT_ADDR"),
             ),
             NextValue(self.ticks, 0)
         )
+        fsm.delayed_enter("WAIT_ADDR", "RUN", 2)
         fsm.act("WAIT",
+            NextValue(self.ticks, self.ticks + 1),
             If(self.run_cascade_in,
                 NextState("RUN")
             )
         )
         fsm.act("RUN",
             dma.sink.valid.eq(1),
+            NextValue(self.ticks, self.ticks + 1),
             If(dma.sink.ready,
                 self.run_cascade_out.eq(1),
                 data_gen.ce.eq(1),
@@ -188,11 +193,14 @@ class _LiteDRAMBISTGenerator(Module):
                     NextState("AWAIT_FIFO_EMPTY")
                 ).Elif(~self.run_cascade_in,
                     NextState("WAIT")
-                )
+                ).Else(
+                    NextState("WAIT_ADDR"),
+                    NextValue(self.ticks, self.ticks + 3),
+                ),
             ),
-            NextValue(self.ticks, self.ticks + 1)
         )
         fsm.act("AWAIT_FIFO_EMPTY",
+            NextValue(self.ticks, self.ticks + 1),
             If(~dma.fifo.source.valid,
                 NextState("DONE"),
             ),
@@ -209,8 +217,8 @@ class _LiteDRAMBISTGenerator(Module):
         else:
             raise NotImplementedError
 
-        self.comb += dma_sink_addr.eq(self.base[ashift:] + (addr_gen.o & addr_mask))
-        self.comb += dma.sink.data.eq(
+        self.sync += dma_sink_addr.eq(self.base[ashift:] + (addr_gen.o & addr_mask))
+        self.sync += dma.sink.data.eq(
             Replicate(
                 data_gen.o,
                 ceil(dram_port.data_width / len(data_gen.o)),
@@ -381,17 +389,18 @@ class LiteDRAMBISTGenerator(Module, AutoCSR):
             # Control CDC Out
             self.comb += [
                 control_cdc.source.ready.eq(1),
-                core.reset.eq(control_cdc.source.valid & control_cdc.source.reset),
-                core.start.eq(control_cdc.source.valid & control_cdc.source.start),
             ]
-            self.sync += [
+            cd_sync = getattr(self.sync, clock_domain)
+            cd_sync += [
                 If(control_cdc.source.valid,
                     core.base.eq(control_cdc.source.base),
                     core.end.eq(control_cdc.source.end),
                     core.length.eq(control_cdc.source.length),
                     core.random_data.eq(control_cdc.source.random_data),
                     core.random_addr.eq(control_cdc.source.random_addr),
-                )
+                ),
+                core.reset.eq(control_cdc.source.valid & control_cdc.source.reset),
+                core.start.eq(control_cdc.source.valid & control_cdc.source.start),
             ]
             # Status CDC In
             self.comb += [
@@ -464,12 +473,14 @@ class _LiteDRAMBISTChecker(Module, AutoCSR):
         cmd_fsm.act("IDLE",
             If(self.start,
                 NextValue(cmd_counter, 0),
-                NextState("WAIT")
+                addr_gen.ce.eq(1),
+                NextState("WAIT_ADDR")
             )
         )
+        cmd_fsm.delayed_enter("WAIT_ADDR", "RUN", 2)
         cmd_fsm.act("WAIT",
             If(self.run_cascade_in,
-                NextState("RUN")
+                NextState("WAIT_ADDR")
             )
         )
         cmd_fsm.act("RUN",
@@ -482,6 +493,8 @@ class _LiteDRAMBISTChecker(Module, AutoCSR):
                     NextState("DONE")
                 ).Elif(~self.run_cascade_in,
                     NextState("WAIT")
+                ).Else(
+                    NextState("WAIT_ADDR")
                 )
             )
         )
@@ -494,7 +507,7 @@ class _LiteDRAMBISTChecker(Module, AutoCSR):
         else:
             raise NotImplementedError
 
-        self.comb += dma_sink_addr.eq(self.base[ashift:] + (addr_gen.o & addr_mask))
+        self.sync += dma_sink_addr.eq(self.base[ashift:] + (addr_gen.o & addr_mask))
 
         # Data FSM ---------------------------------------------------------------------------------
         data_counter = Signal(dram_port.address_width, reset_less=True)
@@ -505,13 +518,15 @@ class _LiteDRAMBISTChecker(Module, AutoCSR):
             If(self.start,
                 NextValue(data_counter, 0),
                 NextValue(self.errors, 0),
-                NextState("RUN")
+                data_gen.ce.eq(1),
+                NextState("WAIT_DATA")
             ),
             NextValue(self.ticks, 0)
         )
-
+        data_fsm.delayed_enter("WAIT_DATA", "RUN", 2)
         data_fsm.act("RUN",
             dma.source.ready.eq(1),
+            NextValue(self.ticks, self.ticks + 1),
             If(dma.source.valid,
                 data_gen.ce.eq(1),
                 NextValue(data_counter, data_counter + 1),
@@ -523,9 +538,11 @@ class _LiteDRAMBISTChecker(Module, AutoCSR):
                 ),
                 If(data_counter == (self.length[ashift:] - 1),
                     NextState("DONE")
-                )
+                ).Else(
+                    NextValue(self.ticks, self.ticks + 3),
+                    NextState("WAIT_DATA"),
+                ),
             ),
-            NextValue(self.ticks, self.ticks + 1)
         )
         data_fsm.act("DONE",
             self.done.eq(1)
@@ -731,17 +748,18 @@ class LiteDRAMBISTChecker(Module, AutoCSR):
             # Control CDC Out
             self.comb += [
                 control_cdc.source.ready.eq(1),
-                core.reset.eq(control_cdc.source.valid & control_cdc.source.reset),
-                core.start.eq(control_cdc.source.valid & control_cdc.source.start),
             ]
-            self.sync += [
+            cd_sync = getattr(self.sync, clock_domain)
+            cd_sync += [
                 If(control_cdc.source.valid,
                     core.base.eq(control_cdc.source.base),
                     core.end.eq(control_cdc.source.end),
                     core.length.eq(control_cdc.source.length),
                     core.random_data.eq(control_cdc.source.random_data),
                     core.random_addr.eq(control_cdc.source.random_addr),
-                )
+                ),
+                core.reset.eq(control_cdc.source.valid & control_cdc.source.reset),
+                core.start.eq(control_cdc.source.valid & control_cdc.source.start),
             ]
             # Status CDC In
             self.comb += [
