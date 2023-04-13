@@ -135,9 +135,17 @@ class LiteDRAMCrossbar(Module):
         master_readys       = [0]*nmasters
         master_wdata_readys = [0]*nmasters
         master_rdata_valids = [0]*nmasters
+        master_in_flights   = [Signal() for _ in range(nmasters)]
+        master_banks        = [Signal(max=self.nbanks) for _ in range(nmasters)]
+
+        bank_locks          = Array([getattr(controller, "bank"+str(nb)).lock for nb in range(self.nbanks)])
+        bank_writes         = Array([getattr(controller, "bank"+str(nb)).wdata_ready for nb in range(self.nbanks)])
+        bank_reads          = Array([getattr(controller, "bank"+str(nb)).rdata_valid for nb in range(self.nbanks)])
 
         arbiters = [roundrobin.RoundRobin(nmasters, roundrobin.SP_CE) for n in range(self.nbanks)]
         self.submodules += arbiters
+
+        bank_grants         = Array([arbiter.grant for arbiter in arbiters])
 
         for nb, arbiter in enumerate(arbiters):
             bank = getattr(controller, "bank"+str(nb))
@@ -145,12 +153,7 @@ class LiteDRAMCrossbar(Module):
             # For each master, determine if another bank locks it ----------------------------------
             master_locked = []
             for nm, master in enumerate(self.masters):
-                locked = Signal()
-                for other_nb, other_arbiter in enumerate(arbiters):
-                    if other_nb != nb:
-                        other_bank = getattr(controller, "bank"+str(other_nb))
-                        locked = locked | (other_bank.lock & (other_arbiter.grant == nm))
-                master_locked.append(locked)
+                master_locked.append(master_in_flights[nm] & (master_banks[nm] != nb))
 
             # Arbitrate ----------------------------------------------------------------------------
             bank_selected  = [(ba == nb) & ~locked for ba, locked in zip(m_ba, master_locked)]
@@ -168,10 +171,14 @@ class LiteDRAMCrossbar(Module):
             ]
             master_readys = [master_ready | ((arbiter.grant == nm) & bank_selected[nm] & bank.ready)
                 for nm, master_ready in enumerate(master_readys)]
-            master_wdata_readys = [master_wdata_ready | ((arbiter.grant == nm) & bank.wdata_ready)
-                for nm, master_wdata_ready in enumerate(master_wdata_readys)]
-            master_rdata_valids = [master_rdata_valid | ((arbiter.grant == nm) & bank.rdata_valid)
-                for nm, master_rdata_valid in enumerate(master_rdata_valids)]
+
+        master_wdata_readys = [(bank_grants[master_banks[nm]] == nm) & bank_writes[master_banks[nm]] for nm in range(nmasters)]
+        master_rdata_valids = [(bank_grants[master_banks[nm]] == nm) & bank_reads[master_banks[nm]] for nm in range(nmasters)]
+
+        self.sync += [master_in_flights[nm].eq((master.cmd.valid & master.cmd.ready) | \
+            (master_in_flights[nm] & bank_locks[master_banks[nm]])) for nm, master in enumerate(self.masters)]
+        self.sync += [If(master.cmd.valid & master.cmd.ready, master_banks[nm].eq(m_ba[nm]))
+            for nm, master in enumerate(self.masters)]
 
         # Delay write/read signals based on their latency
         for nm, master_wdata_ready in enumerate(master_wdata_readys):
