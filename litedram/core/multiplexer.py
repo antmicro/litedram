@@ -321,10 +321,10 @@ class Multiplexer(Module, AutoCSR):
         write_time_en, max_write_time = anti_starvation(settings.write_time)
 
         # Refresh ----------------------------------------------------------------------------------
-        self.comb += [bm.refresh_req.eq(refresher.cmd.valid) for bm in bank_machines]
+        self.sync += [bm.refresh_req.eq(refresher.cmd.valid) for bm in bank_machines]
         go_to_refresh = Signal()
         bm_refresh_gnts = [bm.refresh_gnt for bm in bank_machines]
-        self.comb += go_to_refresh.eq(reduce(and_, bm_refresh_gnts))
+        self.sync += go_to_refresh.eq(reduce(and_, bm_refresh_gnts))
 
         # Datapath ---------------------------------------------------------------------------------
         all_rddata = [p.rddata for p in dfi.phases]

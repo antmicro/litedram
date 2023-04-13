@@ -460,6 +460,7 @@ class TestMultiplexer(unittest.TestCase):
 
             yield from dut.refresh_driver.refresh()
             yield
+            yield
 
             # Bank machines get the request
             for bm in dut.bank_machines:
@@ -479,6 +480,7 @@ class TestMultiplexer(unittest.TestCase):
 
                 # Make sure thare is no command yet
                 yield from assert_dfi_cmd(cas=0, ras=0, we=0)
+            yield
             yield
             yield
 
