@@ -61,7 +61,7 @@ class BasePHYWritePathDQS(Module):
     def get_min_max_supported_latencies(cls, nphases, address_delay, buffer_delay,
             ca_cdc_min_max_delay, wr_cdc_min_max_delay):
         # preamble buffer - address_delay - max CA CDC delay + min WDQ CDC delay + register output
-        cls.min_write_latency = nphases + 2 - 1 - address_delay - ca_cdc_min_max_delay[1].sys4x +\
+        cls.min_write_latency = nphases + nphases + 2 - 1 - address_delay - ca_cdc_min_max_delay[1].sys4x +\
              wr_cdc_min_max_delay[0].sys4x + buffer_delay + nphases
         if cls.min_write_latency < 0:
             cls.write_addjust = -cls.min_write_latency
@@ -161,7 +161,7 @@ class BasePHYWritePathDQS(Module):
         self.comb += dqs_pattern.window.eq(wr_window)
         self.submodules += dqs_pattern
 
-        self.comb += [
+        self.sync += [
             out.dqs_t_o.eq(dqs_pattern.o),
             out.dqs_c_o.eq(~dqs_pattern.o),
             out.dqs_oe.eq(dqs_pattern.oe),

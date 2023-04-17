@@ -24,7 +24,7 @@ class BasePHYDQWritePath(Module):
     def get_min_max_supported_latencies(cls, nphases, address_delay, buffer_delay,
             ca_cdc_min_max_delay, wr_cdc_min_max_delay):
         # Buffer incoming data + preamble buffer - address_delay - max CA CDC delay + min WDQ CDC delay + register output
-        cls.min_write_latency = buffer_delay + nphases + 2 - 1 - address_delay - ca_cdc_min_max_delay[1].sys4x +\
+        cls.min_write_latency = buffer_delay + nphases + nphases + 2 - 1 - address_delay - ca_cdc_min_max_delay[1].sys4x +\
              wr_cdc_min_max_delay[0].sys4x + nphases
         if cls.min_write_latency <  0:
             cls.write_addjust = -cls.min_write_latency
@@ -97,7 +97,7 @@ class BasePHYDQWritePath(Module):
                             wrdata_en.taps[wr_data_index_p],
                             wrdata_en.taps[wr_data_index][1]))
 
-        self.comb += [Case(wr_data_offset, wr_data_cases)]
+        self.sync += [Case(wr_data_offset, wr_data_cases)]
 
         dq_oe        = Signal(2*nphases)
         dq_pattern   = DQOePattern(
@@ -130,9 +130,13 @@ class BasePHYDQWritePath(Module):
         self.sync += [wr_input_data.eq(Cat(
             [phase.wrdata for phase in dfi.phases])),
         ]
-        self.comb += [
+        self.sync += [
             If(wr_data_index != 0,
                 wr_fifo.re.eq(reduce(or_, wrdata_en.taps[wr_data_index_n])),
+            ),
+        ]
+        self.comb += [
+            If(wr_data_index != 0,
                 If(wr_fifo_data_valid,
                     wr_fifo_data.eq(wr_fifo.dout),
                 ),
