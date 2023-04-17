@@ -28,6 +28,7 @@ class S7PHYCRG(Module):
         bufmrce_CE = Signal()
         bufmrce_90_CE = Signal()
         counter = Signal(8)
+        self.stable_clk = Signal()
 
         # BUMRCE output
         self.intermediate = Signal()
@@ -55,8 +56,8 @@ class S7PHYCRG(Module):
                 counter.eq(0),
                 bufmrce_CE.eq(0),
                 bufmrce_90_CE.eq(0),
-            ),
-            If(counter != 0xFF,
+                self.stable_clk.eq(0),
+            ).Elif(counter != 0xFF,
                 counter.eq(counter+1)
             ),
             If(counter == 0x20,
@@ -76,6 +77,9 @@ class S7PHYCRG(Module):
             If(counter == 0xA0,
                 bufmrce_CE.eq(1),
                 bufmrce_90_CE.eq(1),
+            ),
+            If(counter == 0xF0,
+                self.stable_clk.eq(1),
             ),
         ]
 
@@ -129,7 +133,7 @@ class S7PHYCRG(Module):
                     "FDPE",
                     p_INIT  = 1,
                     i_PRE   = self.bufr_clr,
-                    i_CE    = 1,
+                    i_CE    = self.stable_clk,
                     i_D     = _counter[i],
                     i_C     = ClockSignal(clock_domain),
                     o_Q     = counter[i],
@@ -138,7 +142,7 @@ class S7PHYCRG(Module):
                 "FDPE",
                 p_INIT  = 1,
                 i_PRE   = self.bufr_clr,
-                i_CE    = 1,
+                i_CE    = self.stable_clk,
                 i_D     = _reset,
                 i_C     = ClockSignal(clock_domain),
                 o_Q     = ResetSignal(clock_domain),
@@ -175,7 +179,7 @@ class S7PHYCRG(Module):
                     "FDPE",
                     p_INIT  = 1,
                     i_PRE   = self.bufr_clr,
-                    i_CE    = 1,
+                    i_CE    = self.stable_clk,
                     i_D     = _counter[i],
                     i_C     = ClockSignal(clock_domain),
                     o_Q     = counter[i],
@@ -191,7 +195,7 @@ class S7PHYCRG(Module):
                 "FDCE",
                 p_INIT  = 0,
                 i_CLR   = self.bufr_clr,
-                i_CE    = 1,
+                i_CE    = self.stable_clk,
                 i_D     = _CE,
                 i_C     = ClockSignal(clock_domain),
                 o_Q     = CE,
@@ -212,7 +216,7 @@ class S7PHYCRG(Module):
                     "FDPE",
                     p_INIT  = 1,
                     i_PRE   = self.bufr_clr,
-                    i_CE    = 1,
+                    i_CE    = self.stable_clk,
                     i_D     = _counter[i],
                     i_C     = ClockSignal(clock_domain),
                     o_Q     = counter[i],
@@ -228,7 +232,7 @@ class S7PHYCRG(Module):
                 "FDCE",
                 p_INIT  = 0,
                 i_CLR   = self.bufr_clr,
-                i_CE    = 1,
+                i_CE    = self.stable_clk,
                 i_D     = _CE,
                 i_C     = ClockSignal(clock_domain),
                 o_Q     = CE,
