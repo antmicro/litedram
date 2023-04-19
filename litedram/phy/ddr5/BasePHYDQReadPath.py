@@ -135,7 +135,7 @@ class BasePHYDQReadPath(Module):
         # When data for full DFI phase are collected, they are stored in FIFO and await
         # for settings.read_latency-1 to pass before being presented on DFI bus.
 
-        # depth only 8, as nibbles are cloase to each other
+        # depth only 8, as nibbles are close to each other
         rd_fifo = SyncFIFO(width=dq_dqs_ratio*nphases*2, depth=8, fwft=False)
         self.submodules += rd_fifo
 
