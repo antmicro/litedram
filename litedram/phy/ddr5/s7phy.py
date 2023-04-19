@@ -261,8 +261,6 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                     assert dq_wr_domains[prefix] == f"{dq_wr_domain}_{dq_bank}"
                     assert dq_rd_domains[prefix] == f"{dq_rd_domain}_{dq_bank}"
 
-        prefixes = [""] if not with_sub_channels else ["A_", "B_"]
-
         SimpleCDC.set_register()
         SimpleCDCWrap.reset_latency()
 
