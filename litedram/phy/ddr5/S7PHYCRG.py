@@ -158,7 +158,7 @@ class S7PHYCRG(Module):
                 "FDPE",
                 p_INIT  = 1,
                 i_PRE   = self.bufr_clr,
-                i_CE    = 1,
+                i_CE    = self.stable_clk,
                 i_D     = _reset,
                 i_C     = ClockSignal(clock_domain),
                 o_Q     = reset,
