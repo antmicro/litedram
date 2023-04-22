@@ -111,7 +111,7 @@ class TestTiming(unittest.TestCase):
         class DUT(Module):
             def __init__(self, txxd):
                 txxd_sig = Signal(10, reset=txxd)
-                self.reset_dly = 2**txxd_sig.nbits
+                self.reset_dly = 2**txxd_sig.nbits + 2
                 self.submodules.tfaw = tFAWController(txxd_sig)
 
         dut = DUT(txxd)

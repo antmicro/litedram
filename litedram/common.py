@@ -556,7 +556,7 @@ class tFAWController(Module):
         if tfaw is not None:
             count  = Signal(3)
             access = Signal.like(tfaw)
-            self.sync += access.eq(tfaw-1)
+            self.sync += access.eq(tfaw-2)
 
             handshake = Signal()
             self.comb += handshake.eq(valid & ready)
@@ -565,8 +565,16 @@ class tFAWController(Module):
             self.submodules.shift_register = sr
 
             tfaw_range_last_bit = Signal()
-            self.comb += tfaw_range_last_bit.eq(sr.taps[access])
-            self.comb += ready.eq((~count[2] | tfaw_range_last_bit) & sr.rst_done)
+            tfaw_range_almost_last_bit = Signal()
+            self.comb += tfaw_range_almost_last_bit.eq(sr.taps[access])
+            self.sync += tfaw_range_last_bit.eq(tfaw_range_almost_last_bit)
+            self.sync += ready.eq(
+                (
+                    (count[2] & (tfaw_range_almost_last_bit | tfaw_range_last_bit)) | \
+                    ((count[0:2] == 3) & handshake & tfaw_range_last_bit) | \
+                    ((count[0:2] == 3) & ~handshake) | \
+                    (~count[2] & ~(count[0:2] == 3))
+                ) & sr.rst_done)
 
             self.sync += [
                 If(tfaw_range_last_bit & ~handshake,
