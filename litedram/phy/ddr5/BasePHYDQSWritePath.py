@@ -99,12 +99,13 @@ class BasePHYWritePathDQS(Module):
 
         wr_dqs_max_delay = self.max_write_latency + self.write_addjust
 
-        wr_window       = Signal(nphases + 3)
+        wr_window       = Signal(nphases + 4)
         wr_delay        = Signal(max=wr_dqs_max_delay + 1, reset=wr_reset_value)
         wr_index        = Signal(max=wr_dqs_max_delay // nphases + 1)
         wr_index_1p     = Signal(max=wr_dqs_max_delay // nphases + 2)
         wr_index_2p     = Signal(max=wr_dqs_max_delay // nphases + 3)
         wr_index_3p     = Signal(max=wr_dqs_max_delay // nphases + 4)
+        wr_index_4p     = Signal(max=wr_dqs_max_delay // nphases + 5)
         wr_offset       = Signal(max=nphases) if nphases > 1 else Signal(1, reset=0)
 
         self.sync += [
@@ -117,31 +118,40 @@ class BasePHYWritePathDQS(Module):
             CSRs['ck_wdly_dqs'].eq(wr_delay),
         ]
 
-        self.comb += [
+        self.sync += [
             wr_index.eq(wr_delay[nphases_log:]),
             wr_index_1p.eq(wr_delay[nphases_log:] + 1),
             wr_index_2p.eq(wr_delay[nphases_log:] + 2),
             wr_index_3p.eq(wr_delay[nphases_log:] + 3),
+            wr_index_4p.eq(wr_delay[nphases_log:] + 4),
             wr_offset.eq(wr_delay[:nphases_log]),
         ]
 
         wr_cases = {}
         if nphases > 1:
             for i in range(nphases):
-                if 3+i <= nphases:
+                if 4+i <= nphases:
                     wr_cases[i] = wr_window.eq(
-                        Cat(wrdata_en.taps[wr_index_1p][nphases-(3+i):],
+                        Cat(wrdata_en.taps[wr_index_1p][nphases-(4+i):],
+                            wrdata_en.taps[wr_index][:nphases-i]
+                    ))
+                elif 4+i <= 2*nphases:
+                    wr_cases[i] = wr_window.eq(
+                        Cat(wrdata_en.taps[wr_index_2p][2*nphases-(4+i):],
+                            wrdata_en.taps[wr_index_1p],
                             wrdata_en.taps[wr_index][:nphases-i]
                     ))
                 else:
                     wr_cases[i] = wr_window.eq(
-                        Cat(wrdata_en.taps[wr_index_2p][2*nphases-(3+i):],
+                        Cat(wrdata_en.taps[wr_index_3p][3*nphases-(4+i):],
+                            wrdata_en.taps[wr_index_2p],
                             wrdata_en.taps[wr_index_1p],
                             wrdata_en.taps[wr_index][:nphases-i]
                     ))
         else:
             wr_cases[0] = wr_window.eq(
-                Cat(wrdata_en.taps[wr_index_3p],
+                Cat(wrdata_en.taps[wr_index_4p],
+                    wrdata_en.taps[wr_index_3p],
                     wrdata_en.taps[wr_index_2p],
                     wrdata_en.taps[wr_index_1p],
                     wrdata_en.taps[wr_index]

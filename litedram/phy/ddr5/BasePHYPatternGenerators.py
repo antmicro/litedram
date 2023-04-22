@@ -24,7 +24,7 @@ class DQOePattern(Module):
 
 class DQSPattern(Module):
     def __init__(self, nphases, wlevel_en: Signal()):
-        self.window = window = Signal(nphases + 3)
+        self.window = window = Signal(nphases + 4)
         self.o  = Signal(2*nphases)
         self.oe = Signal(2*nphases)
 
@@ -36,17 +36,17 @@ class DQSPattern(Module):
 
         cases = []
 
-        for i in range(1, nphases+1):
+        for i in range(0, nphases):
             cases.extend([
-                If(reduce(or_, window[i:i+2]),
-                    self.o[2*(i-1):2*i].eq(0b01),
+                If(reduce(or_, window[i+2:i+4]),
+                    self.o[2*i:2*(i+1)].eq(0b01),
                 ).Else(
-                    self.o[2*(i-1):2*i].eq(0),
+                    self.o[2*i:2*(i+1)].eq(0),
                 ),
-                If(reduce(or_, window[i-1:i+3]) | wlevel_en,
-                    self.oe[2*(i-1):2*i].eq(0b11),
+                If(reduce(or_, window[i:i+5]) | wlevel_en,
+                    self.oe[2*i:2*(i+1)].eq(0b11),
                 ).Else(
-                    self.o[2*(i-1):2*i].eq(0),
+                    self.oe[2*i:2*(i+1)].eq(0),
                 ),
             ])
 
