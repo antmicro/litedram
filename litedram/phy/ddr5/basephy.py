@@ -92,8 +92,8 @@ class DDR5PHY(Module, AutoCSR):
                  with_idelay=False, with_per_dq_idelay=False,
                  csr_ca_cdc=None, csr_dqs_cdc=None,
                  csr_dq_rd_cdc=None, csr_dq_wr_cdc=None,
-                 rd_extra_delay=Latency(sys=0), address_lines=13,
                  wr_dqs_rst=None, wr_dq_rst=None, rd_dq_rst=None,
+                 rd_extra_delay=Latency(sys=0),
                  i_domain=None, i_domain_ratio=1, o_doamin=None, o_domain_ratio=1,
                  SyncFIFO_cls=SyncFIFO,
                  default_read_latency=0, default_write_latency=0, leds=None):
@@ -103,6 +103,7 @@ class DDR5PHY(Module, AutoCSR):
         self.nranks      = nranks      = len(pads.cs_n) if hasattr(pads, "cs_n") else len(pads.A_cs_n) if hasattr(pads, "A_cs_n") else 1
         self.databits    = databits    = len(pads.dq) if hasattr(pads, "dq") else len(pads.A_dq)
         self.strobes     = strobes     = len(pads.dqs_t) if hasattr(pads, "dqs_t") else len(pads.A_dqs_t)
+        address_lines    = len(pads.ca) if hasattr(pads, "ca") else len(pads.A_ca)
         self.addressbits = addressbits = 18 # for activate row address
         self.bankbits    = bankbits    = 8  # 5 bankbits, but we use 8 for Mode Register address in MRS
         self.nphases     = nphases     = 4
