@@ -17,7 +17,6 @@ from litedram.common import *
 from litedram.phy.dfi import *
 
 from litedram.phy.utils import delayed, Latency
-from litedram.phy.sim_utils import SimpleCDC, SimpleCDCWrap, SimpleCDCr
 from litedram.phy.ddr5.basephy import DDR5PHY
 
 from litedram.phy.s7common import S7Common
@@ -259,8 +258,6 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                     assert dq_wr_domains[prefix] == f"{dq_wr_domain}_{dq_bank}"
                     assert dq_rd_domains[prefix] == f"{dq_rd_domain}_{dq_bank}"
 
-        SimpleCDC.set_register()
-        SimpleCDCWrap.reset_latency()
         # It's easier to add reset signals to CDCs through type
         Xilinx7SeriesAsyncFIFOWrap._rst = crg.get_rst
 
