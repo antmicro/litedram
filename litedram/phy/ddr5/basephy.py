@@ -93,6 +93,7 @@ class DDR5PHY(Module, AutoCSR):
                  csr_ca_cdc=None, csr_dqs_cdc=None,
                  csr_dq_rd_cdc=None, csr_dq_wr_cdc=None,
                  rd_extra_delay=Latency(sys=0), address_lines=13,
+                 wr_dqs_rst=None, wr_dq_rst=None, rd_dq_rst=None,
                  i_domain=None, i_domain_ratio=1, o_doamin=None, o_domain_ratio=1,
                  SyncFIFO_cls=SyncFIFO,
                  default_read_latency=0, default_write_latency=0, leds=None):
@@ -151,6 +152,21 @@ class DDR5PHY(Module, AutoCSR):
                 return i
             return csr_dq_rd_cdc[prefix](i)
 
+        def get_wr_dq_rst(prefix):
+            if wr_dq_rst is None or wr_dq_rst[prefix] is None:
+                return CSRs['_rst'].storage
+            return wr_dq_rst[prefix]
+
+        def get_wr_dqs_rst(prefix):
+            if wr_dqs_rst is None or wr_dqs_rst[prefix] is None:
+                return CSRs['_rst'].storage
+            return wr_dqs_rst[prefix]
+
+        def get_rd_dq_rst(prefix):
+            if rd_dq_rst is None or rd_dq_rst[prefix] is None:
+                return CSRs['_rst'].storage
+            return rd_dq_rst[prefix]
+
         self.CDCCSRs = CDCCSRs = dict()
 
         for key, CSR in CSRs.items():
@@ -164,14 +180,14 @@ class DDR5PHY(Module, AutoCSR):
                         if "_inc" in key:
                             CDCCSRs[key] = cdc_dqs_wr(CSR.re, prefix)
                         elif "_rst" in key:
-                            CDCCSRs[key] = cdc_dqs_wr(CSR.re | CSRs["_rst"].storage, prefix)
+                            CDCCSRs[key] = cdc_dqs_wr(CSR.re, prefix) | get_wr_dqs_rst(prefix)
             elif "ck_wddly" in key:
                 for prefix in prefixes:
                     if prefix in key:
                         if "_inc" in key:
                             CDCCSRs[key] = cdc_dq_wr(CSR.re, prefix)
                         elif "_rst" in key:
-                            CDCCSRs[key] = cdc_dq_wr(CSR.re | CSRs["_rst"].storage, prefix)
+                            CDCCSRs[key] = cdc_dq_wr(CSR.re, prefix) | get_wr_dq_rst(prefix)
             elif "ck_rdly" in key:
                 continue # use CDCs when DQ Read path is in its own domain
                 #for prefix in prefixes:
@@ -663,18 +679,20 @@ class DDR5PHY(Module, AutoCSR):
         return PHYAddressSlicerRemap.get_delay(nphases) + PHYAddressSlicer.get_delay(nphases) + nphases//2
 
 
-    def get_rst(self, byte, rst, prefix="", clk="sys", dq=False):
+    def get_rst(self, byte, rst, prefix="", clk="sys", dq=False, rst_overwrite=None):
+        if rst_overwrite is None:
+            rst_overwrite = self.CSRs['_rst'].storage
         cd_clk = getattr(self.sync, clk)
         CSRs = self.CSRs
         t = Signal()
         if not dq:
-            cd_clk += t.eq((CSRs[prefix+'dly_sel'].storage[byte] & rst) | CSRs['_rst'].storage)
+            cd_clk += t.eq((CSRs[prefix+'dly_sel'].storage[byte] & rst) | rst_overwrite)
         elif not self.with_per_dq_idelay:
-            cd_clk += t.eq((CSRs[prefix+'dly_sel'].storage[byte//self.dq_dqs_ratio] & rst) | CSRs['_rst'].storage)
+            cd_clk += t.eq((CSRs[prefix+'dly_sel'].storage[byte//self.dq_dqs_ratio] & rst) | rst_overwrite)
         else:
             cd_clk += t.eq((CSRs[prefix+'dly_sel'].storage[byte//self.dq_dqs_ratio] &
                             CSRs[prefix+'dq_dly_sel'].storage[byte%self.dq_dqs_ratio] & rst) |
-                            CSRs['_rst'].storage)
+                            rst_overwrite)
         return t
 
     def get_inc(self, byte, stb, prefix="", clk="sys", dq=False):

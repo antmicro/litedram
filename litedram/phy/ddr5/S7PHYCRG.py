@@ -15,7 +15,7 @@ class S7PHYCRG(Module):
     def __init__(self, reset_clock_domain,
                  source_4x, source_4x_90):
 
-        self.rst                = Signal()
+        self.rst                = Signal(reset=1)
         self.rst_set            = False
         self.reset_clock_domain = reset_clock_domain
         self.domain_resets      = {}
@@ -122,8 +122,8 @@ class S7PHYCRG(Module):
 
 
     def get_rst(self, clock_domain):
-        reset = Signal()
-
+        if clock_domain == "sys":
+            return self._raw_reset_signal
         if clock_domain not in self.domain_resets:
             _reset = Signal()
             counter = Signal(max=(64//self.div_factors[clock_domain]))
@@ -154,16 +154,20 @@ class S7PHYCRG(Module):
                 ),
                 _reset.eq(reduce(or_, counter)),
             ]
-            self.specials += Instance(
-                "FDPE",
-                p_INIT  = 1,
-                i_PRE   = self.bufr_clr,
-                i_CE    = self.stable_clk,
-                i_D     = _reset,
-                i_C     = ClockSignal(clock_domain),
-                o_Q     = reset,
-            )
-            self.domain_resets[clock_domain] = reset
+            in_rst = _reset
+            for _ in range(8):
+                out_rst = Signal()
+                self.specials += Instance(
+                    "FDPE",
+                    p_INIT  = 1,
+                    i_PRE   = self.bufr_clr,
+                    i_CE    = self.stable_clk,
+                    i_D     = in_rst,
+                    i_C     = ClockSignal(clock_domain),
+                    o_Q     = out_rst,
+                )
+                in_rst = out_rst
+            self.domain_resets[clock_domain] = in_rst
 
         return self.domain_resets[clock_domain]
 
@@ -172,14 +176,14 @@ class S7PHYCRG(Module):
         CE = Signal()
         if clock_domain not in self.domain_CEs:
             _CE = Signal()
-            counter = Signal(max=(256//self.div_factors[clock_domain]))
+            counter = Signal(max=(2048//self.div_factors[clock_domain]))
             _counter = Signal.like(counter)
             for i in range(len(counter)):
                 self.specials += Instance(
                     "FDPE",
                     p_INIT  = 1,
                     i_PRE   = self.bufr_clr,
-                    i_CE    = self.stable_clk,
+                    i_CE    = ~self.get_rst(clock_domain),
                     i_D     = _counter[i],
                     i_C     = ClockSignal(clock_domain),
                     o_Q     = counter[i],
@@ -195,7 +199,7 @@ class S7PHYCRG(Module):
                 "FDCE",
                 p_INIT  = 0,
                 i_CLR   = self.bufr_clr,
-                i_CE    = self.stable_clk,
+                i_CE    = ~self.get_rst(clock_domain),
                 i_D     = _CE,
                 i_C     = ClockSignal(clock_domain),
                 o_Q     = CE,
@@ -209,14 +213,14 @@ class S7PHYCRG(Module):
         CE = Signal()
         if clock_domain not in self.domain_CEs:
             _CE = Signal()
-            counter = Signal(max=(256//self.div_factors[clock_domain]))
+            counter = Signal(max=(2048//self.div_factors[clock_domain]))
             _counter = Signal.like(counter)
             for i in range(len(counter)):
                 self.specials += Instance(
                     "FDPE",
                     p_INIT  = 1,
                     i_PRE   = self.bufr_clr,
-                    i_CE    = self.stable_clk,
+                    i_CE    = ~self.get_rst(clock_domain),
                     i_D     = _counter[i],
                     i_C     = ClockSignal(clock_domain),
                     o_Q     = counter[i],
@@ -232,7 +236,7 @@ class S7PHYCRG(Module):
                 "FDCE",
                 p_INIT  = 0,
                 i_CLR   = self.bufr_clr,
-                i_CE    = self.stable_clk,
+                i_CE    = ~self.get_rst(clock_domain),
                 i_D     = _CE,
                 i_C     = ClockSignal(clock_domain),
                 o_Q     = CE,
@@ -253,7 +257,8 @@ class S7PHYCRG(Module):
 
     def add_rst(self, reset_signal):
         assert not self.rst_set
-        self.specials += MultiReg(reset_signal, self.rst, self.reset_clock_domain)
+        self._raw_reset_signal = reset_signal
+        self.specials += MultiReg(reset_signal, self.rst, self.reset_clock_domain, reset=1)
         self.rst_set = True
 
 

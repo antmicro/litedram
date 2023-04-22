@@ -183,10 +183,8 @@ class Xilinx7SeriesAsyncFIFOWrap(Module, _FIFOInterface):
             ]
 
     def do_finalize(self):
-        _rst = Signal()
-        self.specials += MultiReg(self._rst, _rst, self.rclk)
         for cdc in self.cdcs:
-            self.comb += cdc._rst.eq(_rst)
+            self.comb += cdc._rst.eq(self._rst(self.rclk))
 
 
 
@@ -263,6 +261,8 @@ class S7DDR5PHY(DDR5PHY, S7Common):
 
         SimpleCDC.set_register()
         SimpleCDCWrap.reset_latency()
+        # It's easier to add reset signals to CDCs through type
+        Xilinx7SeriesAsyncFIFOWrap._rst = crg.get_rst
 
         # DoubleRateDDR5PHY outputs half-width signals (comparing to DDR5PHY) in sys2x domain.
         # This allows us to use 8:1 DDR OSERDESE2/ISERDESE2 to (de-)serialize the data.
@@ -280,6 +280,10 @@ class S7DDR5PHY(DDR5PHY, S7Common):
             csr_dq_rd_cdc     = {prefix: cdc_any(dom) for prefix, dom in dq_rd_domains.items()},
             csr_dq_wr_cdc     = {prefix: cdc_any(dom) for prefix, dom in dq_wr_domains.items()},
             csr_dqs_cdc       = {prefix: cdc_any(dom) for prefix, dom in wr_dqs_domains.items()},
+
+            rd_dq_rst         = {prefix: crg.get_rst(dom) for prefix, dom in dq_rd_domains.items()},
+            wr_dq_rst         = {prefix: crg.get_rst(dom) for prefix, dom in dq_wr_domains.items()},
+            wr_dqs_rst        = {prefix: crg.get_rst(dom) for prefix, dom in wr_dqs_domains.items()},
 
             out_CDC_CA_primitive_cls = Xilinx7SeriesAsyncFIFOWrap,
             ca_cdc_min_max_delay =
@@ -305,8 +309,6 @@ class S7DDR5PHY(DDR5PHY, S7Common):
         CDCCSRs = self.CDCCSRs
         crg.add_rst(CSRs['_rst'].storage)
         self.crg = crg
-        # It's easier to add reset signals to CDCs through type
-        Xilinx7SeriesAsyncFIFOWrap._rst = CSRs['_rst'].storage
 
         self.settings.delays = max_delay_taps
         self.settings.write_leveling = True
@@ -550,7 +552,8 @@ class S7DDR5PHY(DDR5PHY, S7Common):
         inc_sig, rst_sig = self.cdc_cache[(pin, not_out, cd)]
         if offset is not None:
             inc = self.get_inc(offset, inc_sig, prefix, cd, dq=dq)
-            rst = self.get_rst(offset, rst_sig, prefix, cd, dq=dq)
+            rst = self.get_rst(offset, rst_sig, prefix, cd,
+                dq=dq, rst_overwrite=self.crg.get_rst(cd))
         else:
             inc  = inc_sig
             rst  = rst_sig
