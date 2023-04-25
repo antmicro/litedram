@@ -360,6 +360,8 @@ class PhySettings(Settings):
             t_rddata_en: int = 0,   # Time from the DFI Read command to rddata_en
             t_phy_rdcsgap: int  = 0,# Additional delay when changing physical ranks (rddata_cs/cs)
             t_phy_rdcslat: int = 0, # Time from the DFI Write command to rddata_cs
+            # system values
+            soc_freq: Optional[int] = None,
         ):
         if strobes is None:
             strobes = databits // 8

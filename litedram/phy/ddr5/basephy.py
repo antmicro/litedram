@@ -303,6 +303,7 @@ class DDR5PHY(Module, AutoCSR):
             with_per_dq_idelay  = with_per_dq_idelay,
             direct_control      = direct_control,
             t_ctrl_delay        = addr_pre_ser_delay,
+            soc_freq            = sys_clk_freq,
         )
 
         # Clocks -----------------------------------------------------------------------------------
