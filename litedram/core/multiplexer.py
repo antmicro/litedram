@@ -324,6 +324,7 @@ class Multiplexer(Module, AutoCSR):
         self.sync += [bm.refresh_req.eq(refresher.cmd.valid) for bm in bank_machines]
         go_to_refresh = Signal()
         bm_refresh_gnts = [bm.refresh_gnt for bm in bank_machines]
+        bm_refresh_gnts.append(refresher.cmd.valid)
         self.sync += go_to_refresh.eq(reduce(and_, bm_refresh_gnts))
 
         # Datapath ---------------------------------------------------------------------------------
