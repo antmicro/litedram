@@ -197,19 +197,30 @@ class Interface(Record):
             ("rddata",       databits//2, DIR_S_TO_M),
             ("rddata_valid",           1, DIR_S_TO_M)
         ]
+        split_module = Module()
         for p in self.phases:
             for i, prefix in enumerate(prefixes):
                 r = Record(sub_channel_sig)
                 p.layout.append((prefix, sub_channel_sig))
                 setattr(p, prefix, r)
                 for cmd in cmd_:
-                    setattr(r, cmd, getattr(p, cmd))
-                setattr(r, 'wrdata_en', getattr(p, 'wrdata_en'))
-                setattr(r, 'wrdata', getattr(p, 'wrdata')[i*databits//2:(i+1)*databits//2])
-                setattr(r, 'wrdata_mask', getattr(p, 'wrdata_mask')[i*databits//16:(i+1)*databits//16])
-                setattr(r, 'rddata_en', getattr(p, 'rddata_en'))
-                setattr(r, 'rddata', getattr(p, 'rddata')[i*databits//2:(i+1)*databits//2])
-                setattr(r, 'rddata_valid', getattr(p, 'rddata_valid'))
+                    split_module.comb += getattr(r, cmd).eq(getattr(p, cmd))
+                split_module.comb += [
+                    getattr(r, 'wrdata_en').eq(getattr(p, 'wrdata_en'))]
+                split_module.comb += [
+                    getattr(r, 'wrdata').eq(
+                        getattr(p, 'wrdata')[i*databits//2:(i+1)*databits//2])]
+                split_module.comb += [
+                    getattr(r, 'wrdata_mask').eq(
+                        getattr(p, 'wrdata_mask')[i*databits//16:(i+1)*databits//16])]
+                split_module.comb += [
+                    getattr(r, 'rddata_en').eq(getattr(p, 'rddata_en'))]
+                split_module.comb += [
+                    getattr(p, 'rddata')[i*databits//2:(i+1)*databits//2].eq(
+                        getattr(r, 'rddata'))]
+                split_module.comb += [
+                    getattr(p, 'rddata_valid').eq(getattr(r, 'rddata_valid'))]
+        return split_module
 
     def remove_common_signals(self):
         cmd_ = ["address", "bank", "cas_n", "cs_n", "ras_n", "act_n", "odt", "we_n"]
@@ -225,8 +236,6 @@ class Interface(Record):
         self.layout = new_layout
 
         for phase in self.phases:
-            for sig in cmd_ + wrdata_ + rddata_:
-                delattr(phase, sig)
             new_layout = []
             for signal in phase.layout:
                 if signal[0] not in cmd_ + wrdata_ + rddata_:

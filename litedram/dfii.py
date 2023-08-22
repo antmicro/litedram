@@ -603,11 +603,16 @@ class DFIInjector(Module, AutoCSR):
                 assert delays[i] == None
                 delays[i] = []
                 for _ in range(nphases):
-                    _input = Signal(14+nranks)
+                    _input = Signal(14+nranks, reset=2**nranks-1)
                     tap_line = TappedDelayLine(signal=_input, ntaps=i+1)
                     self.submodules += tap_line
                     delays[i].append((_input, tap_line))
 
+            address_for_phase = [None] * len(ddr5_dfi.phases)
+            cs_n_for_phase = [None] * len(ddr5_dfi.phases)
+            for i in range(len(address_for_phase)):
+                address_for_phase[i] = []
+                cs_n_for_phase[i] = []
             for i, adapter in enumerate(adapters):
                 # 0 CA0 always
                 # 1 CA0 if 2N mode or CA1 if 1N mode
@@ -615,10 +620,14 @@ class DFIInjector(Module, AutoCSR):
                 # 3 CA1 if 2N mode
 
                 phase = ddr5_dfi.phases[i]
+                _address = Signal.like(phase.address)
+                address_for_phase[i].append(_address)
+                _cs_n = Signal.like(phase.cs_n, reset=2**len(phase.cs_n)-1)
+                cs_n_for_phase[i].append(_cs_n)
                 self.comb += [
                     If(adapter.valid,
-                        phase.address.eq(phase.address | adapter.ca[0]),
-                        phase.cs_n.eq(phase.cs_n & adapter.cs_n[0]),
+                        _address.eq(adapter.ca[0]),
+                        _cs_n.eq(adapter.cs_n[0]),
                     ),
                     phase.reset_n.eq(self._control.fields.reset_n),
                     phase.mode_2n.eq(self._control.fields.mode_2n),
@@ -635,12 +644,16 @@ class DFIInjector(Module, AutoCSR):
                     )
                 else:
                     phase = ddr5_dfi.phases[phase_num]
+                    _address = Signal.like(phase.address)
+                    address_for_phase[phase_num].append(_address)
+                    _cs_n = Signal.like(phase.cs_n, reset=2**len(phase.cs_n)-1)
+                    cs_n_for_phase[i].append(_cs_n)
                     self.comb += If(self._control.fields.mode_2n & adapter.valid,
-                        phase.address.eq(phase.address | adapter.ca[0]),
-                        phase.cs_n.eq(phase.cs_n & adapter.cs_n[1]),
+                        _address.eq(adapter.ca[0]),
+                        _cs_n.eq(adapter.cs_n[1]),
                     ).Elif(adapter.valid,
-                        phase.address.eq(phase.address | adapter.ca[1]),
-                        phase.cs_n.eq(phase.cs_n & adapter.cs_n[1]),
+                        _address.eq(adapter.ca[1]),
+                        _cs_n.eq(adapter.cs_n[1]),
                     )
 
                 for j in [2,3]:
@@ -653,18 +666,26 @@ class DFIInjector(Module, AutoCSR):
                         )
                     else:
                         phase = ddr5_dfi.phases[phase_num]
+                        _address = Signal.like(phase.address)
+                        address_for_phase[phase_num].append(_address)
+                        _cs_n = Signal.like(phase.cs_n, reset=2**len(phase.cs_n)-1)
+                        cs_n_for_phase[i].append(_cs_n)
                         self.comb += If(self._control.fields.mode_2n & adapter.valid,
-                            phase.address.eq(phase.address | adapter.ca[j//2]),
-                            phase.cs_n.eq(phase.cs_n & adapter.cs_n[j//2]),
+                            _address.eq(adapter.ca[j//2]),
+                            _cs_n.eq(adapter.cs_n[j//2]),
                         )
 
             for i in range(depth):
-                for (_, delay_out), phase in zip(delays[i], ddr5_dfi.phases):
-                    self.comb += phase.cs_n.eq(   phase.cs_n    | delay_out.output[0:nranks])
-                    self.comb += phase.address.eq(phase.address | delay_out.output[nranks:-1])
+                for j, ((_, delay_out), phase) in enumerate(zip(delays[i], ddr5_dfi.phases)):
+                    cs_n_for_phase[j].append(delay_out.output[0:nranks])
+                    address_for_phase[j].append(delay_out.output[nranks:-1])
+
+            for i, phase in enumerate(ddr5_dfi.phases):
+                self.comb += phase.address.eq(reduce(or_, address_for_phase[i]))
+                self.comb += phase.cs_n.eq(reduce(and_, cs_n_for_phase[i]))
 
             if with_sub_channels:
-                ddr5_dfi.create_sub_channels()
+                self.submodules += ddr5_dfi.create_sub_channels()
                 ddr5_dfi.remove_common_signals()
 
             self.comb += [
