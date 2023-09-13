@@ -11,6 +11,7 @@ from litex.soc.interconnect.csr import AutoCSR
 from litedram.dfii import DFIInjector
 from litedram.core.controller import ControllerSettings, LiteDRAMController
 from litedram.core.crossbar import LiteDRAMCrossbar
+from litedram.phy import dfi
 
 # Core ---------------------------------------------------------------------------------------------
 
@@ -35,6 +36,20 @@ class LiteDRAMCore(Module, AutoCSR):
             max_expected_values = module.maximal_timing_values,
             clk_freq            = clk_freq,
             **kwargs)
-        self.comb += controller.dfi.connect(self.dfii.slave)
+        if phy.settings.memtype != "DDR5":
+            self.comb += controller.dfi.connect(self.dfii.slave)
+        else:
+            #DDR5 special case
+            intermediate_bus = dfi.Interface(
+                max(module.geom_settings.addressbits, getattr(phy, "addressbits", 0)),
+                max(module.geom_settings.bankbits, getattr(phy, "bankbits", 0)),
+                phy.settings.nranks,
+                phy.settings.dfi_databits,
+                phy.settings.nphases)
+            self.comb += controller.dfi.connect(intermediate_bus, omit=["cs_n"])
+            self.comb += [
+                inter_phase.cs_n[0].eq(controlr_phase.cs_n) for (inter_phase, controlr_phase) in
+                    zip(intermediate_bus.phases, controller.dfi.phases)]
+            self.comb += intermediate_bus.connect(self.dfii.slave)
 
         self.submodules.crossbar = LiteDRAMCrossbar(controller.interface)

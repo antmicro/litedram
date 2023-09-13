@@ -6,6 +6,8 @@
 
 import re
 import enum
+from operator import and_
+from functools import reduce
 
 from migen import *
 
@@ -118,7 +120,7 @@ class DFIPhaseAdapter(Module):
         def cmds(cmd, valid=1):
             return self.cmd.set(cmd) + [self.valid.eq(valid)]
 
-        self.comb += If(dfi_phase.cs_n == 0,  # require dfi.cs_n
+        self.comb += If(~reduce(and_, dfi_phase.cs_n),  # require dfi.cs_n
             Case(dfi_cmd, {
                 _cmd["ACT"]: [*cmds("ACTIVATE"), bl16.eq(0)],
                 _cmd["RD"]:  [*cmds("READ"), bl16.eq(0)],
