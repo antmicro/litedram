@@ -44,6 +44,7 @@ from liteeth.core import LiteEthUDPIPCore
 from liteeth.common import *
 
 
+from litex.soc.cores.cpu.vexriscv_smp.core import VexRiscvSMP
 # Platform -----------------------------------------------------------------------------------------
 
 _io = {
@@ -308,7 +309,7 @@ class SimSoC(SoCCore):
         super().__init__(platform,
             clk_freq      = sys_clk_freq,
             ident         = "LiteX Simulation",
-            cpu_variant   = "lite",
+            cpu_variant   = "linux",
             **kwargs)
 
         # CRG --------------------------------------------------------------------------------------
@@ -641,9 +642,13 @@ def main():
     group.add_argument("--dq-dqs-ratio",         default=8,               help="Set DQ:DQS ratio", type=int, choices={4, 8})
     group.add_argument("--modules-in-rank",      default=1,               help="Set DQ:DQS ratio", type=int, choices={1, 2})
 
+    VexRiscvSMP.args_fill(parser)
+
     args = parser.parse_args()
     soc_kwargs     = soc_core_argdict(args)
     builder_kwargs = builder_argdict(args)
+
+    VexRiscvSMP.args_read(args)
 
     sim_config = SimConfig()
     sys_clk_freq = int(float(args.sys_clk_freq))
