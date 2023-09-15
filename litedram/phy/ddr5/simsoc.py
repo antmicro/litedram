@@ -21,11 +21,13 @@ from litex.soc.cores.cpu import CPUS
 
 from litedram.gen import LiteDRAMCoreControl
 from litedram import modules as litedram_modules
+from litedram.init import get_ddr5_phy_init_sequence as ddr5_seqs
 from litedram.core.controller import ControllerSettings
 from litedram.phy.model import DFITimingsChecker, _speedgrade_timings, _technology_timings
 
 from litedram.phy.ddr5.simphy import DDR5SimPHY
 from litedram.phy.ddr5.sdram_simulation_model import DDR5SDRAMSimulationModel
+from litedram.phy.ddr5.commands import MPC, CMD
 
 from litedram.phy.sim_utils import Clocks, CRG, Platform
 
@@ -269,7 +271,9 @@ class SimSoC(SoCCore):
     def __init__(self, clocks, log_level,
             auto_precharge=False, with_refresh=True, trace_reset=0,
             masked_write=False, with_rcd=False, finish_after_memtest=False,
-            dq_dqs_ratio=8, with_sub_channels=False, modules_in_rank=1, **kwargs):
+            dq_dqs_ratio=8, with_sub_channels=False, modules_in_rank=1, skip_csca=False,
+            skip_mrs_seq=False, skip_reset_seq=False, ethernet_phy_model="sim", with_ethernet=False,
+            **kwargs):
 
         io_type = str(dq_dqs_ratio) if not with_sub_channels else f"sub{dq_dqs_ratio}"
         io_type = io_type if modules_in_rank == 1 else io_type+f"x{modules_in_rank}"
@@ -309,7 +313,6 @@ class SimSoC(SoCCore):
             dq_dqs_ratio       = dq_dqs_ratio,
             databits           = len(getattr(pads, "dq")) if not with_sub_channels else len(getattr(pads, "A_dq")),
             with_sub_channels  = with_sub_channels,
-            address_lines      = sdram_module.address_bits,
             direct_control     = True,
         )
 
@@ -342,10 +345,73 @@ class SimSoC(SoCCore):
             l2_cache_reverse        = False,
             controller_settings     = controller_settings
         )
+
+        prefixes = [""] if not controller_settings.phy.with_sub_channels else ["A_", "B_"]
+        for _, prefix in enumerate(prefixes):
+            setattr(self, prefix+"DQ_remapping", CSRStorage(8*controller_settings.phy.nibbles*4, name=prefix+"DQ_remapping"))
+
         # Reduce memtest size for simulation speedup
         self.add_constant("MEMTEST_DATA_SIZE", 8*1024)
         self.add_constant("MEMTEST_ADDR_SIZE", 8*1024)
         self.add_constant("DDR5_TRAINING_SIM", 1)
+        self.add_constant("CONFIG_BIOS_NO_CRC")
+
+        n1_mode_select    = 0
+        skip_fsm_to_stage = 0
+        sdram_reg_setup = {}
+
+        if skip_csca:
+            self.add_constant("SKIP_CSCA_TRAINING")
+            n1_mode_select    = 1
+        if skip_reset_seq or skip_mrs_seq:
+            self.add_constant("SKIP_RESET_SEQUENCE")
+            skip_fsm_to_stage = 3
+        if skip_mrs_seq:
+            self.add_constant("SKIP_MRS_SEQUENCE")
+            skip_fsm_to_stage = 7
+            _, _, mrs, _, _ = ddr5_seqs(controller_settings.phy, sdram_module.timing_settings)
+            for _, _, cs, cmd, _, _, _ in mrs:
+                if isinstance(cs, str):
+                    type_ = cmd & 0x1f
+                    cmd >>= 5
+                    if (type_ == CMD.MPC) and (cmd&0xf0) == MPC.DLL_SET:
+                        if 13 not in sdram_reg_setup:
+                            sdram_reg_setup[13] = 0
+                        sdram_reg_setup[13] |= cmd & 0xf
+                    if (type_ == CMD.MPC) and (cmd&0xf8) == 0x20:
+                        if 32 not in sdram_reg_setup:
+                            sdram_reg_setup[32] = 0
+                        sdram_reg_setup[32] |= cmd & 0x7
+                    if (type_ == CMD.MPC) and (cmd&0xf8) == 0x28:
+                        pass
+                    if (type_&CMD.MPC == CMD.MPC) and (cmd&0xf8) == 0x30:
+                        if 32 not in sdram_reg_setup:
+                            sdram_reg_setup[32] = 0
+                        sdram_reg_setup[32] |= (cmd & 0x7) << 3
+                    if (type_ == CMD.MPC) and (cmd&0xf8) == 0x38:
+                        pass
+                    if (type_ == CMD.MPC) and (cmd&0xf8) == 0x40:
+                        if 33 not in sdram_reg_setup:
+                            sdram_reg_setup[33] = 0
+                        sdram_reg_setup[33] |= cmd & 0x7
+                    if (type_ == CMD.MPC) and (cmd&0xf8) == 0x48:
+                        pass
+                    if (type_ == CMD.MPC) and (cmd&0xf8) == 0x50:
+                        if 33 not in sdram_reg_setup:
+                            sdram_reg_setup[33] = 0
+                        sdram_reg_setup[33] |= (cmd & 0x7) << 3
+                    if (type_ == CMD.MPC) and (cmd&0xf8) == 0x58:
+                        if 34 not in sdram_reg_setup:
+                            sdram_reg_setup[34] = 0
+                        sdram_reg_setup[34] |= cmd & 0x7
+                    if (type_ == CMD.VREF) and cmd & 0x80 == 0x80:
+                        if 12 not in sdram_reg_setup:
+                            sdram_reg_setup[12] = 0
+                        sdram_reg_setup[12] |= cmd & 0x7f
+                    if (type_ == CMD.VREF) and cmd & 0x80 == 0x00:
+                        if 11 not in sdram_reg_setup:
+                            sdram_reg_setup[11] = 0
+                        sdram_reg_setup[11] |= cmd & 0x7f
 
         # DDR5 Module ------------------------------------------------------------------------------
         prefixes = [""] if not with_sub_channels else ["A_", "B_"]
@@ -362,6 +428,9 @@ class SimSoC(SoCCore):
                     prefix        = prefix,
                     module_num    = i,
                     dq_dqs_ratio  = dq_dqs_ratio,
+                    n1_mode_select= n1_mode_select,
+                    skip_fsm_to_stage = skip_fsm_to_stage,
+                    sdram_reg_setup =  sdram_reg_setup,
                 )
                 setattr(self.submodules, prefix+'ddr5sim', module)
                 alerts[prefix+f"alert_{i}"] = module.alert_n
@@ -507,6 +576,9 @@ def main():
     group.add_argument("--no-run",               action="store_true",     help="Don't run the simulation, just generate files")
     group.add_argument("--with-sub-channels",    action="store_true",     help="Use sim PHY with sub chanels")
     group.add_argument("--finish-after-memtest", action="store_true",     help="Stop simulation after DRAM memory test")
+    group.add_argument("--skip-reset-seq",       action="store_true",     help="Skip DDR5 reset seqence and check")
+    group.add_argument("--skip-mrs-seq",         action="store_true",     help="Skip DDR5 initial MPC setup, it will skip reset as well")
+    group.add_argument("--skip-csca",            action="store_true",     help="Skip CS and CA training, use 1N mode")
     group.add_argument("--dq-dqs-ratio",         default=8,               help="Set DQ:DQS ratio", type=int, choices={4, 8})
     group.add_argument("--modules-in-rank",      default=1,               help="Set DQ:DQS ratio", type=int, choices={1, 2})
     args = parser.parse_args()
@@ -538,6 +610,9 @@ def main():
         dq_dqs_ratio    = args.dq_dqs_ratio,
         with_sub_channels = args.with_sub_channels,
         modules_in_rank = args.modules_in_rank,
+        skip_csca       = args.skip_csca,
+        skip_mrs_seq    = args.skip_mrs_seq,
+        skip_reset_seq  = args.skip_reset_seq,
         **soc_kwargs)
 
     # Build/Run ------------------------------------------------------------------------------------

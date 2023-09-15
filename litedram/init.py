@@ -868,7 +868,7 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
         (0, 3, 0b000)
     ])
 
-    from litedram.phy.ddr5.commands import SpecialCmd, MPC, CMD
+    from litedram.phy.ddr5.commands import MPC, CMD
 
     if not phy_settings.with_sub_channels:
         prefixes = [""]
