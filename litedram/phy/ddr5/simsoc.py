@@ -14,8 +14,9 @@ from migen import *
 from litex.build.generic_platform import Pins, Subsignal
 from litex.build.sim.config import SimConfig
 
-from litex.soc.interconnect.csr import CSR
+from litex.soc.interconnect.csr import CSR, CSRStorage
 from litex.soc.integration.soc_core import SoCCore, soc_core_args, soc_core_argdict
+from litex.soc.integration.soc import *
 from litex.soc.integration.builder import builder_args, builder_argdict, Builder
 from litex.soc.cores.cpu import CPUS
 
@@ -30,6 +31,18 @@ from litedram.phy.ddr5.sdram_simulation_model import DDR5SDRAMSimulationModel
 from litedram.phy.ddr5.commands import MPC, CMD
 
 from litedram.phy.sim_utils import Clocks, CRG, Platform
+
+from liteeth.phy.gmii import LiteEthPHYGMII
+from liteeth.phy.xgmii import LiteEthPHYXGMII
+from liteeth.phy.model import LiteEthPHYModel
+from liteeth.mac import LiteEthMAC
+from liteeth.core.arp import LiteEthARP
+from liteeth.core.ip import LiteEthIP
+from liteeth.core.udp import LiteEthUDP
+from liteeth.core.icmp import LiteEthICMP
+from liteeth.core import LiteEthUDPIPCore
+from liteeth.common import *
+
 
 # Platform -----------------------------------------------------------------------------------------
 
@@ -277,6 +290,17 @@ class SimSoC(SoCCore):
 
         io_type = str(dq_dqs_ratio) if not with_sub_channels else f"sub{dq_dqs_ratio}"
         io_type = io_type if modules_in_rank == 1 else io_type+f"x{modules_in_rank}"
+        _io[io_type].append(
+            ("eth", 0,
+                Subsignal("source_valid", Pins(1)),
+                Subsignal("source_ready", Pins(1)),
+                Subsignal("source_data",  Pins(8)),
+
+                Subsignal("sink_valid",   Pins(1)),
+                Subsignal("sink_ready",   Pins(1)),
+                Subsignal("sink_data",    Pins(8)),
+            )
+        )
         platform     = Platform(_io[io_type], clocks)
         sys_clk_freq = clocks["sys"]["freq_hz"]
 
@@ -292,6 +316,32 @@ class SimSoC(SoCCore):
 
         # Debugging --------------------------------------------------------------------------------
         platform.add_debug(self, reset=trace_reset)
+
+        # Ethernet / Etherbone PHY -----------------------------------------------------------------
+        if with_ethernet:
+            if ethernet_phy_model == "sim":
+                self.ethphy = LiteEthPHYModel(self.platform.request("eth", 0))
+            elif ethernet_phy_model == "xgmii":
+                self.ethphy = LiteEthPHYXGMII(None, self.platform.request("xgmii_eth", 0), model=True)
+            elif ethernet_phy_model == "gmii":
+                self.ethphy = LiteEthPHYGMII(None, self.platform.request("gmii_eth", 0), model=True)
+            else:
+                raise ValueError("Unknown Ethernet PHY model:", ethernet_phy_model)
+
+        # Ethernet ---------------------------------------------------------------------------------
+        if with_ethernet:
+            # Ethernet MAC
+            self.ethmac = ethmac = LiteEthMAC(
+                phy        = self.ethphy,
+                dw         = 64 if ethernet_phy_model == "xgmii" else 32,
+                interface  = "wishbone",
+                endianness = self.cpu.endianness)
+            # Compute Regions size and add it to the SoC.
+            ethmac_region_size = (ethmac.rx_slots.constant + ethmac.tx_slots.constant)*ethmac.slot_size.constant
+            ethmac_region = SoCRegion(origin=self.mem_map.get("ethmac", None), size=ethmac_region_size, cached=False)
+            self.bus.add_slave(name="ethmac", slave=ethmac.bus, region=ethmac_region)
+            if self.irq.enabled:
+                self.irq.add("ethmac", use_loc_if_exists=True)
 
         # DDR5 -----------------------------------------------------------------------------------
         if dq_dqs_ratio == 8:
@@ -559,6 +609,12 @@ def main():
     parser = argparse.ArgumentParser(description="Generic LiteX SoC Simulation")
     builder_args(parser.add_argument_group(title="Builder"))
     soc_core_args(parser.add_argument_group(title="SoC Core"))
+
+    parser.add_argument("--with-ethernet",        action="store_true",     help="Enable Ethernet support.")
+    parser.add_argument("--ethernet-phy-model",   default="sim",           help="Ethernet PHY to simulate (sim, xgmii or gmii).")
+    parser.add_argument("--local-ip",             default="192.168.10.50",  help="Local IP address of SoC.")
+    parser.add_argument("--remote-ip",            default="192.168.10.100", help="Remote IP address of TFTP server.")
+
     group = parser.add_argument_group(title="DDR5 simulation")
     group.add_argument("--sdram-verbosity",      default=0,               help="Set SDRAM checker verbosity")
     group.add_argument("--trace",                action="store_true",     help="Enable Tracing")
@@ -581,6 +637,7 @@ def main():
     group.add_argument("--skip-csca",            action="store_true",     help="Skip CS and CA training, use 1N mode")
     group.add_argument("--dq-dqs-ratio",         default=8,               help="Set DQ:DQS ratio", type=int, choices={4, 8})
     group.add_argument("--modules-in-rank",      default=1,               help="Set DQ:DQS ratio", type=int, choices={1, 2})
+
     args = parser.parse_args()
     soc_kwargs     = soc_core_argdict(args)
     builder_kwargs = builder_argdict(args)
@@ -598,6 +655,17 @@ def main():
     soc_kwargs["integrated_main_ram_size"] = 0x0
     soc_kwargs["sdram_verbosity"]          = int(args.sdram_verbosity)
 
+    # Ethernet.
+    if args.with_ethernet:
+        if args.ethernet_phy_model == "sim":
+            sim_config.add_module("ethernet", "eth", args={"interface": "tap0", "ip": args.remote_ip})
+        elif args.ethernet_phy_model == "xgmii":
+            sim_config.add_module("xgmii_ethernet", "xgmii_eth", args={"interface": "tap0", "ip": args.remote_ip})
+        elif args.ethernet_phy_model == "gmii":
+            sim_config.add_module("gmii_ethernet", "gmii_eth", args={"interface": "tap0", "ip": args.remote_ip})
+        else:
+            raise ValueError("Unknown Ethernet PHY model: " + args.ethernet_phy_model)
+
     # SoC ------------------------------------------------------------------------------------------
     soc = SimSoC(
         clocks          = clocks,
@@ -613,7 +681,15 @@ def main():
         skip_csca       = args.skip_csca,
         skip_mrs_seq    = args.skip_mrs_seq,
         skip_reset_seq  = args.skip_reset_seq,
+        with_ethernet      = args.with_ethernet,
+        ethernet_phy_model = args.ethernet_phy_model,
         **soc_kwargs)
+
+    if args.with_ethernet:
+        for i in range(4):
+            soc.add_constant("LOCALIP{}".format(i+1), int(args.local_ip.split(".")[i]))
+        for i in range(4):
+            soc.add_constant("REMOTEIP{}".format(i+1), int(args.remote_ip.split(".")[i]))
 
     # Build/Run ------------------------------------------------------------------------------------
     def pre_run_callback(vns):
