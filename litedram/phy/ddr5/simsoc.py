@@ -331,19 +331,7 @@ class SimSoC(SoCCore):
 
         # Ethernet ---------------------------------------------------------------------------------
         if with_ethernet:
-            # Ethernet MAC
-            self.ethmac = ethmac = LiteEthMAC(
-                phy        = self.ethphy,
-                dw         = 64 if ethernet_phy_model == "xgmii" else 32,
-                interface  = "wishbone",
-                endianness = self.cpu.endianness)
-            # Compute Regions size and add it to the SoC.
-            ethmac_region_size = (ethmac.rx_slots.constant + ethmac.tx_slots.constant)*ethmac.slot_size.constant
-            ethmac_region = SoCRegion(origin=self.mem_map.get("ethmac", None), size=ethmac_region_size, cached=False)
-            self.bus.add_slave(name="ethmac", slave=ethmac.bus, region=ethmac_region)
-            if self.irq.enabled:
-                self.irq.add("ethmac", use_loc_if_exists=True)
-            self.add_constant("ETH_PHY_NO_RESET")
+            self.add_ethernet(phy=self.ethphy, dynamic_ip=False)
 
         # DDR5 -----------------------------------------------------------------------------------
         if dq_dqs_ratio == 8:
