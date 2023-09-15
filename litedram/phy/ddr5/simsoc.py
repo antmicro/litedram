@@ -286,7 +286,7 @@ class SimSoC(SoCCore):
             masked_write=False, with_rcd=False, finish_after_memtest=False,
             dq_dqs_ratio=8, with_sub_channels=False, modules_in_rank=1, skip_csca=False,
             skip_mrs_seq=False, skip_reset_seq=False, ethernet_phy_model="sim", with_ethernet=False,
-            **kwargs):
+            with_prompt=False, **kwargs):
 
         io_type = str(dq_dqs_ratio) if not with_sub_channels else f"sub{dq_dqs_ratio}"
         io_type = io_type if modules_in_rank == 1 else io_type+f"x{modules_in_rank}"
@@ -342,6 +342,7 @@ class SimSoC(SoCCore):
             self.bus.add_slave(name="ethmac", slave=ethmac.bus, region=ethmac_region)
             if self.irq.enabled:
                 self.irq.add("ethmac", use_loc_if_exists=True)
+            self.add_constant("ETH_PHY_NO_RESET")
 
         # DDR5 -----------------------------------------------------------------------------------
         if dq_dqs_ratio == 8:
@@ -486,7 +487,8 @@ class SimSoC(SoCCore):
                 alerts[prefix+f"alert_{i}"] = module.alert_n
         self.comb += self.ddrphy.pads.alert_n.eq(reduce(and_, alerts.values()))
 
-        self.add_constant("CONFIG_SIM_DISABLE_BIOS_PROMPT")
+        if not with_prompt:
+            self.add_constant("CONFIG_SIM_DISABLE_BIOS_PROMPT")
         if finish_after_memtest:
             self.submodules.ddrctrl = LiteDRAMCoreControl()
             self.add_csr("ddrctrl")
@@ -632,6 +634,7 @@ def main():
     group.add_argument("--no-run",               action="store_true",     help="Don't run the simulation, just generate files")
     group.add_argument("--with-sub-channels",    action="store_true",     help="Use sim PHY with sub chanels")
     group.add_argument("--finish-after-memtest", action="store_true",     help="Stop simulation after DRAM memory test")
+    group.add_argument("--with-prompt",          action="store_true",     help="Run simulation to bios prompt")
     group.add_argument("--skip-reset-seq",       action="store_true",     help="Skip DDR5 reset seqence and check")
     group.add_argument("--skip-mrs-seq",         action="store_true",     help="Skip DDR5 initial MPC setup, it will skip reset as well")
     group.add_argument("--skip-csca",            action="store_true",     help="Skip CS and CA training, use 1N mode")
@@ -681,6 +684,7 @@ def main():
         skip_csca       = args.skip_csca,
         skip_mrs_seq    = args.skip_mrs_seq,
         skip_reset_seq  = args.skip_reset_seq,
+        with_prompt     = args.with_prompt,
         with_ethernet      = args.with_ethernet,
         ethernet_phy_model = args.ethernet_phy_model,
         **soc_kwargs)
