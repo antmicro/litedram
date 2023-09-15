@@ -52,7 +52,8 @@ class DDR5SDRAMSimulationModel(Module):
     def __init__(self, pads, *, sys_clk_freq, cl, cwl, log_level, geom_settings, prefix="",
                  module_num=0, dq_dqs_ratio=8, ca_inversion=False, skip_fsm_to_stage=None,
                  n1_mode_select=0, alert_n_on_CA_err=False,
-                 cd_positive="sys4x_p_dimm", cd_negative="sys4x_n_dimm"):
+                 cd_positive="sys4x_p_dimm", cd_negative="sys4x_n_dimm",
+                 sdram_reg_setup=None):
         log_level = log_level_getter(log_level)
 
         bl_max    = 16 # We only support BL8 and BL16, there is no support for BL32
@@ -90,6 +91,7 @@ class DDR5SDRAMSimulationModel(Module):
             ca_inversion      = ca_inversion,
             skip_fsm_to_stage = skip_fsm_to_stage,
             n1_mode_select    = n1_mode_select,
+            sdram_reg_setup   = sdram_reg_setup,
         )
         self.submodules.cmd = ClockDomainsRenamer(cd_positive)(cmd)
         if alert_n_on_CA_err:
@@ -101,6 +103,7 @@ class DDR5SDRAMSimulationModel(Module):
             direct_dq_control = cmd.direct_dq_control,
             dq_value          = cmd.dq_value,
             read_pre_training = cmd.read_pre_training,
+            continous_read    = cmd.continous_read,
             cd_positive   = cd_positive,
             cd_negative   = cd_negative,
             clk_freq      = 2*4*sys_clk_freq,
@@ -214,7 +217,7 @@ class CommandsSim(Module):
     def __init__(self, pads, data_cdc, *,
                  clk_freq, log_level, geom_settings, bl_max, prefix, module_num=0,
                  dq_dqs_ratio=8, ca_inversion=False, skip_fsm_to_stage=None,
-                 n1_mode_select=1):
+                 n1_mode_select=1, sdram_reg_setup=None):
         self.submodules.log = log = SimLogger(log_level=log_level, clk_freq=clk_freq, clk_freq_cd="sys4x")
         self.log.add_csrs()
 
@@ -222,9 +225,14 @@ class CommandsSim(Module):
 
         assert skip_fsm_to_stage is None or isinstance(skip_fsm_to_stage, int), \
         "skip_fsm_to_stage must be None or an int that corresponds to fsm stage"
+        assert sdram_reg_setup is None or isinstance(sdram_reg_setup, dict), \
+        "sdram_reg_setup must be None or an dict"
 
         if skip_fsm_to_stage is None:
             n1_mode_select = 0
+
+        if sdram_reg_setup is None:
+            sdram_reg_setup = {}
 
         # Mode Registers storage
         registers = []
@@ -247,6 +255,8 @@ class CommandsSim(Module):
                 registers.append(Signal(8, reset=serial[i-65]))
             else:
                 registers.append(Signal(8))
+            if i in sdram_reg_setup:
+                registers[-1] = Signal(8, reset=sdram_reg_setup[i])
 
         self.mode_regs = Array(registers)
         # Active banks
@@ -267,6 +277,9 @@ class CommandsSim(Module):
         # CS/CA/Write training async return
         self.direct_dq_control = direct_dq_control = Signal()
         self.dq_value          = dq_value          = Signal()
+
+        self.continous_read     = continous_read     = Signal()
+        self.continous_read_cnt = continous_read_cnt = Signal(3)
 
         # Read preamble training
         self.read_pre_training = read_pre_training = Signal()
@@ -323,12 +336,12 @@ class CommandsSim(Module):
         self.submodules.tinit2    = ClockDomainsRenamer("sys4x")(PulseTiming(ck(10e-9, clk_freq)))
         self.submodules.tinit3    = ClockDomainsRenamer("sys4x")(PulseTiming(ck(4e-3, clk_freq)))
         self.submodules.tinit4    = ClockDomainsRenamer("sys4x")(PulseTiming(ck(2e-6, clk_freq)))
-        self.submodules.tcksrx    = ClockDomainsRenamer("sys4x")(PulseTiming(max(ck(3.5e-9, clk_freq), 8)))
-        self.submodules.tinit5    = ClockDomainsRenamer("sys4x")(PulseTiming(3))
-        self.submodules.xpr       = ClockDomainsRenamer("sys4x")(PulseTiming(ck(410e-9, clk_freq)))
+        self.submodules.tcksrx    = (PulseTiming(max(ck(3.5e-9, clk_freq), 8)))
+        self.submodules.tinit5    = (PulseTiming(3))
+        self.submodules.xpr       = (PulseTiming(ck(410e-9, clk_freq)))
 
-        self.submodules.tzqcal = ClockDomainsRenamer("sys4x")(PulseTiming(ck(1e-6, clk_freq)))
-        self.submodules.tzqlat = ClockDomainsRenamer("sys4x")(PulseTiming(max(8, ck(30e-9, clk_freq))))
+        self.submodules.tzqcal = (PulseTiming(ck(1e-6, clk_freq)))
+        self.submodules.tzqlat = (PulseTiming(max(8, ck(30e-9, clk_freq))))
 
         self.submodules.clk_check = ClockDomainsRenamer("sys4x_ddr")(TappedDelayLine(pads.ck_t))
         tcksrx_triggered = Signal(2)
@@ -407,7 +420,7 @@ class CommandsSim(Module):
             ),
         )
         fsm.act("EXIT-PD",
-            If(getattr(pads, prefix+'ca')[:5] != 0b11111 | getattr(pads, prefix+'cs_n'),
+            If((getattr(pads, prefix+'ca')[:5] != 0b11111) | getattr(pads, prefix+'cs_n'),
                 self.log.error(prefix+"Incorrect exit sequence"),
             ),
             If(self.tinit5.ready_p,
@@ -658,6 +671,17 @@ class CommandsSim(Module):
             direct_dq_control.eq(cs_direct_control | ca_direct_control | wl_direct_control),
         ]
 
+        # Continous mode
+        self.sync += [
+            If(continous_read,
+                continous_read_cnt.eq(continous_read_cnt+1),
+            ),
+        ]
+        self.comb += [
+            If(continous_read,
+                self.data_en.input.eq((continous_read_cnt == 0)),
+            ),
+        ]
 
 
     def cmd_one_step(self, name, cond, comb, handle_cmd, sync=None):
@@ -704,6 +728,9 @@ class CommandsSim(Module):
                         self.mode_regs[ma].eq(op),
                     ),
                 ),
+                If((ma == 25) &  self.continous_read,
+                    self.continous_read.eq(op[3]),
+                )
             ],
         )
 
@@ -733,16 +760,16 @@ class CommandsSim(Module):
                     self.log.info(prefix+"MRR: MR[%d] Read training", ma),
                 ),
                 self.data_en.input.eq(1),
-                self.data.sink.valid.eq(1),
+                self.data.sink.valid.eq(1 & ~self.continous_read),
                 self.data.sink.we.eq(0),
                 self.data.sink.bl_width.eq(16),
                 self.data.sink.mrr.eq(1),
-                If(ma != 31,
+                If((ma != 31) & ~self.mode_regs[25][3],
                     self.data.sink.mrr_data0.eq(Cat([Replicate(0, 8), op])),
                     self.data.sink.mrr_data1.eq(Cat([Replicate(0, 8), op])),
                     self.data.sink.mrr_sel.eq(Replicate(0, 16)),
                     self.data.sink.mrr_inv.eq(Cat([i%2 for i in range(16)])),
-                ).Else(
+                ).Elif(~self.continous_read,
                     If(~self.mode_regs[25][0],
                         self.data.sink.mrr_data0.eq(Cat([self.mode_regs[26], self.mode_regs[27]])),
                         self.data.sink.mrr_data1.eq(Cat([self.mode_regs[26], self.mode_regs[27]])),
@@ -764,6 +791,12 @@ class CommandsSim(Module):
                 ),
                 If(~self.data.sink.ready,
                     self.log.error(prefix+"Simulator data FIFO overflow"),
+                ),
+            ],
+            sync = [
+                If(~self.continous_read,
+                    self.continous_read.eq(self.mode_regs[25][3]),
+                    self.continous_read_cnt.eq(self.mode_regs[25][3]),
                 ),
             ],
             handle_cmd = self.decode.handle_2_tick_cmd,
@@ -1071,7 +1104,7 @@ class DataSim(Module):
 
     This module runs with DDR clocks (simulation clocks with double the frequency of `pads.clk_p`).
     """
-    def __init__(self, pads, cmds_sim, direct_dq_control, dq_value, read_pre_training, *,
+    def __init__(self, pads, cmds_sim, direct_dq_control, dq_value, read_pre_training, continous_read, *,
                  cd_positive, cd_negative, cl, cwl, clk_freq, log_level, geom_settings,
                  bl_max, prefix, module_num=0, dq_dqs_ratio=8):
         self.submodules.log   = log   = SimLogger(log_level=log_level, clk_freq=clk_freq)
@@ -1170,6 +1203,8 @@ class DataSim(Module):
         self.submodules.masked_delay   = TappedDelayLine(masked, ntaps=1)
         self.submodules.read_delay     = TappedDelayLine(read, ntaps=1)
 
+        DQop = Signal()
+
         self.comb += [
             rd_pre_sel.eq(cmds_sim.mode_regs[8][:3]),
             Case(cmds_sim.mode_regs[8][:3], {
@@ -1234,7 +1269,8 @@ class DataSim(Module):
                                    cmds_sim.data.source.valid &
                                    ~cmds_sim.data.source.we),
 
-            cmds_sim.data.source.ready.eq(write | read),
+            DQop.eq(write | read),
+            cmds_sim.data.source.ready.eq(DQop & ~continous_read),
             masked.eq(write & cmds_sim.data.source.masked),
             self.dq_wr.masked.eq(self.masked_delay.output),
             self.dq_wr.trigger.eq(self.write_delay.output),
@@ -1260,7 +1296,7 @@ class DataSim(Module):
         ]
 
         self.comb += [
-            If(cmds_sim.data.source.ready,
+            If(DQop,
                 If(cmds_sim.data.source.we,
                     self.log.debug(prefix+"Write Sync: bl_width=%d", bl_width),
                 ).Else(
@@ -1270,7 +1306,7 @@ class DataSim(Module):
         ]
 
         self.sync += [
-            If(cmds_sim.data.source.ready,
+            If(DQop,
                 bank.eq(cmds_sim.data.source.bank),
                 row.eq(cmds_sim.data.source.row),
                 col.eq(cmds_sim.data.source.col),
@@ -1328,7 +1364,7 @@ class DataBurst(Module):
                 NextState("IDLE")
             ).Elif(self.burst_counter_n == self.bl - 1, # Back to back burst
                 *n_on_trigger,
-                NextValue(self.burst_counter, 1),
+                NextValue(self.burst_counter_n, 1),
             ),
         )
 
