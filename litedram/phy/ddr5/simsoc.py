@@ -292,15 +292,14 @@ class SimSoC(SoCCore):
         io_type = str(dq_dqs_ratio) if not with_sub_channels else f"sub{dq_dqs_ratio}"
         io_type = io_type if modules_in_rank == 1 else io_type+f"x{modules_in_rank}"
         _io[io_type].append(
-            ("eth", 0,
-                Subsignal("source_valid", Pins(1)),
-                Subsignal("source_ready", Pins(1)),
-                Subsignal("source_data",  Pins(8)),
-
-                Subsignal("sink_valid",   Pins(1)),
-                Subsignal("sink_ready",   Pins(1)),
-                Subsignal("sink_data",    Pins(8)),
-            )
+            ("gmii_eth", 0,
+                Subsignal("rx_data",      Pins(8)),
+                Subsignal("rx_dv",        Pins(1)),
+                Subsignal("rx_er",        Pins(1)),
+                Subsignal("tx_data",      Pins(8)),
+                Subsignal("tx_en",        Pins(1)),
+                Subsignal("tx_er",        Pins(1)),
+            ),
         )
         platform     = Platform(_io[io_type], clocks)
         sys_clk_freq = clocks["sys"]["freq_hz"]
