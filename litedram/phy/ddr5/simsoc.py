@@ -18,6 +18,7 @@ from litex.soc.interconnect.csr import CSR, CSRStorage
 from litex.soc.integration.soc_core import SoCCore, soc_core_args, soc_core_argdict
 from litex.soc.integration.soc import *
 from litex.soc.integration.builder import builder_args, builder_argdict, Builder
+from litex.soc.integration.common import get_mem_data
 from litex.soc.cores.cpu import CPUS
 
 from litedram.gen import LiteDRAMCoreControl
@@ -628,6 +629,7 @@ def main():
     group.add_argument("--skip-csca",            action="store_true",     help="Skip CS and CA training, use 1N mode")
     group.add_argument("--dq-dqs-ratio",         default=8,               help="Set DQ:DQS ratio", type=int, choices={4, 8})
     group.add_argument("--modules-in-rank",      default=1,               help="Set DQ:DQS ratio", type=int, choices={1, 2})
+    parser.add_argument("--ram-init",             default=None,            help="RAM init file (.bin or .json).")
 
     VexRiscvSMP.args_fill(parser)
 
@@ -680,6 +682,13 @@ def main():
         with_ethernet      = args.with_ethernet,
         ethernet_phy_model = args.ethernet_phy_model,
         **soc_kwargs)
+    if args.ram_init is not None:
+        init_data = get_mem_data(args.ram_init,
+            data_width = 32,
+            endianness = 'little',
+        )
+
+       soc.add_ram("images", origin = 0x80000000, size=0x40000000, contents=init_data)
 
     if args.with_ethernet:
         for i in range(4):
