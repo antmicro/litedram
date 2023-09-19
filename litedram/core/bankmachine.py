@@ -173,6 +173,12 @@ class BankMachine(Module):
         self.submodules.trascon = trascon = tXXDController(timing_regs['tRAS'])
         self.comb += trascon.valid.eq(cmd.valid & cmd.ready & row_open)
 
+        if settings.phy.memtype == "DDR5":
+            self.submodules.tccd = tccd = tXXDController(timing_regs['tCCD'])
+            self.comb += tccd.valid.eq(cmd.valid & cmd.ready & cmd.is_read)
+            self.submodules.tccdwr = tccdwr = tXXDController(timing_regs['tCCD_WR'])
+            self.comb += tccdwr.valid.eq(cmd.valid & cmd.ready & cmd.is_write)
+
         # Auto Precharge generation ----------------------------------------------------------------
         # generate auto precharge when current and next cmds are to different rows
         if settings.with_auto_precharge:
@@ -196,9 +202,11 @@ class BankMachine(Module):
                     req.wdata_ready.eq(cmd.ready),
                     cmd.is_write.eq(1),
                     cmd.we.eq(1),
+                    *([If(cmd.ready, NextState("TCCDWR"))] if settings.phy.memtype == "DDR5" else [])
                 ).Else(
                     req.rdata_valid.eq(cmd.ready),
-                    cmd.is_read.eq(1)
+                    cmd.is_read.eq(1),
+                    *([If(cmd.ready, NextState("TCCD"))] if settings.phy.memtype == "DDR5" else [])
                 ),
                 cmd.cas.eq(1),
                 If(cmd.ready & auto_precharge,
@@ -265,3 +273,14 @@ class BankMachine(Module):
                 NextState("REGULAR")
             )
         )
+        if settings.phy.memtype == "DDR5":
+            fsm.act("TCCD",
+                If(tccd.ready,
+                    NextState("REGULAR"),
+                ),
+            )
+            fsm.act("TCCDWR",
+                If(tccdwr.ready,
+                    NextState("REGULAR"),
+                ),
+            )

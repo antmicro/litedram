@@ -45,7 +45,7 @@ class ControllerSettings(Settings):
         self.set_attributes(locals())
 
 
-REGISTER_NAMES = ("tRP", "tRCD", "tWR", "tWTR", "tREFI", "tRFC", "tFAW", "tCCD", "tRRD", "tRC", "tRAS", "tZQCS")
+REGISTER_NAMES = ("tRP", "tRCD", "tWR", "tWTR", "tREFI", "tRFC", "tFAW", "tCCD", "tCCD_WR", "tRRD", "tRC", "tRAS", "tZQCS")
 class LiteDRAMControllerRegisterBank(Module, AutoCSR):
     def __init__(self, initial_timings, max_expected_values, memtype):
         for reg in REGISTER_NAMES:
@@ -102,8 +102,10 @@ class LiteDRAMController(Module):
         timing_regs = registers.get_register_signals()
 
         # LiteDRAM Interface (User) ----------------------------------------------------------------
+        __nranks = self.settings.phy.nranks
         self.settings.phy.nranks    = 1
         self.interface = interface = LiteDRAMInterface(address_align, self.settings)
+        self.settings.phy.nranks    = __nranks
 
         # DFI Interface (Memory) -------------------------------------------------------------------
         self.dfi = dfi.Interface(
@@ -128,7 +130,8 @@ class LiteDRAMController(Module):
         write_latency = math.ceil(self.settings.phy.cwl / self.settings.phy.nphases)
         max_precharge_time = write_latency + max_expected_values.tWR + max_expected_values.tCCD # AL=0
         precharge_time_sig = Signal(max_precharge_time.bit_length())
-        precharge_time = write_latency + timing_regs['tWR'] + timing_regs['tCCD'] # AL=0
+        precharge_time = write_latency + timing_regs['tWR'] + \
+            (timing_regs['tCCD'] if phy_settings.memtype != "DDR5" else timing_regs['tCCD_WR']) # AL=0
         # Value changes only on registers update, use sync to reduce critical path length
         self.sync += precharge_time_sig.eq(precharge_time)
 

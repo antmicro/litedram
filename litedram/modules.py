@@ -24,10 +24,10 @@ from litedram.common import Settings, GeomSettings, TimingSettings
 
 # Timings ------------------------------------------------------------------------------------------
 
-_technology_timings = ["tREFI", "tWTR", "tCCD", "tRRD", "tZQCS"]
+_technology_timings = ["tREFI", "tWTR", "tCCD", "tCCD_WR", "tRRD", "tZQCS"]
 
 class _TechnologyTimings(Settings):
-    def __init__(self, tREFI, tWTR, tCCD, tRRD, tZQCS=None):
+    def __init__(self, tREFI, tWTR, tCCD, tRRD, tCCD_WR=None, tZQCS=None):
         self.set_attributes(locals())
 
 
@@ -324,16 +324,18 @@ class DDR5SPDData(DDR4SPDData):
         }
 
         trrd_l_min = _word(b[71], b[70]) / 1000
-        tccd_l_min = _word(b[77], b[76]) / 1000
+        tccd_l_min = _word(b[74], b[73]) / 1000
+        tccd_l_wr_min = _word(b[77], b[76]) / 1000
         tfaw_min   = _word(b[83], b[82]) / 1000
         twtr_l_min = _word(b[86], b[85]) / 1000
 
         technology_timings = _TechnologyTimings(
-            tREFI = self.trefi,
-            tWTR  = (b[87], twtr_l_min),
-            tCCD  = (b[78], tccd_l_min),
-            tRRD  = (b[72], trrd_l_min),
-            tZQCS = None,
+            tREFI   = self.trefi,
+            tWTR    = (b[87], twtr_l_min),
+            tCCD    = (b[75], tccd_l_min),
+            tCCD_WR = (b[78], tccd_l_wr_min),
+            tRRD    = (b[72], trrd_l_min),
+            tZQCS   = None,
         )
         speedgrade_timings = _SpeedgradeTimings(
             tRP  = trp_min,
@@ -412,18 +414,19 @@ class SDRAMModule:
             )
 
         self.maximal_timing_values = TimingSettings(
-            tRP   = self.ck_ns_to_cycles(self.get("tRP", timing_clip=True)),
-            tRCD  = self.ck_ns_to_cycles(self.get("tRCD", timing_clip=True)),
-            tWR   = self.ck_ns_to_cycles(self.get("tWR", timing_clip=True)),
-            tREFI = self.ck_ns_to_cycles(self.get("tREFI", timing_clip=True), margin=False),
-            tRFC  = self.ck_ns_to_cycles(self.get("tRFC", timing_clip=True)),
-            tWTR  = self.ck_ns_to_cycles(self.get("tWTR", timing_clip=True)),
-            tFAW  = None if self.get("tFAW",  timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tFAW",  timing_clip=True)),
-            tCCD  = None if self.get("tCCD",  timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tCCD",  timing_clip=True)),
-            tRRD  = None if self.get("tRRD",  timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tRRD",  timing_clip=True)),
-            tRC   = None if self.get("tRC",   timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tRC",   timing_clip=True)),
-            tRAS  = None if self.get("tRAS",  timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tRAS",  timing_clip=True)),
-            tZQCS = None if self.get("tZQCS", timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tZQCS", timing_clip=True))
+            tRP     = self.ck_ns_to_cycles(self.get("tRP", timing_clip=True)),
+            tRCD    = self.ck_ns_to_cycles(self.get("tRCD", timing_clip=True)),
+            tWR     = self.ck_ns_to_cycles(self.get("tWR", timing_clip=True)),
+            tREFI   = self.ck_ns_to_cycles(self.get("tREFI", timing_clip=True), margin=False),
+            tRFC    = self.ck_ns_to_cycles(self.get("tRFC", timing_clip=True)),
+            tWTR    = self.ck_ns_to_cycles(self.get("tWTR", timing_clip=True)),
+            tFAW    = None if self.get("tFAW",  timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tFAW",  timing_clip=True)),
+            tCCD    = None if self.get("tCCD",  timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tCCD",  timing_clip=True)),
+            tCCD_WR = None if self.get("tCCD_WR",  timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tCCD_WR",  timing_clip=True)),
+            tRRD    = None if self.get("tRRD",  timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tRRD",  timing_clip=True)),
+            tRC     = None if self.get("tRC",   timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tRC",   timing_clip=True)),
+            tRAS    = None if self.get("tRAS",  timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tRAS",  timing_clip=True)),
+            tZQCS   = None if self.get("tZQCS", timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tZQCS", timing_clip=True))
         )
 
         if timing_settings:
@@ -432,18 +435,19 @@ class SDRAMModule:
             if (fine_refresh_mode is None) and (self.memtype in ("DDR4", "DDR5")):
                 fine_refresh_mode = "1x"
             self.timing_settings = TimingSettings(
-                tRP   = self.ck_ns_to_cycles(self.get("tRP")),
-                tRCD  = self.ck_ns_to_cycles(self.get("tRCD")),
-                tWR   = self.ck_ns_to_cycles(self.get("tWR")),
-                tREFI = self.ck_ns_to_cycles(self.get("tREFI", fine_refresh_mode), margin=False),
-                tRFC  = self.ck_ns_to_cycles(self.get("tRFC", fine_refresh_mode)),
-                tWTR  = self.ck_ns_to_cycles(self.get("tWTR")),
-                tFAW  = None if self.get("tFAW") is None else self.ck_ns_to_cycles(self.get("tFAW")),
-                tCCD  = None if self.get("tCCD") is None else self.ck_ns_to_cycles(self.get("tCCD")),
-                tRRD  = None if self.get("tRRD") is None else self.ck_ns_to_cycles(self.get("tRRD")),
-                tRC   = None if self.get("tRAS") is None else self.ck_ns_to_cycles(self.get("tRP") + self.get("tRAS")),
-                tRAS  = None if self.get("tRAS") is None else self.ck_ns_to_cycles(self.get("tRAS")),
-                tZQCS = None if self.get("tZQCS") is None else self.ck_ns_to_cycles(self.get("tZQCS"))
+                tRP     = self.ck_ns_to_cycles(self.get("tRP")),
+                tRCD    = self.ck_ns_to_cycles(self.get("tRCD")),
+                tWR     = self.ck_ns_to_cycles(self.get("tWR")),
+                tREFI   = self.ck_ns_to_cycles(self.get("tREFI", fine_refresh_mode), margin=False),
+                tRFC    = self.ck_ns_to_cycles(self.get("tRFC", fine_refresh_mode)),
+                tWTR    = self.ck_ns_to_cycles(self.get("tWTR")),
+                tFAW    = None if self.get("tFAW") is None else self.ck_ns_to_cycles(self.get("tFAW")),
+                tCCD    = None if self.get("tCCD") is None else self.ck_ns_to_cycles(self.get("tCCD")),
+                tCCD_WR = None if self.get("tCCD_WR") is None else self.ck_ns_to_cycles(self.get("tCCD_WR")),
+                tRRD    = None if self.get("tRRD") is None else self.ck_ns_to_cycles(self.get("tRRD")),
+                tRC     = None if self.get("tRAS") is None else self.ck_ns_to_cycles(self.get("tRP") + self.get("tRAS")),
+                tRAS    = None if self.get("tRAS") is None else self.ck_ns_to_cycles(self.get("tRAS")),
+                tZQCS   = None if self.get("tZQCS") is None else self.ck_ns_to_cycles(self.get("tZQCS"))
             )
             self.timing_settings.fine_refresh_mode = fine_refresh_mode
             for key in _technology_timings + _speedgrade_timings:
@@ -589,6 +593,7 @@ class SDRModule(SDRAMModule):
         tREFI   = (None, 64e6/1024),
         tWTR    = (2, None),
         tCCD    = (1, None),
+        tCCD_WR = None,
         tRRD    = (None, 14),
         tRP     = (None, 21),
         tRCD    = (None, 21),
@@ -718,6 +723,7 @@ class DDRModule(SDRAMModule):
         tREFI   = (None, 64e6/1024),
         tWTR    = (2, None),
         tCCD    = (1, None),
+        tCCD_WR = None,
         tRRD    = (None, 15),
         tRP     = (None, 20),
         tRCD    = (None, 20),
@@ -796,6 +802,7 @@ class DDR2Module(SDRAMModule):
         tREFI   = (None, 64e6/8192),
         tWTR    = (None, 10),
         tCCD    = (2, None),
+        tCCD_WR = None,
         tRRD    = (None, 10),
         tRP     = (None, 20),
         tRCD    = (None, 20),
@@ -853,6 +860,7 @@ class DDR3Module(SDRAMModule):
         tREFI   = (None, 64e6/8192),
         tWTR    = (4, 7.5),
         tCCD    = (4, None),
+        tCCD_WR = None,
         tRRD    = (4, 10),
         tRP     = (None, 15),
         tRCD    = (None, 15),
@@ -1133,6 +1141,7 @@ class RPCModule(SDRAMModule):
         tREFI   = (None, 64e6/4096),
         tWTR    = (16, None),
         tCCD    = (29, None),
+        tCCD_WR = None,
         tRRD    = (None, 7.5),
         tRP     = (None, 14),
         tRCD    = (None, 14),
@@ -1178,6 +1187,7 @@ class DDR4Module(SDRAMModule):
         tREFI   = (None, 64e6/8192),
         tWTR    = (4, 7.5),
         tCCD    = (5, 6.25),
+        tCCD_WR = None,
         tRRD    = (4, 7.5),
         tRP     = (None, 15),
         tRCD    = (None, 15),
@@ -1400,6 +1410,7 @@ class MT53E256M16D1(SDRAMModule):
         tREFI   = (None, 32e6/8192),
         tWTR    = (8, 12),
         tCCD    = (32, None),
+        tCCD_WR = None,
         tRRD    = (4, 10),
         tRP     = (4, 23),
         tRCD    = (4, 18),
@@ -1434,7 +1445,8 @@ class DDR5Module(SDRAMModule):
     maximal_values = dict(
         tREFI   = (None, 32e6/8192),
         tWTR    = (104, None),
-        tCCD    = (32, 20),
+        tCCD    = (8,  5),
+        tCCD_WR = (32, 20),
         tRRD    = (8, 5),
         tRP     = (None, 17.5),
         tRCD    = (None, 17.5),
@@ -1462,7 +1474,7 @@ class MT60B2G8HB48B(DDR5Module):
     # TODO: tZQCS - performing ZQC during runtime will require modifying Refresher, as ZQC has to be done in 2 phases
     # 1. ZQCAL START is issued 2. ZQCAL LATCH updates the values, the time START->LATCH tZQCAL=1us, so we cannot block
     # the controller during this time, after ZQCAL LATCH we have to wait tZQLAT=max(8ck, 30ns)
-    technology_timings = _TechnologyTimings(tREFI=trefi, tWTR=(16, 10), tCCD=(32, 20), tRRD=(8, 5), tZQCS=None)
+    technology_timings = _TechnologyTimings(tREFI=trefi, tWTR=(16, 10), tCCD=(8, 5), tCCD_WR=(32, 20), tRRD=(8, 5), tZQCS=None)
     speedgrade_timings = {
         "4800": _SpeedgradeTimings(tRP=16.666, tRCD=16.666, tWR=30, tRFC=trfc, tFAW=(32, 13.333), tRAS=32),  # TODO: tRAS_max
     }
@@ -1482,7 +1494,7 @@ class M329R8GA0BB0(DDR5RegisteredModule):
     # TODO: tZQCS - performing ZQC during runtime will require modifying Refresher, as ZQC has to be done in 2 phases
     # 1. ZQCAL START is issued 2. ZQCAL LATCH updates the values, the time START->LATCH tZQCAL=1us, so we cannot block
     # the controller during this time, after ZQCAL LATCH we have to wait tZQLAT=max(8ck, 30ns)
-    technology_timings = _TechnologyTimings(tREFI=trefi, tWTR=(16, 10), tCCD=(32, 20), tRRD=(8, 5), tZQCS=None)
+    technology_timings = _TechnologyTimings(tREFI=trefi, tWTR=(16, 10), tCCD=(8, 5), tCCD_WR=(32, 20), tRRD=(8, 5), tZQCS=None)
     speedgrade_timings = {
         "4800": _SpeedgradeTimings(tRP=16, tRCD=16, tWR=30, tRFC=trfc, tFAW=(32, 13.333), tRAS=32),  # TODO: tRAS_max
     }
@@ -1502,7 +1514,7 @@ class MTC10F1084S1RC(DDR5RegisteredModule):
     # TODO: tZQCS - performing ZQC during runtime will require modifying Refresher, as ZQC has to be done in 2 phases
     # 1. ZQCAL START is issued 2. ZQCAL LATCH updates the values, the time START->LATCH tZQCAL=1us, so we cannot block
     # the controller during this time, after ZQCAL LATCH we have to wait tZQLAT=max(8ck, 30ns)
-    technology_timings = _TechnologyTimings(tREFI=trefi, tWTR=(16, 10), tCCD=(32, 20), tRRD=(8, 5), tZQCS=None)
+    technology_timings = _TechnologyTimings(tREFI=trefi, tWTR=(16, 10), tCCD=(8, 5), tCCD_WR=(32, 20), tRRD=(8, 5), tZQCS=None)
     speedgrade_timings = {
         "4800": _SpeedgradeTimings(tRP=16, tRCD=16, tWR=30, tRFC=trfc, tFAW=(32, 13.333), tRAS=32),  # TODO: tRAS_max
     }

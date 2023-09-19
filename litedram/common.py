@@ -398,7 +398,7 @@ class GeomSettings(Settings):
 
 
 class TimingSettings(Settings):
-    def __init__(self, tRP, tRCD, tWR, tWTR, tREFI, tRFC, tFAW, tCCD, tRRD, tRC, tRAS, tZQCS):
+    def __init__(self, tRP, tRCD, tWR, tWTR, tREFI, tRFC, tFAW, tCCD, tCCD_WR, tRRD, tRC, tRAS, tZQCS):
         self.set_attributes(locals())
 
 # Layouts/Interface --------------------------------------------------------------------------------

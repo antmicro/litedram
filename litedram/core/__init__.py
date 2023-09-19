@@ -48,8 +48,14 @@ class LiteDRAMCore(Module, AutoCSR):
                 phy.settings.nphases)
             self.comb += controller.dfi.connect(intermediate_bus, omit=["cs_n"])
             self.comb += [
-                inter_phase.cs_n[0].eq(controlr_phase.cs_n) for (inter_phase, controlr_phase) in
-                    zip(intermediate_bus.phases, controller.dfi.phases)]
+                inter_phase.cs_n[0].eq(controlr_phase.cs_n)
+                    for (inter_phase, controlr_phase) in
+                        zip(intermediate_bus.phases, controller.dfi.phases)
+                ]
+            for i in range(1, phy.settings.nranks):
+                self.comb += [
+                    inter_phase.cs_n[i].eq(1)
+                        for inter_phase in intermediate_bus.phases]
             self.comb += intermediate_bus.connect(self.dfii.slave)
 
         self.submodules.crossbar = LiteDRAMCrossbar(controller.interface)
