@@ -179,6 +179,16 @@ class BankMachine(Module):
             self.submodules.tccdwr = tccdwr = tXXDController(timing_regs['tCCD_WR'])
             self.comb += tccdwr.valid.eq(cmd.valid & cmd.ready & cmd.is_write)
 
+            R2W_delay = Signal(4)
+            self.comb += R2W_delay.eq(int((14 + 8 + settings.phy.nphases - 1)/ settings.phy.nphases))
+            self.submodules.trtw = trtw = tXXDController(R2W_delay)
+            self.comb += trtw.valid.eq(cmd.valid & cmd.ready & cmd.is_read)
+
+            W2R_delay = Signal(len(timing_regs['tWR']))
+            self.sync += W2R_delay.eq(timing_regs['tWR'] - timing_regs["tRTP"])
+            self.submodules.twtr = twtr = tXXDController(W2R_delay)
+            self.comb += twtr.valid.eq(cmd.valid & cmd.ready & cmd.is_write)
+
         # Auto Precharge generation ----------------------------------------------------------------
         # generate auto precharge when current and next cmds are to different rows
         if settings.with_auto_precharge:
@@ -192,6 +202,32 @@ class BankMachine(Module):
 
         # Control and command generation FSM -------------------------------------------------------
         # Note: tRRD, tFAW, tCCD, tWTR timings are enforced by the multiplexer
+        def ddr5_write_next_state():
+            if settings.phy.memtype != "DDR5":
+                return []
+            write_after_write = Signal()
+            self.comb += write_after_write.eq(
+                cmd_buffer_lookahead.source.valid & cmd_buffer_lookahead.source.we)
+
+            return [If(cmd.ready & write_after_write,
+                        NextState("TW2W"),
+                    ).Elif(cmd.ready,
+                        NextState("TW2R")
+                    )]
+
+        def ddr5_read_next_state():
+            if settings.phy.memtype != "DDR5":
+                return []
+            read_after_read = Signal()
+            self.comb += read_after_read.eq(
+                cmd_buffer_lookahead.source.valid & ~cmd_buffer_lookahead.source.we)
+
+            return [If(cmd.ready & read_after_read,
+                        NextState("TR2R"),
+                    ).Elif(cmd.ready,
+                        NextState("TR2W")
+                    )]
+
         self.submodules.fsm = fsm = FSM()
         fsm.act("REGULAR",
             If(refresh_req,
@@ -202,11 +238,11 @@ class BankMachine(Module):
                     req.wdata_ready.eq(cmd.ready),
                     cmd.is_write.eq(1),
                     cmd.we.eq(1),
-                    *([If(cmd.ready, NextState("TCCDWR"))] if settings.phy.memtype == "DDR5" else [])
+                    *(ddr5_write_next_state())
                 ).Else(
                     req.rdata_valid.eq(cmd.ready),
                     cmd.is_read.eq(1),
-                    *([If(cmd.ready, NextState("TCCD"))] if settings.phy.memtype == "DDR5" else [])
+                    *(ddr5_read_next_state())
                 ),
                 cmd.cas.eq(1),
                 If(cmd.ready & auto_precharge,
@@ -274,13 +310,23 @@ class BankMachine(Module):
             )
         )
         if settings.phy.memtype == "DDR5":
-            fsm.act("TCCD",
+            fsm.act("TR2R",
                 If(tccd.ready,
                     NextState("REGULAR"),
                 ),
             )
-            fsm.act("TCCDWR",
+            fsm.act("TW2W",
                 If(tccdwr.ready,
+                    NextState("REGULAR"),
+                ),
+            )
+            fsm.act("TR2W",
+                If(trtw.ready,
+                    NextState("REGULAR"),
+                ),
+            )
+            fsm.act("TW2R",
+                If(twtr.ready,
                     NextState("REGULAR"),
                 ),
             )

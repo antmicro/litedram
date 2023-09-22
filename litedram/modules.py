@@ -24,10 +24,10 @@ from litedram.common import Settings, GeomSettings, TimingSettings
 
 # Timings ------------------------------------------------------------------------------------------
 
-_technology_timings = ["tREFI", "tWTR", "tCCD", "tCCD_WR", "tRRD", "tZQCS"]
+_technology_timings = ["tREFI", "tWTR", "tCCD", "tCCD_WR", "tRTP", "tRRD", "tZQCS"]
 
 class _TechnologyTimings(Settings):
-    def __init__(self, tREFI, tWTR, tCCD, tRRD, tCCD_WR=None, tZQCS=None):
+    def __init__(self, tREFI, tWTR, tCCD, tRRD, tCCD_WR=None, tRTP=None, tZQCS=None):
         self.set_attributes(locals())
 
 
@@ -328,12 +328,14 @@ class DDR5SPDData(DDR4SPDData):
         tccd_l_wr_min = _word(b[77], b[76]) / 1000
         tfaw_min   = _word(b[83], b[82]) / 1000
         twtr_l_min = _word(b[86], b[85]) / 1000
+        trtp_min   = _word(b[92], b[91]) / 1000
 
         technology_timings = _TechnologyTimings(
             tREFI   = self.trefi,
             tWTR    = (b[87], twtr_l_min),
             tCCD    = (b[75], tccd_l_min),
             tCCD_WR = (b[78], tccd_l_wr_min),
+            tRTP    = (b[93], trtp_min),
             tRRD    = (b[72], trrd_l_min),
             tZQCS   = None,
         )
@@ -423,6 +425,7 @@ class SDRAMModule:
             tFAW    = None if self.get("tFAW",  timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tFAW",  timing_clip=True)),
             tCCD    = None if self.get("tCCD",  timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tCCD",  timing_clip=True)),
             tCCD_WR = None if self.get("tCCD_WR",  timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tCCD_WR",  timing_clip=True)),
+            tRTP    = None if self.get("tRTP",  timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tRTP",  timing_clip=True)),
             tRRD    = None if self.get("tRRD",  timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tRRD",  timing_clip=True)),
             tRC     = None if self.get("tRC",   timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tRC",   timing_clip=True)),
             tRAS    = None if self.get("tRAS",  timing_clip=True) is None else self.ck_ns_to_cycles(self.get("tRAS",  timing_clip=True)),
@@ -444,6 +447,7 @@ class SDRAMModule:
                 tFAW    = None if self.get("tFAW") is None else self.ck_ns_to_cycles(self.get("tFAW")),
                 tCCD    = None if self.get("tCCD") is None else self.ck_ns_to_cycles(self.get("tCCD")),
                 tCCD_WR = None if self.get("tCCD_WR") is None else self.ck_ns_to_cycles(self.get("tCCD_WR")),
+                tRTP    = None if self.get("tRTP") is None else self.ck_ns_to_cycles(self.get("tRTP")),
                 tRRD    = None if self.get("tRRD") is None else self.ck_ns_to_cycles(self.get("tRRD")),
                 tRC     = None if self.get("tRAS") is None else self.ck_ns_to_cycles(self.get("tRP") + self.get("tRAS")),
                 tRAS    = None if self.get("tRAS") is None else self.ck_ns_to_cycles(self.get("tRAS")),
@@ -594,6 +598,7 @@ class SDRModule(SDRAMModule):
         tWTR    = (2, None),
         tCCD    = (1, None),
         tCCD_WR = None,
+        tRTP    = None,
         tRRD    = (None, 14),
         tRP     = (None, 21),
         tRCD    = (None, 21),
@@ -724,6 +729,7 @@ class DDRModule(SDRAMModule):
         tWTR    = (2, None),
         tCCD    = (1, None),
         tCCD_WR = None,
+        tRTP    = None,
         tRRD    = (None, 15),
         tRP     = (None, 20),
         tRCD    = (None, 20),
@@ -803,6 +809,7 @@ class DDR2Module(SDRAMModule):
         tWTR    = (None, 10),
         tCCD    = (2, None),
         tCCD_WR = None,
+        tRTP    = None,
         tRRD    = (None, 10),
         tRP     = (None, 20),
         tRCD    = (None, 20),
@@ -861,6 +868,7 @@ class DDR3Module(SDRAMModule):
         tWTR    = (4, 7.5),
         tCCD    = (4, None),
         tCCD_WR = None,
+        tRTP    = None,
         tRRD    = (4, 10),
         tRP     = (None, 15),
         tRCD    = (None, 15),
@@ -1142,6 +1150,7 @@ class RPCModule(SDRAMModule):
         tWTR    = (16, None),
         tCCD    = (29, None),
         tCCD_WR = None,
+        tRTP    = None,
         tRRD    = (None, 7.5),
         tRP     = (None, 14),
         tRCD    = (None, 14),
@@ -1188,6 +1197,7 @@ class DDR4Module(SDRAMModule):
         tWTR    = (4, 7.5),
         tCCD    = (5, 6.25),
         tCCD_WR = None,
+        tRTP    = None,
         tRRD    = (4, 7.5),
         tRP     = (None, 15),
         tRCD    = (None, 15),
@@ -1411,6 +1421,7 @@ class MT53E256M16D1(SDRAMModule):
         tWTR    = (8, 12),
         tCCD    = (32, None),
         tCCD_WR = None,
+        tRTP    = None,
         tRRD    = (4, 10),
         tRP     = (4, 23),
         tRCD    = (4, 18),
@@ -1447,10 +1458,11 @@ class DDR5Module(SDRAMModule):
         tWTR    = (104, None),
         tCCD    = (8,  5),
         tCCD_WR = (32, 20),
+        tRTP    = (12, 7.5),
         tRRD    = (8, 5),
         tRP     = (None, 17.5),
         tRCD    = (None, 17.5),
-        tWR     = (96, 30),
+        tWR     = (None, 30),
         tRFC    = (None, 410),
         tRC     = (None, 49.5),
         tFAW    = (40, 25),

@@ -45,7 +45,8 @@ class ControllerSettings(Settings):
         self.set_attributes(locals())
 
 
-REGISTER_NAMES = ("tRP", "tRCD", "tWR", "tWTR", "tREFI", "tRFC", "tFAW", "tCCD", "tCCD_WR", "tRRD", "tRC", "tRAS", "tZQCS")
+REGISTER_NAMES = ("tRP", "tRCD", "tWR", "tWTR", "tREFI", "tRFC",
+    "tFAW", "tCCD", "tCCD_WR", "tRTP", "tRRD", "tRC", "tRAS", "tZQCS")
 class LiteDRAMControllerRegisterBank(Module, AutoCSR):
     def __init__(self, initial_timings, max_expected_values, memtype):
         for reg in REGISTER_NAMES:
