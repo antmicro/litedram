@@ -379,7 +379,7 @@ class SimSoC(SoCCore):
             phy                     = self.ddrphy,
             module                  = sdram_module,
             origin                  = self.mem_map["main_ram"],
-            size                    = kwargs.get("max_sdram_size", 0x40000000),
+            size                    = 0x20000000,
             l2_cache_size           = kwargs.get("l2_size", 8192),
             l2_cache_min_data_width = kwargs.get("min_l2_data_width", 128),
             l2_cache_reverse        = False,
@@ -687,8 +687,7 @@ def main():
             data_width = 32,
             endianness = 'little',
         )
-
-       soc.add_ram("images", origin = 0x80000000, size=0x40000000, contents=init_data)
+        soc.add_ram("images", origin = 0x60000000, size=0x20000000, contents=init_data)
 
     if args.with_ethernet:
         for i in range(4):
