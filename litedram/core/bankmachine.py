@@ -152,10 +152,13 @@ class BankMachine(Module):
 
         # Address generation -----------------------------------------------------------------------
         row_col_n_addr_sel = Signal()
+        pre_n_addr_sel = Signal()
         self.comb += [
             cmd.ba.eq(n),
             If(row_col_n_addr_sel,
                 cmd.a.eq(slicer.row(cmd_buffer.source.addr))
+            ).Elif(pre_n_addr_sel,
+                cmd.a.eq(0),
             ).Else(
                 cmd.a.eq((auto_precharge << 10) | slicer.col(cmd_buffer.source.addr))
             )
@@ -262,6 +265,7 @@ class BankMachine(Module):
                     NextValue(self.timer, timing_regs['tRP'] - 1),
                     NextState("TRP")
                 ),
+                pre_n_addr_sel.eq(1),
                 cmd.ras.eq(1),
                 cmd.we.eq(1),
                 cmd.is_cmd.eq(1)

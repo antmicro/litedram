@@ -316,6 +316,7 @@ class CommandsSim(Module):
             MRR  = self.mrr_handler(prefix),
             REF  = self.refresh_handler(prefix),
             ACT  = self.activate_handler(prefix),
+            PRE_M = precharge_handler_multiple_banks(prefix),
             PRE  = self.precharge_handler(prefix),
             MPC  = self.mpc_handler(prefix),
             VREF = self.vref_handler(prefix),
@@ -851,7 +852,7 @@ class CommandsSim(Module):
             handle_cmd = self.decode.handle_2_tick_cmd,
         )
 
-    def precharge_handler(self, prefix):
+    def precharge_handler_multiple_banks(self, prefix):
         bank = Signal(2)
         return self.cmd_one_step("PRECHARGE",
             cond = self.decode.cs_n_low[:5] == 0b01011,
@@ -865,12 +866,33 @@ class CommandsSim(Module):
             ],
             sync = [
                 If(~self.decode.cs_n_low[10],
-                    *[self.active_banks[b].eq(0) for b in range(self.number_of_banks)]
+                    *[self.active_banks[b].eq(0)
+                        for b in range(self.number_of_banks)]
                 ).Else(
-                    self.active_banks[bank].eq(0),
-                    If(~self.active_banks[bank],
-                        self.log.warn(prefix+"PRE on inactive bank: bank=%d", bank)
-                    ),
+                    *[self.active_banks[bank+8*bank_group].eq(0)
+                        for bank_group in range(self.number_of_banks//4)],
+                    *[If(~self.active_banks[bank+8*bank_group],
+                        self.log.warn(
+                            prefix+"PRE on inactive bank: bank=%d",
+                            bank+8*bank_group)
+                    ) for bank_group in range(self.number_of_banks//4)],
+                ),
+            ],
+            handle_cmd = self.decode.handle_1_tick_cmd,
+        )
+
+    def precharge_handler(self, prefix):
+        bank = Signal(5)
+        return self.cmd_one_step("PRECHARGE SINGLE",
+            cond = self.decode.cs_n_low[:5] == 0b11011,
+            comb = [
+                self.log.info(prefix+"PRE: bank = %d", bank),
+                bank.eq(self.decode.cs_n_low[6:11]),
+            ],
+            sync = [
+                self.active_banks[bank].eq(0),
+                If(~self.active_banks[bank],
+                    self.log.warn(prefix+"PRE on inactive bank: bank=%d", bank)
                 ),
             ],
             handle_cmd = self.decode.handle_1_tick_cmd,

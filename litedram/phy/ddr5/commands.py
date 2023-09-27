@@ -125,7 +125,12 @@ class DFIPhaseAdapter(Module):
                 _cmd["ACT"]: [*cmds("ACTIVATE"), bl16.eq(0)],
                 _cmd["RD"]:  [*cmds("READ"), bl16.eq(0)],
                 _cmd["WR"]:  [*cmds("WRITE"), bl16.eq(0)],
-                _cmd["PRE"]: [*cmds("PRECHARGE ALL"), bl16.eq(0)],
+                _cmd["PRE"]: [
+                    If(~dfi_phase.address[10],
+                        *cmds("PRECHARGE SINGLE")
+                    ).Else(
+                        *cmds("PRECHARGE ALL")
+                    ), bl16.eq(0)],
                 _cmd["REF"]: [*cmds("REFRESH ALL"), bl16.eq(0)],
                 # Use bank address to select command type
                 _cmd["ZQC"]: Case(dfi_phase.bank, {
@@ -177,14 +182,16 @@ class Command(Module):
         "MRW":           ["H L H L L MRA0 MRA1 MRA2 MRA3 MRA4 MRA5 MRA6 MRA7 V",
                           "OP0 OP1 OP2 OP3 OP4 OP5 OP6 OP7 V V CW V V V"],
         # 1-cycle commands:
-        "PRECHARGE ALL": ["H H L H L CID3 V V V V L CID0 CID1 CID2",
-                          "X X X X X X X X X X X X X X"],
-        "REFRESH ALL":   ["H H L L H CID3 V V VorRIR VorH L CID0 CID1 CID2",
-                          "X X X X X X X X X X X X X X"],
-        "MPC":           ["H H H H L OP0 OP1 OP2 OP3 OP4 OP5 OP6 OP7 V",
-                          "X X X X X X X X X X X X X X"],
-        "DESELECT":      ["X X X X X X X X X X X X X X",
-                          "X X X X X X X X X X X X X X"]
+        "PRECHARGE ALL":    ["H H L H L CID3 V V V V L CID0 CID1 CID2",
+                             "X X X X X X X X X X X X X X"],
+        "PRECHARGE SINGLE": ["H H L H H CID3 BA0 BA1 BG0 BG1 BG2 CID0 CID1 CID2",
+                             "X X X X X X X X X X X X X X"],
+        "REFRESH ALL":      ["H H L L H CID3 V V VorRIR VorH L CID0 CID1 CID2",
+                             "X X X X X X X X X X X X X X"],
+        "MPC":              ["H H H H L OP0 OP1 OP2 OP3 OP4 OP5 OP6 OP7 V",
+                             "X X X X X X X X X X X X X X"],
+        "DESELECT":         ["X X X X X X X X X X X X X X",
+                             "X X X X X X X X X X X X X X"]
     }
 
     # BL is abbreviation for BL*=L from table from standard
