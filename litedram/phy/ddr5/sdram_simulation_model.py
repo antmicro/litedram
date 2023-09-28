@@ -316,7 +316,7 @@ class CommandsSim(Module):
             MRR  = self.mrr_handler(prefix),
             REF  = self.refresh_handler(prefix),
             ACT  = self.activate_handler(prefix),
-            PRE_M = precharge_handler_multiple_banks(prefix),
+            PRE_M = self.precharge_handler_multiple_banks(prefix),
             PRE  = self.precharge_handler(prefix),
             MPC  = self.mpc_handler(prefix),
             VREF = self.vref_handler(prefix),
