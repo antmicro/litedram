@@ -854,6 +854,7 @@ class CommandsSim(Module):
 
     def precharge_handler_multiple_banks(self, prefix):
         bank = Signal(2)
+        bank_id = Signal(64)
         return self.cmd_one_step("PRECHARGE",
             cond = self.decode.cs_n_low[:5] == 0b01011,
             comb = [
@@ -872,9 +873,9 @@ class CommandsSim(Module):
                     *[self.active_banks[bank+8*bank_group].eq(0)
                         for bank_group in range(self.number_of_banks//4)],
                     *[If(~self.active_banks[bank+8*bank_group],
+                        bank_id.eq(bank+8*bank_group),
                         self.log.warn(
-                            prefix+"PRE on inactive bank: bank=%d",
-                            bank+8*bank_group)
+                            prefix+"PRE on inactive bank: bank=%d", bank_id)
                     ) for bank_group in range(self.number_of_banks//4)],
                 ),
             ],
