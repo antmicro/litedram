@@ -148,6 +148,7 @@ class LiteDRAMController(Module):
             bank_machines.append(bank_machine)
             self.submodules += bank_machine
             self.comb += getattr(interface, "bank"+str(n)).connect(bank_machine.req)
+        self.bank_machines = bank_machines
 
         # Multiplexer ------------------------------------------------------------------------------
         self.submodules.multiplexer = Multiplexer(
@@ -159,4 +160,5 @@ class LiteDRAMController(Module):
             timing_regs   = timing_regs)
 
     def get_csrs(self):
-        return self.multiplexer.get_csrs() + self.registers.get_csrs()
+        return self.multiplexer.get_csrs() + self.registers.get_csrs() + \
+            reduce(add, [bank.get_csrs() for bank in self.bank_machines])

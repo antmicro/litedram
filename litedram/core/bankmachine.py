@@ -13,6 +13,7 @@ from migen import *
 
 from litex.soc.interconnect import stream
 
+from litex.soc.interconnect.csr import CSRStatus, AutoCSR
 from litedram.common import *
 from litedram.core.multiplexer import *
 
@@ -38,7 +39,7 @@ class _AddressSlicer:
 
 # BankMachine --------------------------------------------------------------------------------------
 
-class BankMachine(Module):
+class BankMachine(Module, AutoCSR):
     """Converts requests from ports into DRAM commands
 
     BankMachine abstracts single DRAM bank by keeping track of the currently
@@ -233,6 +234,18 @@ class BankMachine(Module):
                         NextState("TR2W")
                     )]
 
+        self.last_addr = CSRStatus(size=len(cmd_buffer_lookahead.source.addr),
+                                   name=f"last_addr_{n}");
+        self.last_active_row = CSRStatus(size=len(cmd.a),
+                                         name=f"last_active_row_{n}");
+        self.sync += [
+            If(cmd_buffer.source.valid & cmd_buffer.source.ready,
+                self.last_addr.status.eq(cmd_buffer.source.addr)
+            ),
+            If(cmd.valid & cmd.ready & row_open,
+                self.last_active_row.status.eq(cmd.a)
+            )
+        ]
         self.submodules.fsm = fsm = FSM()
         fsm.act("REGULAR",
             If(refresh_req,
