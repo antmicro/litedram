@@ -174,9 +174,9 @@ class Command(Module):
         "ACTIVATE":      ["L L R0 R1 R2 R3 BA0 BA1 BG0 BG1 BG2 CID0 CID1 CID2",
                           "R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 R15 R16 CID3/R17"],
         "READ":          ["H L H H H BL BA0 BA1 BG0 BG1 BG2 CID0 CID1 CID2",
-                          "C2 C3 C4 C5 C6 C7 C8 C9 C10 V H V V CID3"],
+                          "C2 C3 C4 C5 C6 C7 C8 C9 C10 V AP V V CID3"],
         "WRITE":         ["H L H H L BL BA0 BA1 BG0 BG1 BG2 CID0 CID1 CID2",
-                          "V C3 C4 C5 C6 C7 C8 C9 C10 V H WRP V CID3"],
+                          "V C3 C4 C5 C6 C7 C8 C9 C10 V AP WRP V CID3"],
         "MRR":           ["H L H L H MRA0 MRA1 MRA2 MRA3 MRA4 MRA5 MRA6 MRA7 V",
                           "L L V V V V V V V V CW V V V"],
         "MRW":           ["H L H L L MRA0 MRA1 MRA2 MRA3 MRA4 MRA5 MRA6 MRA7 V",
@@ -241,6 +241,7 @@ class Command(Module):
             r"BA(\d+)":  lambda i: self.dfi.bank[i],  # bank address
             r"R(\d+)":   lambda i: self.dfi.address[i],  # row
             r"C(\d+)":   lambda i: self.dfi.address[i],  # column
+            r"AP":       lambda: self.dfi.address[11],
             r"MRA(\d+)": lambda i: mr_address[i],  # mode register address
             r"OP(\d+)":  lambda i: self.dfi.address[i],  # mode register value, or operand for MPC
             r"CID(\d+)": lambda i: 0,  # chip id; used for 3DS stacking, need to be just valid if unused

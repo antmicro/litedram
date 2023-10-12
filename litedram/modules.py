@@ -342,7 +342,7 @@ class DDR5SPDData(DDR4SPDData):
         speedgrade_timings = _SpeedgradeTimings(
             tRP  = trp_min,
             tRCD = trcd_min,
-            tWR  = twr_min,
+            tWR  = (48, twr_min),
             tRFC = self.trfc,
             tFAW = (b[84], tfaw_min),
             tRAS = tras_min,
@@ -1462,7 +1462,7 @@ class DDR5Module(SDRAMModule):
         tRRD    = (8, 5),
         tRP     = (None, 17.5),
         tRCD    = (None, 17.5),
-        tWR     = (None, 30),
+        tWR     = (48, 30),
         tRFC    = (None, 410),
         tRC     = (None, 49.5),
         tFAW    = (40, 25),

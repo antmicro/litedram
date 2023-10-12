@@ -160,7 +160,9 @@ class BankMachine(Module):
             ).Elif(pre_n_addr_sel,
                 cmd.a.eq(0),
             ).Else(
-                cmd.a.eq((auto_precharge << 10) | slicer.col(cmd_buffer.source.addr))
+                cmd.a.eq(
+                    (auto_precharge << 10) if settings.phy.memtype != "DDR5" else ((~auto_precharge) << 11)\
+                | slicer.col(cmd_buffer.source.addr))
             )
         ]
 
