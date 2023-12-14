@@ -137,7 +137,7 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
             assert len(ca_i) == 2
             ca_4bit_i = Signal(4)
             ca_4bit_o = Signal(4)
-            self.comb += cmd_4bit_i.eq(Cat([Replicate(bit, 2) for bit in cmd_i]))
+            self.comb += ca_4bit_i.eq(Cat([Replicate(bit, 2) for bit in cmd_i]))
             # slp=3 / dw=4 => 270-deg shift
             self.submodules += ConstBitSlip(dw=4, slp=3, cycles=1, register=False, i=ca_4bit_i, o=ca_4bit_o)
 
