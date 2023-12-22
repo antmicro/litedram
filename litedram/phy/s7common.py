@@ -209,6 +209,13 @@ class S7Common(Module):
             o_OB = dout_b,
         )
 
+    def ibufds(self, *, din, din_b, dout):
+        self.specials += Instance("IBUFDS",
+            i_I  = din,
+            i_IB = din_b,
+            o_O  = dout,
+        )
+
     def iobufds(self, *, din, dout, dinout, dinout_b, tin):
         self.specials += Instance("IOBUFDS",
             i_T    = tin,
