@@ -163,7 +163,6 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
         # DQS
         for byte in range(self.databits//8):
             # DQS
-            dqs_t     = Signal()
             dqs_ser   = Signal()
             dqs_dly   = Signal()
             dqs_i     = Signal()
@@ -177,8 +176,6 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
             data_ser(
                 din     = dqs_din,
                 **(dict(dout_fb=dqs_ser) if with_odelay else dict(dout=dqs_dly)),
-                tin     = ~oe_delay_dqs(self.out.rdqs_oe),
-                tout    = dqs_t,
                 clk     = "sys4x" if with_odelay else "sys4x_90",
                 clkdiv  = "sys"
             )
@@ -191,12 +188,10 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
                     init = half_sys4x_taps,  # shifts by 90 degrees
                     clk  = "sys"
                 )
-            self.iobufds(
-                din      = dqs_dly,
+            self.ibufds(
                 dout     = dqs_i,
-                tin      = dqs_t,
-                dinout   = self.pads.rdqs_p[byte],
-                dinout_b = self.pads.rdqs_n[byte],
+                din   = self.pads.rdqs_p[byte],
+                din_b = self.pads.rdqs_n[byte],
             )
             self.idelaye2(
                 din  = dqs_i,
