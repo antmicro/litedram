@@ -232,3 +232,14 @@ class S7Common(Module):
             o_O   = dout,
             io_IO = dinout,
         )
+
+    def ibuf(self, *, din, dout):
+        self.specials += Instance("IBUF",
+            i_I   = din,
+            o_O   = dout
+        )
+    def obuf(self, *, din, dout):
+        self.specials += Instance("OBUF",
+            i_I   = din,
+            o_O   = dout
+        )
