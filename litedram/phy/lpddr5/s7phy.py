@@ -207,16 +207,13 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
                 clkdiv = "sys",
             )
 
-        # DMI
+        # DMI MEM -> FPGA
         for byte in range(self.databits//8):
-            dmi_t   = Signal()
             dmi_ser = Signal()
             dmi_dly = Signal()
             data_ser(
                 din     = self.out.dmi_o[byte],
                 **(dict(dout_fb=dmi_ser) if with_odelay else dict(dout=dmi_dly)),
-                tin     = ~oe_delay_data(self.out.dmi_oe),
-                tout    = dmi_t,
                 clk     = "sys4x",
                 clkdiv  = "sys"
             )
@@ -228,16 +225,36 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
                     inc  = self.get_inc(byte, wdly_dq_inc),
                     clk  = "sys"
                 )
-            self.iobuf(
-                din    = dmi_dly,
+            self.ibuf(
+                din    = self.pads.dmi_in[byte],
                 dout   = Signal(),
-                tin    = dmi_t,
-                dinout = self.pads.dmi[byte],
             )
 
-        # DQ
-        for bit in range(self.databits):
-            dq_t     = Signal()
+        # DMI FPGA -> MEM
+        for byte in range(self.databits//8):
+            dmi_ser = Signal()
+            dmi_dly = Signal()
+            data_ser(
+                din     = self.out.dmi_o[byte],
+                **(dict(dout_fb=dmi_ser) if with_odelay else dict(dout=dmi_dly)),
+                clk     = "sys4x",
+                clkdiv  = "sys"
+            )
+            if with_odelay:
+                self.odelaye2(
+                    din  = dmi_ser,
+                    dout = dmi_dly,
+                    rst  = self.get_rst(byte, wdly_dq_rst),
+                    inc  = self.get_inc(byte, wdly_dq_inc),
+                    clk  = "sys"
+                )
+            self.obuf(
+                din    = dmi_dly,
+                dout = self.pads.dmi_out[byte],
+            )
+
+        # DQ MEM -> FPGA
+        for bit in range(self.databits // 2):
             dq_ser   = Signal()
             dq_dly   = Signal()
             dq_i     = Signal()
@@ -245,8 +262,6 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
             data_ser(
                 din     = self.out.dq_o[bit],
                 **(dict(dout_fb=dq_ser) if with_odelay else dict(dout=dq_dly)),
-                tin     = ~oe_delay_data(self.out.dmi_oe),
-                tout    = dq_t,
                 clk     = "sys4x",
                 clkdiv  = "sys"
             )
@@ -258,11 +273,48 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
                     inc  = self.get_inc(bit//8, wdly_dq_inc),
                     clk  = "sys"
                 )
-            self.iobuf(
-                din    = dq_dly,
+            self.ibuf(
                 dout   = dq_i,
-                dinout = self.pads.dq[bit],
-                tin    = dq_t
+                din    = self.pads.dq_in[bit],
+            )
+            self.idelaye2(
+                din  = dq_i,
+                dout = dq_i_dly,
+                rst  = self.get_rst(bit//8, rdly_dq_rst),
+                inc  = self.get_inc(bit//8, rdly_dq_inc),
+                clk  = "sys"
+            )
+            data_des(
+                din    = dq_i_dly,
+                dout   = self.out.dq_i[bit],
+                clk    = "sys4x",
+                clkdiv = "sys"
+            )
+
+        # DQ FPGA -> MEM
+        for bit in range(self.databits // 2):
+            dq_t     = Signal()
+            dq_ser   = Signal()
+            dq_dly   = Signal()
+            dq_i     = Signal()
+            dq_i_dly = Signal()
+            data_ser(
+                din     = self.out.dq_o[bit],
+                **(dict(dout_fb=dq_ser) if with_odelay else dict(dout=dq_dly)),
+                clk     = "sys4x",
+                clkdiv  = "sys"
+            )
+            if with_odelay:
+                self.odelaye2(
+                    din  = dq_ser,
+                    dout = dq_dly,
+                    rst  = self.get_rst(bit//8, wdly_dq_rst),
+                    inc  = self.get_inc(bit//8, wdly_dq_inc),
+                    clk  = "sys"
+                )
+            self.obuf(
+                din    = dq_dly,
+                dout = self.pads.dq_out[bit],
             )
             self.idelaye2(
                 din  = dq_i,
