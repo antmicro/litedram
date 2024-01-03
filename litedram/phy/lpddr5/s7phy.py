@@ -168,26 +168,26 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
             dqs_i     = Signal()
             dqs_i_dly = Signal()
             # need to delay DQS if clocks are not phase aligned
-            dqs_din = self.out.rdqs_o[byte]
-            if not with_odelay:
-                dqs_din_d = Signal.like(dqs_din)
-                self.sync += dqs_din_d.eq(dqs_din)
-                dqs_din = dqs_din_d
-            data_ser(
-                din     = dqs_din,
-                **(dict(dout_fb=dqs_ser) if with_odelay else dict(dout=dqs_dly)),
-                clk     = "sys4x" if with_odelay else "sys4x_90",
-                clkdiv  = "sys"
-            )
-            if with_odelay:
-                self.odelaye2(
-                    din  = dqs_ser,
-                    dout = dqs_dly,
-                    rst  = self.get_rst(byte, wdly_dqs_rst),
-                    inc  = self.get_inc(byte, wdly_dqs_inc),
-                    init = half_sys4x_taps,  # shifts by 90 degrees
-                    clk  = "sys"
-                )
+#            dqs_din = self.out.rdqs_o[byte]
+#            if not with_odelay:
+#                dqs_din_d = Signal.like(dqs_din)
+#                self.sync += dqs_din_d.eq(dqs_din)
+#                dqs_din = dqs_din_d
+#            data_ser(
+#                din     = dqs_din,
+#                **(dict(dout_fb=dqs_ser) if with_odelay else dict(dout=dqs_dly)),
+#                clk     = "sys4x" if with_odelay else "sys4x_90",
+#                clkdiv  = "sys"
+#            )
+#            if with_odelay:
+#                self.odelaye2(
+#                    din  = dqs_ser,
+#                    dout = dqs_dly,
+#                    rst  = self.get_rst(byte, wdly_dqs_rst),
+#                    inc  = self.get_inc(byte, wdly_dqs_inc),
+#                    init = half_sys4x_taps,  # shifts by 90 degrees
+#                    clk  = "sys"
+#                )
             self.ibufds(
                 dout     = dqs_i,
                 din   = self.pads.rdqs_p[byte],
@@ -211,23 +211,26 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
         for byte in range(self.databits//8):
             dmi_ser = Signal()
             dmi_dly = Signal()
-            data_ser(
-                din     = self.out.dmi_o[byte],
-                **(dict(dout_fb=dmi_ser) if with_odelay else dict(dout=dmi_dly)),
-                clk     = "sys4x",
-                clkdiv  = "sys"
+
+            self.ibuf(
+                din    = self.pads.dmi_in[byte],
+                dout   = dmi_ser,
             )
+
             if with_odelay:
-                self.odelaye2(
+                self.idelaye2(
                     din  = dmi_ser,
                     dout = dmi_dly,
                     rst  = self.get_rst(byte, wdly_dq_rst),
                     inc  = self.get_inc(byte, wdly_dq_inc),
                     clk  = "sys"
                 )
-            self.ibuf(
-                din    = self.pads.dmi_in[byte],
-                dout   = Signal(),
+
+            data_des(
+                din     = dmi_dly,
+                dout    = self.out.dmi_i[byte],
+                clk     = "sys4x",
+                clkdiv  = "sys"
             )
 
         # DMI FPGA -> MEM
@@ -259,20 +262,20 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
             dq_dly   = Signal()
             dq_i     = Signal()
             dq_i_dly = Signal()
-            data_ser(
-                din     = self.out.dq_o[bit],
-                **(dict(dout_fb=dq_ser) if with_odelay else dict(dout=dq_dly)),
-                clk     = "sys4x",
-                clkdiv  = "sys"
-            )
-            if with_odelay:
-                self.odelaye2(
-                    din  = dq_ser,
-                    dout = dq_dly,
-                    rst  = self.get_rst(bit//8, wdly_dq_rst),
-                    inc  = self.get_inc(bit//8, wdly_dq_inc),
-                    clk  = "sys"
-                )
+            #data_ser(
+            #    din     = self.out.dq_o[bit],
+            #    **(dict(dout_fb=dq_ser) if with_odelay else dict(dout=dq_dly)),
+            #    clk     = "sys4x",
+            #    clkdiv  = "sys"
+            #)
+            #if with_odelay:
+            #    self.odelaye2(
+            #        din  = dq_ser,
+            #        dout = dq_dly,
+            #        rst  = self.get_rst(bit//8, wdly_dq_rst),
+            #        inc  = self.get_inc(bit//8, wdly_dq_inc),
+            #        clk  = "sys"
+            #    )
             self.ibuf(
                 dout   = dq_i,
                 din    = self.pads.dq_in[bit],
@@ -316,19 +319,19 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
                 din    = dq_dly,
                 dout = self.pads.dq_out[bit],
             )
-            self.idelaye2(
-                din  = dq_i,
-                dout = dq_i_dly,
-                rst  = self.get_rst(bit//8, rdly_dq_rst),
-                inc  = self.get_inc(bit//8, rdly_dq_inc),
-                clk  = "sys"
-            )
-            data_des(
-                din    = dq_i_dly,
-                dout   = self.out.dq_i[bit],
-                clk    = "sys4x",
-                clkdiv = "sys"
-            )
+      #      self.idelaye2(
+      #          din  = dq_i,
+      #          dout = dq_i_dly,
+      #          rst  = self.get_rst(bit//8, rdly_dq_rst),
+      #          inc  = self.get_inc(bit//8, rdly_dq_inc),
+      #          clk  = "sys"
+      #      )
+      #      data_des(
+      #          din    = dq_i_dly,
+      #          dout   = self.out.dq_i[bit],
+      #          clk    = "sys4x",
+      #          clkdiv = "sys"
+      #      )
 
 # PHY variants -------------------------------------------------------------------------------------
 
