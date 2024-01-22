@@ -967,6 +967,9 @@ class CommandsSim(Module):
         base = 0b01010000
         for i in range(8):
             cases[base+i] = [self.log.info(prefix+f"MPC: DQS_RTT_PARK {i}")]
+        base = 0b01011000
+        for i in range(8):
+            cases[base+i] = [self.log.info(prefix+f"MPC: RTT_PARL {i}")]
 
         cases["default"] = [self.log.error(prefix+"Invalid MPC op=0b%08b", self.mpc_op)]
         return self.cmd_one_step("MPC",
@@ -998,6 +1001,8 @@ class CommandsSim(Module):
                     self.mode_regs[33][:3].eq(self.shadowTCA),
                 ).Elif(self.mpc_op[3:] == 0b01010,
                     self.mode_regs[33][3:6].eq(self.mpc_op[:3]),
+                ).Elif(self.mpc_op[3:] == 0b01011,
+                    self.mode_regs[34][0:3].eq(self.mpc_op[:3]),
                 ).Elif(self.pda_start,
                     self.pda_select.eq(self.mpc_op[0:4]),
                 )
