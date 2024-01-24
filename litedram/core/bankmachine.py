@@ -154,6 +154,11 @@ class BankMachine(Module, AutoCSR):
         # Address generation -----------------------------------------------------------------------
         row_col_n_addr_sel = Signal()
         pre_n_addr_sel = Signal()
+        pre_sig = Signal(12)
+        if settings.phy.memtype != "DDR5":
+            self.comb += [pre_sig.eq((auto_precharge << 10))]
+        else:
+            self.comb += [pre_sig.eq((~auto_precharge) << 11)]
         self.comb += [
             cmd.ba.eq(n),
             If(row_col_n_addr_sel,
@@ -161,9 +166,7 @@ class BankMachine(Module, AutoCSR):
             ).Elif(pre_n_addr_sel,
                 cmd.a.eq(0),
             ).Else(
-                cmd.a.eq(
-                    (auto_precharge << 10) if settings.phy.memtype != "DDR5" else ((~auto_precharge) << 11)\
-                | slicer.col(cmd_buffer.source.addr))
+                cmd.a.eq(pre_sig | slicer.col(cmd_buffer.source.addr))
             )
         ]
 
