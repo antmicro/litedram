@@ -146,7 +146,6 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
                 self.odelaye2(din=ca_ser, dout=ca_dly, rst=cdly_rst, inc=cdly_inc, clk="sys")
 
         # Data serializer selection
-        # TODO: FIX serializer conditions
         data_ser = self.oserdese2_sdr if self.settings.wck_ck_ratio == 2 else self.oserdese2_ddr
         data_des = self.iserdese2_sdr if self.settings.wck_ck_ratio == 2 else self.iserdese2_ddr
 
