@@ -241,7 +241,7 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
             )
 
         # DQ FPGA -> MEM
-        for bit in range(self.databits // 2):
+        for bit in range(self.databits):
             dq_i     = Signal()
             dq_i_dly = Signal()
             # self.ibuf(
