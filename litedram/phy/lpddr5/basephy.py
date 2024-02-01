@@ -159,7 +159,7 @@ class LPDDR5PHY(Module, AutoCSR):
         self.pads        = pads
         self.memtype     = memtype     = "LPDDR5"
         self.nranks      = nranks      = 1 if not hasattr(pads, "cs_n") else len(pads.cs_n)
-        self.databits    = databits    = len(pads.dq_in) + len(pads.dq_out)
+        self.databits    = databits    = len(pads.dq_in) if hasattr(pads, 'dq_in') else len(pads.dq)
         self.addressbits = addressbits = 18  # for activate row address
         self.bankbits    = bankbits    = 7  # 4, but 7 bits needed for Mode Register address
         self.nphases     = nphases     = 1
