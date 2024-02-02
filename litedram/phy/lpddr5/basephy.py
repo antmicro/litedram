@@ -33,7 +33,7 @@ class LPDDR5Output:
         self.dq_o    = [Signal(2*wck_ck_ratio) for _ in range(databits)]
         self.dq_i    = [Signal(2*wck_ck_ratio) for _ in range(databits)]
         self.dq_oe   = Signal()
-        self.wck     = [Signal(2*wck_ck_ratio)   for _ in range(databits//4)]
+        self.wck     = [Signal(2*wck_ck_ratio)   for _ in range(databits//8)]
         self.rdqs_o  = [Signal(2*wck_ck_ratio)   for _ in range(databits//8)]
         self.rdqs_i  = [Signal(2*wck_ck_ratio)   for _ in range(databits//8)]
         self.rdqs_oe = Signal()
