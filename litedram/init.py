@@ -788,12 +788,13 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
         fmax = 200e6
         return int(math.ceil(sec * fmax))
 
+    #   Comment                  Address (row/column)       Bank Address (BA)  CMD                                Delay
     init_sequence = [
-        ("Assert reset", 0x0000, 0, "DFII_CONTROL_ODT", ck(200e-6)),  # ??
-        ("Release reset", 0x0000, 0, cmds["UNRESET"], ck(2e-3) + 5),
-        ("Toggle CS", 0, SpecialCmd.NOP, "DFII_COMMAND_WE|DFII_COMMAND_CS", ck(2e-6)),
+        ("Assert reset",         0x0000,                    0,                 "DFII_CONTROL_ODT",                ck(200e-6)),
+        ("Release reset",        0x0000,                    0,                 cmds["UNRESET"],                   ck(2e-3) + 5),
+        ("Toggle CS",            0,                         SpecialCmd.NOP,    "DFII_COMMAND_WE|DFII_COMMAND_CS", ck(2e-6)),
         *[cmd_mr(ma) for ma in sorted(mr.keys())],
-        ("ZQ Calibration latch", MPC.ZQC_LATCH, SpecialCmd.MPC, "DFII_COMMAND_WE|DFII_COMMAND_CS", max(4, ck(30e-9))),
+        ("ZQ Calibration latch", MPC.ZQC_LATCH,             SpecialCmd.MPC,    "DFII_COMMAND_WE|DFII_COMMAND_CS", max(4, ck(30e-9))),
     ]
 
     return init_sequence, mr
