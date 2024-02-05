@@ -245,12 +245,11 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
             dq_dly   = Signal()
             dq_i     = Signal()
             dq_i_dly = Signal()
-            dly_dq_t = oe_delay_data(self.out.dq_oe)
             # DQ MEM -> FPGA
             data_ser(
                 din     = self.out.dq_o[bit],
                 **(dict(dout_fb=dq_ser) if with_odelay else dict(dout=dq_dly)),
-                tin     = ~dly_dq_t,
+                tin     = ~oe_delay_data(self.out.dq_oe),
                 tout    = dq_t,
                 clk     = "sys4x",
                 clkdiv  = "sys"
