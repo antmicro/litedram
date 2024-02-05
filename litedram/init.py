@@ -675,7 +675,7 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
     wck_ck_ratio = phy_settings.wck_ck_ratio
     bl = 16
     dq_odt = getattr(phy_settings, "dq_odt", "RZQ/2")
-    ca_odt = getattr(phy_settings, "dq_odt", "RZQ/2")
+    ca_odt = getattr(phy_settings, "ca_odt", "RZQ/2")
     pull_down_drive_strength = getattr(phy_settings, "pull_down_drive_strength", "RZQ/2")
     soc_odt = getattr(phy_settings, "soc_odt", "disable")
     wck_odt = getattr(phy_settings, "wck_odt", "disable")
