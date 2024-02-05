@@ -1079,6 +1079,19 @@ def get_ddr5_phy_init_sequence(phy_settings, timing_settings):
 # Init Sequence ------------------------------------------------------------------------------------
 
 def get_sdram_phy_init_sequence(phy_settings, timing_settings):
+    # TODO: Enforce the return type by implementation (not the comment)
+
+    # For DDR5:
+    # get_ddr5_phy_init_sequence is expected to return:
+    #   reset_sequence, dram_start_sequene, setup_dram_mrs_sequence, (init_sequence_1n, init_sequence_2n), mr
+    # where each of those sequences is of structure:
+    #   [(Comment, Prefixes, CS, CA, Phases, CMD, Delay), ...]
+    #
+    # For SDR, DDR, LPDDR, DDR2, DDR3, RPC, DDR4, LPDDR4, LPDDR5:
+    # get_*_phy_init_sequence is expected to return:
+    #   init_sequence, mr
+    # Where Mode Register (mr) can be None and the init_sequence is of the following structure:
+    #   [(Comment, Address (row/column), Bank Address (BA), CMD, Delay), ...]
     return {
         "SDR":    get_sdr_phy_init_sequence,
         "DDR":    get_ddr_phy_init_sequence,
