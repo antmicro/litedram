@@ -1398,7 +1398,7 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
                         b += f"busy_wait_us({delay % 1000});\n"
                     b.newline()
 
-
+    # DDR5
     if isinstance(init_sequence, tuple):
         for i in range(2):
             with r.block(f"static inline void init_sequence_{i+1}n(int ranks)") as b:
