@@ -245,7 +245,7 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
             dq_dly   = Signal()
             dq_i     = Signal()
             dq_i_dly = Signal()
-            # DQ MEM -> FPGA
+            # DQ FPGA -> MEM
             data_ser(
                 din     = self.out.dq_o[bit],
                 **(dict(dout_fb=dq_ser) if with_odelay else dict(dout=dq_dly)),
@@ -269,7 +269,7 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
                 tin    = dq_t
             )
 
-            # DQ FPGA -> MEM
+            # DQ MEM -> FPGA
             self.ibuf(
                 din    = self.pads.dq_out[bit],
                 dout   = dq_i,
