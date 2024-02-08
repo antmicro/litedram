@@ -782,19 +782,21 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
         assert op < 2**8, "MR opcode to big: {}".format(op)
         a = op
         ba = ma
-        return ("Load More Register {}".format(ma), a, ba, cmds["MODE_REGISTER"], 200)
+        return ("Load More Register {}".format(ma), a, ba, cmds["MODE_REGISTER"], ck_to_us(200))
 
-    def ck(sec):
-        fmax = 200e6
-        return int(math.ceil(sec * fmax))
+    def sec_to_us(delay):
+        return delay * 1000 * 1000
+
+    def ck_to_us(delay):
+        return math.ceil(delay*1000*1000/phy_settings.soc_freq)
 
     #   Comment                  Address (row/column)       Bank Address (BA)  CMD                                Delay
     init_sequence = [
-        ("Assert reset",         0x0000,                    0,                 "DFII_CONTROL_ODT",                ck(200e-6)),
-        ("Release reset",        0x0000,                    0,                 cmds["UNRESET"],                   ck(2e-3) + 5),
-        ("Toggle CS",            0,                         SpecialCmd.NOP,    "DFII_COMMAND_WE|DFII_COMMAND_CS", ck(2e-6)),
+        ("Assert reset",         0x0000,                    0,                 "DFII_CONTROL_ODT",                sec_to_us(200e-6)),  # ??
+        ("Release reset",        0x0000,                    0,                 cmds["UNRESET"],                   sec_to_us(2e-3) + ck_to_us(5)),
+        ("Toggle CS",            0,                         SpecialCmd.NOP,    "DFII_COMMAND_WE|DFII_COMMAND_CS", sec_to_us(2e-6)),
         *[cmd_mr(ma) for ma in sorted(mr.keys())],
-        ("ZQ Calibration latch", MPC.ZQC_LATCH,             SpecialCmd.MPC,    "DFII_COMMAND_WE|DFII_COMMAND_CS", max(4, ck(30e-9))),
+        ("ZQ Calibration latch", MPC.ZQC_LATCH,             SpecialCmd.MPC,    "DFII_COMMAND_WE|DFII_COMMAND_CS", max(ck_to_us(4), sec_to_us(30e-9))),
     ]
 
     return init_sequence, mr
@@ -1326,39 +1328,7 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
         r.newline()
 
 
-    if phy_settings.memtype != "DDR5":
-        for signature, sequence in [
-            ("static inline void reset_sequence(void)", reset_sequence),
-        ]:
-            with r.block(signature) as b:
-                for comment, a, ba, cmd, delay in sequence:
-                    invert_masks = [(0, 0), ]
-                    if phy_settings.is_rdimm:
-                        assert phy_settings.memtype == "DDR4"
-                        # JESD82-31A page 38
-                        #
-                        # B-side chips have certain usually-inconsequential address and BA
-                        # bits inverted by the RCD to reduce SSO current. For mode register
-                        # writes, however, we must compensate for this. BG[1] also directs
-                        # writes either to the A side (BG[1]=0) or B side (BG[1]=1)
-                        #
-                        # The 'ba != 7' is because we don't do this to writes to the RCD
-                        # itself.
-                        if ba != 7:
-                            invert_masks.append((0b10101111111000, 0b1111))
-
-                    for a_inv, ba_inv in invert_masks:
-                        b += f"/* {comment} */"
-                        b += f"sdram_dfii_pi0_address_write({a ^ a_inv:#x});"
-                        b += f"sdram_dfii_pi0_baddress_write({ba ^ ba_inv:d});"
-                        if cmd.startswith("DFII_CONTROL"):
-                            b += f"sdram_dfii_control_write({cmd});"
-                        else:
-                            b += f"command_p0({cmd});"
-                        if delay:
-                            b += f"cdelay({delay});\n"
-                        b.newline()
-    else:
+    if phy_settings.memtype == "DDR5":
         for signature, sequence in [
             ("static inline void reset_sequence(int ranks)", reset_sequence),
             ("static inline void dram_start_sequence(int ranks)", dram_start_sequene),
@@ -1397,9 +1367,60 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
                             b += f"busy_wait({delay // 1000});\n"
                         b += f"busy_wait_us({delay % 1000});\n"
                     b.newline()
+    elif phy_settings.memtype == "LPDDR5":
+        for signature, sequence in [
+            ("static inline void reset_sequence(void)", reset_sequence),
+        ]:
+            with r.block(signature) as b:
+                for comment, a, ba, cmd, delay in sequence:
+                    invert_masks = [(0, 0), ]
+                    for a_inv, ba_inv in invert_masks:
+                        b += f"/* {comment} */"
+                        b += f"sdram_dfii_pi0_address_write({a ^ a_inv:#x});"
+                        b += f"sdram_dfii_pi0_baddress_write({ba ^ ba_inv:d});"
+                        if cmd.startswith("DFII_CONTROL"):
+                            b += f"sdram_dfii_control_write({cmd});"
+                        else:
+                            b += f"command_p0({cmd});"
+                        if delay > 0:
+                            if delay > 1000:
+                                b += f"busy_wait({delay // 1000});\n"
+                            b += f"busy_wait_us({delay % 1000});\n"
+                        b.newline()
+    else:
+        for signature, sequence in [
+            ("static inline void reset_sequence(void)", reset_sequence),
+        ]:
+            with r.block(signature) as b:
+                for comment, a, ba, cmd, delay in sequence:
+                    invert_masks = [(0, 0), ]
+                    if phy_settings.is_rdimm:
+                        assert phy_settings.memtype == "DDR4"
+                        # JESD82-31A page 38
+                        #
+                        # B-side chips have certain usually-inconsequential address and BA
+                        # bits inverted by the RCD to reduce SSO current. For mode register
+                        # writes, however, we must compensate for this. BG[1] also directs
+                        # writes either to the A side (BG[1]=0) or B side (BG[1]=1)
+                        #
+                        # The 'ba != 7' is because we don't do this to writes to the RCD
+                        # itself.
+                        if ba != 7:
+                            invert_masks.append((0b10101111111000, 0b1111))
 
-    # DDR5
-    if isinstance(init_sequence, tuple):
+                    for a_inv, ba_inv in invert_masks:
+                        b += f"/* {comment} */"
+                        b += f"sdram_dfii_pi0_address_write({a ^ a_inv:#x});"
+                        b += f"sdram_dfii_pi0_baddress_write({ba ^ ba_inv:d});"
+                        if cmd.startswith("DFII_CONTROL"):
+                            b += f"sdram_dfii_control_write({cmd});"
+                        else:
+                            b += f"command_p0({cmd});"
+                        if delay:
+                            b += f"cdelay({delay});\n"
+                        b.newline()
+
+    if phy_settings.memtype == "DDR5":
         for i in range(2):
             with r.block(f"static inline void init_sequence_{i+1}n(int ranks)") as b:
                 for comment, prefixes, cs, ca, phases, cmd, delay in init_sequence[i]:
@@ -1434,38 +1455,52 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
                             b += f"busy_wait({delay // 1000});\n"
                         b += f"busy_wait_us({delay % 1000});\n"
                     b.newline()
+    elif phy_settings.memtype == "LPDDR5":
+        with r.block("static inline void init_sequence(void)") as b:
+            for comment, a, ba, cmd, delay in init_sequence:
+                invert_masks = [(0, 0), ]
+                for a_inv, ba_inv in invert_masks:
+                    b += f"/* {comment} */"
+                    b += f"sdram_dfii_pi0_address_write({a ^ a_inv:#x});"
+                    b += f"sdram_dfii_pi0_baddress_write({ba ^ ba_inv:d});"
+                    if cmd.startswith("DFII_CONTROL"):
+                        b += f"sdram_dfii_control_write({cmd});"
+                    else:
+                        b += f"command_p0({cmd});"
+                    if delay > 0:
+                        if delay > 1000:
+                            b += f"busy_wait({delay // 1000});\n"
+                        b += f"busy_wait_us({delay % 1000});\n"
+                    b.newline()
     else:
         with r.block("static inline void init_sequence(void)") as b:
-            if phy_settings.memtype != "DDR5":
-                for comment, a, ba, cmd, delay in init_sequence:
-                    invert_masks = [(0, 0), ]
-                    if phy_settings.is_rdimm:
-                        assert phy_settings.memtype == "DDR4"
-                        # JESD82-31A page 38
-                        #
-                        # B-side chips have certain usually-inconsequential address and BA
-                        # bits inverted by the RCD to reduce SSO current. For mode register
-                        # writes, however, we must compensate for this. BG[1] also directs
-                        # writes either to the A side (BG[1]=0) or B side (BG[1]=1)
-                        #
-                        # The 'ba != 7' is because we don't do this to writes to the RCD
-                        # itself.
-                        if ba != 7:
-                            invert_masks.append((0b10101111111000, 0b1111))
+            for comment, a, ba, cmd, delay in init_sequence:
+                invert_masks = [(0, 0), ]
+                if phy_settings.is_rdimm:
+                    assert phy_settings.memtype == "DDR4"
+                    # JESD82-31A page 38
+                    #
+                    # B-side chips have certain usually-inconsequential address and BA
+                    # bits inverted by the RCD to reduce SSO current. For mode register
+                    # writes, however, we must compensate for this. BG[1] also directs
+                    # writes either to the A side (BG[1]=0) or B side (BG[1]=1)
+                    #
+                    # The 'ba != 7' is because we don't do this to writes to the RCD
+                    # itself.
+                    if ba != 7:
+                        invert_masks.append((0b10101111111000, 0b1111))
 
-                    for a_inv, ba_inv in invert_masks:
-                        b += f"/* {comment} */"
-                        b += f"sdram_dfii_pi0_address_write({a ^ a_inv:#x});"
-                        b += f"sdram_dfii_pi0_baddress_write({ba ^ ba_inv:d});"
-                        if cmd.startswith("DFII_CONTROL"):
-                            b += f"sdram_dfii_control_write({cmd});"
-                        else:
-                            b += f"command_p0({cmd});"
-                        if delay:
-                            b += f"cdelay({delay});\n"
-                        b.newline()
-            else:
-                assert False
+                for a_inv, ba_inv in invert_masks:
+                    b += f"/* {comment} */"
+                    b += f"sdram_dfii_pi0_address_write({a ^ a_inv:#x});"
+                    b += f"sdram_dfii_pi0_baddress_write({ba ^ ba_inv:d});"
+                    if cmd.startswith("DFII_CONTROL"):
+                        b += f"sdram_dfii_control_write({cmd});"
+                    else:
+                        b += f"command_p0({cmd});"
+                    if delay:
+                        b += f"cdelay({delay});\n"
+                    b.newline()
 
     return r.generate()
 
