@@ -116,6 +116,7 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
             cmd_i = getattr(self.out, cmd)
             cmd_o = getattr(self.pads, cmd)
             cmd_ser = Signal()
+            cmd_dly = Signal()
 
             assert len(cmd_i) == 1
             cmd_2bit_i = Signal(2)
@@ -124,15 +125,17 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
             # slp=1 / dw=2 => 180-deg shift
             self.submodules += ConstBitSlip(dw=2, slp=1, cycles=1, register=False, i=cmd_2bit_i, o=cmd_2bit_o)
 
-            self.oserdese2_sdr(din=cmd_2bit_o, dout=cmd_ser if with_odelay else cmd_o, clk="sys4x", clkdiv="sys")
+            self.oserdese2_sdr(din=cmd_2bit_o, dout=cmd_ser if with_odelay else cmd_dly, clk="sys4x", clkdiv="sys")
             if with_odelay:
-                self.odelaye2(din=cmd_ser, dout=cmd_o, rst=cdly_rst, inc=cdly_inc, clk="sys")
+                self.odelaye2(din=cmd_ser, dout=cmd_dly, rst=cdly_rst, inc=cdly_inc, clk="sys")
+            self.obuf(din  = cmd_dly, dout =  cmd_o)
 
         # Commands - 270-deg shift, achieved as for CS but with 4-bit ConstBitSlip
         for bit in range(len(self.out.ca)):
             ca_i = self.out.ca[bit]
             ca_ser = Signal()
-            ca_dly = self.pads.ca[bit]
+            ca_dly = Signal()
+            ca_o   = self.pads.ca[bit]
 
             assert len(ca_i) == 2
             ca_4bit_i = Signal(4)
@@ -144,6 +147,7 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
             self.oserdese2_sdr(din=ca_4bit_o, dout=ca_ser if with_odelay else ca_dly, clk="sys4x", clkdiv="sys")
             if with_odelay:
                 self.odelaye2(din=ca_ser, dout=ca_dly, rst=cdly_rst, inc=cdly_inc, clk="sys")
+            self.obuf(din = ca_ser, dout = ca_o)
 
         # Data serializer selection
         data_ser = self.oserdese2_sdr if self.settings.wck_ck_ratio == 2 else self.oserdese2_ddr
