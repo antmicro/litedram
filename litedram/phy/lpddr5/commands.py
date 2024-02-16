@@ -128,7 +128,7 @@ class DFIPhaseAdapter(Module):
             self.ca[3].eq(self.cmd2.ca[1]),
         ]
 
-        def wck_sync(type):
+        def wck_sync_to(type):
             return If(self.wck_sync_done == 0,
                 self.wck_sync.eq(getattr(WCKSyncType, type.upper())),
             )
@@ -148,16 +148,16 @@ class DFIPhaseAdapter(Module):
         self.comb += If(dfi_phase.cs_n == 0,
             Case(dfi_cmd(dfi_phase), {
                 CMD["ACT"]: cmds("ACT-1", "ACT-2"),
-                CMD["RD"]: [*cmds("CAS", "RD16"), wck_sync("RD")],
+                CMD["RD"]: [*cmds("CAS", "RD16"), wck_sync_to("RD")],
                 CMD["WR"]:  Case(masked_write, {
-                    0: [*cmds("CAS", "WR16"), wck_sync("WR")],
-                    1: [*cmds("CAS", "MWR"), wck_sync("WR")],
+                    0: [*cmds("CAS", "WR16"), wck_sync_to("WR")],
+                    1: [*cmds("CAS", "MWR"), wck_sync_to("WR")],
                 }),
                 CMD["PRE"]: cmds("PRE"),
                 CMD["REF"]: cmds("REF"),
                 CMD["ZQC"]: Case(dfi_phase.bank, {
                     SpecialCmd.MPC: cmds("MPC"),
-                    SpecialCmd.MRR: [*cmds("CAS", "MRR"), wck_sync("RD")],
+                    SpecialCmd.MRR: [*cmds("CAS", "MRR"), wck_sync_to("RD")],
                     SpecialCmd.NOP: cmds("NOP"),
                     "default": deselect,
                 }),
