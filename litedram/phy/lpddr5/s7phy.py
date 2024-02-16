@@ -111,8 +111,8 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
 
         # CS/RESET_n - 180-deg shifted
         # These signals are 1-bit wide, but shifting can be done laveraging the fact that our serializer
-        # will replicate these anyway to get 8-bit input, so we widen them to 2-bit ones here and use
-        # ConstBitSlip to produce 2-bit input to the serialzier.
+        # will replicate these anyway to get 8-bit input, so we widen them to 4-bit ones here and use
+        # ConstBitSlip to produce 4-bit input to the serialzier.
         for cmd in ["cs", "reset_n"]:
             cmd_i = getattr(self.out, cmd)
             cmd_o = getattr(self.pads, cmd)
@@ -120,13 +120,13 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
             cmd_dly = Signal()
 
             assert len(cmd_i) == 1
-            cmd_2bit_i = Signal(2)
-            cmd_2bit_o = Signal(2)
-            self.comb += cmd_2bit_i.eq(Replicate(cmd_i, 2))
+            cmd_4bit_i = Signal(4)
+            cmd_4bit_o = Signal(4)
+            self.comb += cmd_4bit_i.eq(Replicate(cmd_i, 4))
             # slp=1 / dw=2 => 180-deg shift
-            self.submodules += ConstBitSlip(dw=2, slp=1, cycles=1, register=False, i=cmd_2bit_i, o=cmd_2bit_o)
+            self.submodules += ConstBitSlip(dw=4, slp=2, cycles=1, register=False, i=cmd_4bit_i, o=cmd_4bit_o)
 
-            self.oserdese2_sdr(din=cmd_2bit_o, dout=cmd_ser if with_odelay else cmd_dly, clk="sys4x", clkdiv="sys")
+            self.oserdese2_sdr(din=cmd_4bit_o, dout=cmd_ser if with_odelay else cmd_dly, clk="sys4x", clkdiv="sys")
             if with_odelay:
                 self.odelaye2(din=cmd_ser, dout=cmd_dly, rst=cdly_rst, inc=cdly_inc, clk="sys")
             self.obuf(din  = cmd_dly, dout =  cmd_o)
