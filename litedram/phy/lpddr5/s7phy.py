@@ -103,7 +103,8 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
         # Clock
         ck_dly = Signal()
         ck_ser = Signal()
-        self.oserdese2_sdr(din=self.out.ck, dout=ck_ser if with_odelay else ck_dly, clk="sys4x", clkdiv="sys")
+        ck_i = Cat(*[Replicate(bit, 2) for bit in self.out.ck])
+        self.oserdese2_sdr(din=ck_i, dout=ck_ser if with_odelay else ck_dly, clk="sys4x", clkdiv="sys")
         if with_odelay:
             self.odelaye2(din=ck_ser, dout=ck_dly, rst=cdly_rst, inc=cdly_inc, clk="sys")
         self.obufds(din=ck_dly, dout=self.pads.ck_p, dout_b=self.pads.ck_n)
