@@ -147,7 +147,7 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
             self.oserdese2_sdr(din=ca_4bit_o, dout=ca_ser if with_odelay else ca_dly, clk="sys4x", clkdiv="sys")
             if with_odelay:
                 self.odelaye2(din=ca_ser, dout=ca_dly, rst=cdly_rst, inc=cdly_inc, clk="sys")
-            self.obuf(din = ca_ser, dout = ca_o)
+            self.obuf(din = ca_dly, dout = ca_o)
 
         # Data serializer selection
         data_ser = self.oserdese2_sdr if self.settings.wck_ck_ratio == 2 else self.oserdese2_ddr
