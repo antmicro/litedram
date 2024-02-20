@@ -124,7 +124,7 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
             cmd_4bit_o = Signal(4)
             self.comb += cmd_4bit_i.eq(Replicate(cmd_i, 4))
             # slp=1 / dw=2 => 180-deg shift
-            self.submodules += ConstBitSlip(dw=4, slp=2, cycles=1, register=False, i=cmd_4bit_i, o=cmd_4bit_o)
+            self.submodules += ConstBitSlip(dw=4, slp=1, cycles=1, register=False, i=cmd_4bit_i, o=cmd_4bit_o)
 
             self.oserdese2_sdr(din=cmd_4bit_o, dout=cmd_ser if with_odelay else cmd_dly, clk="sys4x", clkdiv="sys")
             if with_odelay:
