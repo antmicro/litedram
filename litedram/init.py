@@ -762,7 +762,9 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
         (6, 1, 0),  # WCK2CK leveling disabled
         (7, 1, {2: 1, 4: 0}[wck_ck_ratio]),
     ])
-    # MR19 - defaults
+    mr[19] = reg([
+        (0, 2, 0b01),                              # Low speed mode (use VDDL2: 0.9V rail)
+    ])
     mr[20] = reg([
         (0, 2, 0b01),  # TODO: as we don't actually use RDQS, maybe we can just disable it
         # zero-defaults
