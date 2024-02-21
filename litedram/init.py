@@ -712,54 +712,63 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
         return reg
 
     mr = {}
+    # mr0 <- read only
     mr[1] = reg([
-        (3, 1, 0),  # differential CK
-        (4, 4, frange.mr),
+        (3, 1, 0),                                 # CK mode (differential)
+        (4, 4, frange.mr),                         # Write Latency (WL)
     ])
     mr[2] = reg([
-        (0, 4, frange.mr),  # seems that in both MR1 and MR2 we need the same value
-        (4, 4, frange.n_wr_op),
+        (0, 4, frange.mr),                         # Read Latency (RL)
+        (4, 4, frange.n_wr_op),                    # Write recovery (nWR)
     ])
     mr[3] = reg([
-        (0, 3, rzq_map[pull_down_drive_strength]),
-        (3, 2, BankOrganization.B16),
-        (5, 1, 0),  # WL Set "A"
+        (0, 3, rzq_map[pull_down_drive_strength]), # Pull-Down Drive Strength
+        (3, 2, BankOrganization.B16),              # Bank / Bank Group Organization
+        (5, 1, 0),                                 # Write Latency Set (WLS) Set "A"
     ])
+    # mr4 - mr9 <- read only
     mr[10] = reg([
-        (0, 0, 0),  # RDQS postamble toggle mode
-        (2, 2, 0b00),  # WCK postamble 2.5*tWCK
-        (4, 2, 0b00),  # RDQS preamble 4*tWCK static + 0 toggle
-        (6, 2, 0b00),  # RDQS postamble 0.5*tWCK
+        (0, 0, 0),                                 # RDQS postamble toggle mode
+        (2, 2, 0b00),                              # WCK postamble 2.5*tWCK
+        (4, 2, 0b00),                              # RDQS preamble 4*tWCK static + 0 toggle
+        # (4, 2, 0b01),                            # RDQS preamble 2*tWCK static + 2*tWCK toggle
+        (6, 2, 0b00),                              # RDQS postamble 0.5*tWCK
     ])
     mr[11] = reg([
-        (0, 3, rzq_map[dq_odt]),
-        (3, 1, 0),  # non-target ODT disabled
-        (4, 3, rzq_map[ca_odt]),
+        (0, 3, rzq_map[dq_odt]),                   # DQ Bus Reciever On-Die-Termination
+        (3, 1, 0),                                 # Non-Target ODT (disabled)
+        (4, 3, rzq_map[ca_odt]),                   # CA Bus Reviever On-Die-Termination
     ])
     mr[12] = reg([
-        (0, 7, get_vref(vref_ca)),
-        (7, 1, 0),
+        (0, 7, get_vref(vref_ca)),                 # Vref(CA) Setting
+        (7, 1, 0),                                 # Vref(CA) Byte Select
     ])
-    mr[13] = 0 # defaults, DM enabled
+    mr[13] = reg([
+        (0, 2, 0),                                 # Thermal Offset (no offset, 0-5°C gradient)
+        (2, 1, 0),                                 # Vref Output (normal operation)
+        (4, 1, 0),                                 # DMI Behaviour (default)
+        (5, 1, 1),                                 # Data Mask operation Disabled
+        (6, 1, 0),                                 # CBT Trainig Mode 1
+        (7, 1, 0)                                  # Dual VDD2 rail (1.05V & 0.9V)
+    ])
     mr[14] = reg([
-        (0, 7, get_vref(vref_dq)),
-        (7, 1, 0),
+        (0, 7, get_vref(vref_dq)),                 # Vref(DQ) Setting
+        (7, 1, 0),                                 # Vref(DQ[15:8]) Lower byte copy (follow MR15)
     ])
-    mr[15] = get_vref(vref_dq)
+    mr[15] = get_vref(vref_dq)                     # Vref(DQ[15:8])
     mr[17] = reg([
-        (0, 3, rzq_map[soc_odt]),
-        # defaults
-        (3, 1, 1),
-        (4, 1, 1),
-        (5, 1, 1),
-        (6, 1, 0),
-        (7, 1, 0),
+        (0, 3, rzq_map[soc_odt]),                  # Frequency-Set-Point
+        (3, 1, 1),                                 # CK ODT termination (disabled)
+        (4, 1, 1),                                 # CS ODT termination (disabled)
+        (5, 1, 1),                                 # CA ODT termination (disabled)
+        (6, 1, 0),                                 # CA / CS / CK ODT lower byte select (follows MR17 [5:3] and MR11 [6:4])
+        (7, 1, 0),                                 # CA / CS / CK ODT upper byte select (follows MR17 [5:3] and MR11 [6:4])
     ])
     mr[18] = reg([
-        (0, 3, rzq_map[wck_odt]),
-        (3, 1, 0),  # WCK low frequency mode
-        (4, 1, 0),  # WCK always on mode disabled
-        (6, 1, 0),  # WCK2CK leveling disabled
+        (0, 3, rzq_map[wck_odt]),                  # WCK ODT
+        (3, 1, 0),                                 # WCK low frequency mode
+        (4, 1, 0),                                 # WCK always on mode disabled
+        (6, 1, 0),                                 # WCK2CK leveling disabled
         (7, 1, {2: 1, 4: 0}[wck_ck_ratio]),
     ])
     mr[19] = reg([
@@ -770,13 +779,21 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
         (2, 2, 0b00)                               # WCK differential
         # zero-defaults
     ])
-    mr[22] = 0  # Write/read link ECC disabled
+    mr[22] = 0                                     # Write/read link ECC disabled
+    mr[23] = 0                                     # Segment Refresh Enable
+    # mr24 <- deafult; DFE disabled
+    # mr25 <- deafult; Shared CK / CA pairs unterminated
+    # mr26 <- default DCM behaviour
+    # mr27 <- default; TRR disabled
     mr[28] = reg([
-        (0, 1, 0), # ZQ Reset
-        (1, 1, 0), # ZQ Stop
-        (2, 2, 0b01), # ZQ background calibration interval (64ms default)
-        (5, 1, 0), # ZQ mode
+        (0, 1, 0),                                 # ZQ Reset (normal operation)
+        (1, 1, 0),                                 # ZQ Stop (normal operation)
+        (2, 2, 0b01),                              # ZQ background calibration interval (64ms)
+        (5, 1, 0),                                 # ZQ mode (background ZQ calibration)
     ])
+    # mr[46] = reg([
+    #     (1, 1, 1),                               # RDQS toggle mode enabled
+    # ])
 
     def cmd_mr(ma):
         # Convert Mode Register Write command to DFI as expected by PHY
@@ -795,11 +812,11 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
 
     #   Comment                  Address (row/column)       Bank Address (BA)  CMD                                Delay
     init_sequence = [
-        ("Assert reset",         0x0000,                    0,                 "DFII_CONTROL_ODT",                sec_to_us(200e-6)),  # ??
-        ("Release reset",        0x0000,                    0,                 cmds["UNRESET"],                   sec_to_us(2e-3) + ck_to_us(5)),
-        ("Toggle CS",            0,                         SpecialCmd.NOP,    "DFII_COMMAND_WE|DFII_COMMAND_CS", sec_to_us(2e-6)),
-        *[cmd_mr(ma) for ma in sorted(mr.keys())],
-        ("ZQ Calibration latch", MPC.ZQC_LATCH,             SpecialCmd.MPC,    "DFII_COMMAND_WE|DFII_COMMAND_CS", max(ck_to_us(4), sec_to_us(30e-9))),
+        ("Assert reset",         0x0000,                    0,                 "DFII_CONTROL_ODT",                sec_to_us(200e-6)),                   # tINIT1 = 200 µs
+        ("Release reset",        0x0000,                    0,                 cmds["UNRESET"],                   sec_to_us(2e-3) + ck_to_us(5)),       # tINIT3 (2ms) + tINIT4 (5nCK) - After reset before CS
+        ("Toggle CS",            0,                         SpecialCmd.NOP,    "DFII_COMMAND_WE|DFII_COMMAND_CS", sec_to_us(2e-6)),                     # tINIT5 = 2 µs - stable clock before MRW / MRR
+        *[cmd_mr(ma) for ma in sorted(mr.keys())],                                                                                                      # MRW / MRR
+        ("ZQ Calibration latch", MPC.ZQC_LATCH,             SpecialCmd.MPC,    "DFII_COMMAND_WE|DFII_COMMAND_CS", max(ck_to_us(4), sec_to_us(30e-9))),  # MAX(30ns, 4nCK) ZQCAL latch quiet time
     ]
 
     return init_sequence, mr
