@@ -767,6 +767,7 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
     ])
     mr[20] = reg([
         (0, 2, 0b10),                              # RDQS (RDQS_T and RDQS_C enabled)
+        (2, 2, 0b00)                               # WCK differential
         # zero-defaults
     ])
     mr[22] = 0  # Write/read link ECC disabled
