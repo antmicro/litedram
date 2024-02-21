@@ -766,7 +766,7 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
         (0, 2, 0b01),                              # Low speed mode (use VDDL2: 0.9V rail)
     ])
     mr[20] = reg([
-        (0, 2, 0b01),  # TODO: as we don't actually use RDQS, maybe we can just disable it
+        (0, 2, 0b10),                              # RDQS (RDQS_T and RDQS_C enabled)
         # zero-defaults
     ])
     mr[22] = 0  # Write/read link ECC disabled
