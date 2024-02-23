@@ -772,10 +772,10 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
         (7, 1, {2: 1, 4: 0}[wck_ck_ratio]),
     ])
     mr[19] = reg([
-        (0, 2, 0b01),                              # Low speed mode (use VDDL2: 0.9V rail)
+        (0, 2, 0b00),                              # Low speed mode (use VDDL2: 0.9V rail)
     ])
     mr[20] = reg([
-        (0, 2, 0b10),                              # RDQS (RDQS_T and RDQS_C enabled)
+        (0, 2, 0b01),                              # RDQS (RDQS_T enabled; RDQS_C disabled)
         (2, 2, 0b00)                               # WCK differential
         # zero-defaults
     ])
