@@ -169,42 +169,14 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
 
             self.obufds(din=wck_dly, dout=self.pads.wck_p[byte], dout_b=self.pads.wck_n[byte])
 
-        # DQS MEM -> FPGA
+        # RDQS MEM -> FPGA
         for byte in range(self.databits//8):
-            dqs_t     = Signal()
-            dqs_ser   = Signal()
-            dqs_dly   = Signal()
             dqs_i     = Signal()
             dqs_i_dly = Signal()
-            # need to delay DQS if clocks are not phase aligned
-            dqs_din = self.out.rdqs_o[byte]
-            if not with_odelay:
-                dqs_din_d = Signal.like(dqs_din)
-                self.sync += dqs_din_d.eq(dqs_din)
-                dqs_din = dqs_din_d
-            data_ser(
-                din     = dqs_din,
-                **(dict(dout_fb=dqs_ser) if with_odelay else dict(dout=dqs_dly)),
-                tin     = ~oe_delay_dqs(self.out.rdqs_oe),
-                tout    = dqs_t,
-                clk     = "sys4x" if with_odelay else "sys4x_90",
-                clkdiv  = "sys"
-            )
-            if with_odelay:
-                self.odelaye2(
-                    din  = dqs_ser,
-                    dout = dqs_dly,
-                    rst  = self.get_rst(byte, wdly_dqs_rst),
-                    inc  = self.get_inc(byte, wdly_dqs_inc),
-                    init = half_sys4x_taps,  # shifts by 90 degrees
-                    clk  = "sys"
-                )
-            self.iobufds(
-                din      = dqs_dly,
-                dout     = dqs_i,
-                tin      = dqs_t,
-                dinout   = self.pads.rdqs_p[byte],
-                dinout_b = self.pads.rdqs_n[byte],
+            self.ibufds(
+                din   = self.pads.rdqs_p[byte],
+                din_b = self.pads.rdqs_n[byte],
+                dout  = dqs_i,
             )
             self.idelaye2(
                 din  = dqs_i,
