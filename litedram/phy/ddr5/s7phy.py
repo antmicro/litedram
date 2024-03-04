@@ -371,6 +371,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                 _pin_i = _pin
                 _pin_base = _pin if not _diff else _pin[:-2]
                 _pin_func = _pin if len(prefixes) == 1 else _pin[2:]
+                _pin_prefix = "" if len(prefixes) == 1 else _pin[:2]
                 _pin_oe = None
                 if _is_io:
                     _pin_i  = _pin + "_i"
@@ -378,7 +379,10 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                     _pin_oe = _pin_base + "_oe"
 
                 if _is_ck:
-                    self.handle_ck(_out, pin)
+                    if count == 1:
+                        self.handle_ck(_out, pin)
+                    else:
+                        self.handle_ck(_out, pin, offset=i)
                     continue
 
                 _sig_out = None
@@ -402,12 +406,12 @@ class S7DDR5PHY(DDR5PHY, S7Common):
                     idx = i
                     if _pin_func == "dq":
                         idx //= self.dq_dqs_ratio
-                        idx *= mult
+                    idx *= mult
 
                     if (_pin_oe, idx) in pin_oe_cache:
                         _sig_oe = pin_oe_cache[(_pin_oe, idx)]
-                    elif _pin_func == "dm_n" and ("dq_oe", idx) in pin_oe_cache:
-                        _sig_oe = pin_oe_cache[("dq_oe", idx)]
+                    elif _pin_func == "dm_n"  and (_pin_prefix+"dq_oe", idx) in pin_oe_cache:
+                        _sig_oe = pin_oe_cache[(_pin_prefix+"dq_oe", idx)]
                     else:
                         out_sig_oe = getattr(self.out, _pin_oe)
                         if isinstance(out_sig_oe, list):
@@ -652,10 +656,10 @@ class S7DDR5PHY(DDR5PHY, S7Common):
         else:
             self.handle_single_ended(pad_t, out_sig=to_pad, oe_sig=to_pad_oe, in_sig=from_pad)
 
-    def handle_ck(self, cd_out, pin):
+    def handle_ck(self, cd_out, pin, offset=None):
         clk_sig = Signal(4)
         self.comb += clk_sig.eq(self.clk_pattern&0xF)
-        self.handle_o(cd_out=cd_out, out_sig=clk_sig, pin=pin)
+        self.handle_o(cd_out=cd_out, out_sig=clk_sig, pin=pin, offset=offset)
 
 
 # PHY variants -------------------------------------------------------------------------------------
