@@ -690,10 +690,10 @@ class DDR5PHY(Module, AutoCSR):
         if not dq:
             cd_clk += t.eq((CSRs[prefix+'dly_sel'].storage[byte] & rst) | rst_overwrite)
         elif not self.with_per_dq_idelay:
-            cd_clk += t.eq((CSRs[prefix+'dly_sel'].storage[byte//self.dq_dqs_ratio] & rst) | rst_overwrite)
+            cd_clk += t.eq((CSRs[prefix+'dly_sel'].storage[byte//4] & rst) | rst_overwrite)
         else:
-            cd_clk += t.eq((CSRs[prefix+'dly_sel'].storage[byte//self.dq_dqs_ratio] &
-                            CSRs[prefix+'dq_dly_sel'].storage[byte%self.dq_dqs_ratio] & rst) |
+            cd_clk += t.eq((CSRs[prefix+'dly_sel'].storage[byte//4] &
+                            CSRs[prefix+'dq_dly_sel'].storage[byte%4] & rst) |
                             rst_overwrite)
         return t
 
@@ -704,8 +704,8 @@ class DDR5PHY(Module, AutoCSR):
         if not dq:
             cd_clk += t.eq(CSRs[prefix+'dly_sel'].storage[byte] & stb)
         elif not self.with_per_dq_idelay:
-            cd_clk += t.eq(CSRs[prefix+'dly_sel'].storage[byte//self.dq_dqs_ratio] & stb)
+            cd_clk += t.eq(CSRs[prefix+'dly_sel'].storage[byte//4] & stb)
         else:
-            cd_clk += t.eq(CSRs[prefix+'dly_sel'].storage[byte//self.dq_dqs_ratio] &
-                            CSRs[prefix+'dq_dly_sel'].storage[byte%self.dq_dqs_ratio] & stb)
+            cd_clk += t.eq(CSRs[prefix+'dly_sel'].storage[byte//4] &
+                            CSRs[prefix+'dq_dly_sel'].storage[byte%4] & stb)
         return t

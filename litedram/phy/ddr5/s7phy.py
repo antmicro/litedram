@@ -316,6 +316,8 @@ class S7DDR5PHY(DDR5PHY, S7Common):
         # Serialization ----------------------------------------------------------------------------
         pin_csr_mapping = {
             "ck_t":    ((CSRs["ckdly_inc"].re,      CSRs["ckdly_rst"].re),      None),
+            "A_ck_t":    ((CSRs["ckdly_inc"].re,      CSRs["ckdly_rst"].re),      None),
+            "B_ck_t":    ((CSRs["ckdly_inc"].re,      CSRs["ckdly_rst"].re),      None),
         }
         for prefix in prefixes:
             pin_csr_mapping |= {
@@ -569,11 +571,14 @@ class S7DDR5PHY(DDR5PHY, S7Common):
     def handle_o(self, cd_out, out_sig, pin, *, offset=None, oe_sig=None):
         pad_t, pad_c = self.get_pads(pin, offset=offset)
 
+        prefix, _pin_func = ("", pin) if len(self.prefixes) == 1 else (pin[:2], pin[2:])
+
+        if _pin_func == "ck_t":
+            offset = None
         inc_sig, rst_sig = None, None
         if self.with_odelay and pin in self.pin_csr_mapping:
             inc_sig, rst_sig = self.get_out_inc_rst(pin, offset=offset, cd="sys")
 
-        prefix, _pin_func = ("", pin) if len(self.prefixes) == 1 else (pin[:2], pin[2:])
         to_pad, to_pad_oe, delay_state = self.handle_oser(
             cd_out, out_sig, oe_sig=oe_sig, inc_sig=inc_sig, rst_sig=rst_sig)
 
@@ -611,12 +616,15 @@ class S7DDR5PHY(DDR5PHY, S7Common):
 
     def handle_io(self, cd_out, cd_in, out_sig, oe_sig, in_sig, pin, *, offset=None):
         pad_t, pad_c = self.get_pads(pin, offset=offset)
+        prefix, _pin_func = ("", pin) if len(self.prefixes) == 1 else (pin[:2], pin[2:])
+
+        if "dqs" in _pin_func and offset:
+            offset *= self.dq_dqs_ratio//4
 
         inc_sig, rst_sig = None, None
         if self.with_odelay and pin in self.pin_csr_mapping:
             inc_sig, rst_sig = self.get_out_inc_rst(pin, offset=offset, cd="sys")
 
-        prefix, _pin_func = ("", pin) if len(self.prefixes) == 1 else (pin[:2], pin[2:])
         to_pad, to_pad_oe, odelay_state = self.handle_oser(
             cd_out=cd_out, out_sig=out_sig, oe_sig=oe_sig, inc_sig=inc_sig, rst_sig=rst_sig)
 
@@ -626,15 +634,15 @@ class S7DDR5PHY(DDR5PHY, S7Common):
 
         offset = offset if offset else 0
         if "dq" == _pin_func:
-            if offset%self.dq_dqs_ratio == 0:
+            if offset%4 == 0:
                 self.sync += [
-                    If(self.CSRs[prefix+'dly_sel'].storage[offset//self.dq_dqs_ratio],
+                    If(self.CSRs[prefix+'dly_sel'].storage[offset//4],
                         self.CSRs[prefix+'rdly_dq'].status.eq(idelay_state),
                     ),
                 ]
                 if self.with_odelay:
                     self.sync += [
-                        If(self.CSRs[prefix+'dly_sel'].storage[offset//self.dq_dqs_ratio],
+                        If(self.CSRs[prefix+'dly_sel'].storage[offset//4],
                             self.CSRs[prefix+'wdly_dq'].status.eq(odelay_state),
                         ),
                     ]
@@ -646,7 +654,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
             ]
             if self.with_odelay:
                 self.sync += [
-                    If(self.CSRs[prefix+'dly_sel'].storage[offset//self.dq_dqs_ratio],
+                    If(self.CSRs[prefix+'dly_sel'].storage[offset],
                         self.CSRs[prefix+'wdly_dqs'].status.eq(odelay_state),
                     ),
                 ]
