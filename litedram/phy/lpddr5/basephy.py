@@ -488,7 +488,7 @@ class LPDDR5PHY(Module, AutoCSR):
         rddata_start = read_latency - burst_ck_cycles - 1
         self.comb += [
             rddata_converter.sink.data.eq(rddata_ck),
-            rddata_converter.sink.valid.eq(reduce(or_, rddata_en.taps[rddata_start:rddata_start+burst_ck_cycles])),
+            rddata_converter.sink.valid.eq(reduce(or_, rddata_en.taps[rddata_start:rddata_start+burst_ck_cycles]) | self._wlevel_en.storage),
             rddata_converter.source.ready.eq(1),
             self.dfi.p0.rddata.eq(rddata_converter.source.data),
             self.dfi.p0.rddata_valid.eq(rddata_converter.source.valid),
