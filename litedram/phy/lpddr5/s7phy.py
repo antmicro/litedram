@@ -43,8 +43,9 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
         assert half_sys4x_taps < 32, "Exceeded ODELAYE2 max value: {} >= 32".format(half_sys4x_taps)
 
         # Power enable
-        self.obuf(din=1, dout=self.pads.pwr_en)
-        self.ibuf(din=self.pads.pwr_good, dout=Signal())
+        if hasattr(self.pads, "pwr_en"):
+            self.obuf(din=1, dout=self.pads.pwr_en)
+            self.ibuf(din=self.pads.pwr_good, dout=Signal())
 
         # Registers --------------------------------------------------------------------------------
         # Note: this should be named sys4x, but using sys8x due to a name hard-coded in BIOS
