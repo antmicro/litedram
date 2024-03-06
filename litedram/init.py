@@ -743,14 +743,14 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
         (0, 7, get_vref(vref_ca)),                 # Vref(CA) Setting
         (7, 1, 0),                                 # Vref(CA) Byte Select
     ])
-    mr[13] = reg([
-        (0, 2, 0),                                 # Thermal Offset (no offset, 0-5°C gradient)
-        (2, 1, 0),                                 # Vref Output (normal operation)
-        (4, 1, 0),                                 # DMI Behaviour (default)
-        (5, 1, 0),                                 # Data Mask operation Disabled
-        (6, 1, 0),                                 # CBT Trainig Mode 1
-        (7, 1, 0)                                  # Dual VDD2 rail (1.05V & 0.9V)
-    ])
+    # mr[13] = reg([
+    #     (0, 2, 0),                                 # Thermal Offset (no offset, 0-5°C gradient)
+    #     (2, 1, 0),                                 # Vref Output (normal operation)
+    #     (4, 1, 0),                                 # DMI Behaviour (default)
+    #     (5, 1, 0),                                 # Data Mask operation Disabled
+    #     (6, 1, 0),                                 # CBT Trainig Mode 1
+    #     (7, 1, 0)                                  # Dual VDD2 rail (1.05V & 0.9V)
+    # ])
     mr[14] = reg([
         (0, 7, get_vref(vref_dq)),                 # Vref(DQ) Setting
         (7, 1, 0),                                 # Vref(DQ[15:8]) Lower byte copy (follow MR15)
