@@ -19,6 +19,7 @@ from migen import *
 cmds = {
     "PRECHARGE_ALL": "DFII_COMMAND_RAS|DFII_COMMAND_WE|DFII_COMMAND_CS",
     "MODE_REGISTER": "DFII_COMMAND_RAS|DFII_COMMAND_CAS|DFII_COMMAND_WE|DFII_COMMAND_CS",
+    "MODE_REGISTER_READ": "DFII_COMMAND_CAS|DFII_COMMAND_CS|DFII_COMMAND_RDDATA",
     "AUTO_REFRESH":  "DFII_COMMAND_RAS|DFII_COMMAND_CAS|DFII_COMMAND_CS",
     "UNRESET":       "DFII_CONTROL_ODT|DFII_CONTROL_RESET_N",
     "CKE":           "DFII_CONTROL_CKE|DFII_CONTROL_ODT|DFII_CONTROL_RESET_N"
@@ -804,6 +805,14 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
         ba = ma
         return ("Load More Register {}".format(ma), a, ba, cmds["MODE_REGISTER"], ck_to_us(200))
 
+    def cmd_mrr(ma):
+        # Convert Mode Register Read command to DFI as expected by PHY
+        # op = mr[ma]
+        assert ma < 2**7, "MR address to big: {}".format(ma)
+        # assert op < 2**8, "MR opcode to big: {}".format(op)
+        ba = ma
+        return ("Read Mode Register {}".format(ma), SpecialCmd.MRR, ba, cmds["MODE_REGISTER_READ"], ck_to_us(200))
+
     def sec_to_us(delay):
         return delay * 1000 * 1000
 
@@ -815,7 +824,8 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
         ("Assert reset",         0x0000,                    0,                 "DFII_CONTROL_ODT",                sec_to_us(200e-6)),                   # tINIT1 = 200 µs
         ("Release reset",        0x0000,                    0,                 cmds["UNRESET"],                   sec_to_us(2e-3) + ck_to_us(5)),       # tINIT3 (2ms) + tINIT4 (5nCK) - After reset before CS
         ("Toggle CS",            0,                         SpecialCmd.NOP,    "DFII_COMMAND_WE|DFII_COMMAND_CS", sec_to_us(2e-6)),                     # tINIT5 = 2 µs - stable clock before MRW / MRR
-        *[cmd_mr(ma) for ma in sorted(mr.keys())],                                                                                                      # MRW / MRR
+        *[cmd_mr(ma) for ma in sorted(mr.keys())],                                                                                                      # MRW
+        *[cmd_mrr(ma) for ma in range(0, 47)],                                                                                                      # MRR
         ("ZQ Calibration latch", MPC.ZQC_LATCH,             SpecialCmd.MPC,    "DFII_COMMAND_WE|DFII_COMMAND_CS", max(ck_to_us(4), sec_to_us(30e-9))),  # MAX(30ns, 4nCK) ZQCAL latch quiet time
     ]
 
