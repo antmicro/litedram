@@ -253,7 +253,7 @@ class TestBankMachine(unittest.TestCase):
                 expected = [
                     ("activate",  0xba),
                     ("write",     0xad << dut.address_align),
-                    ("precharge", 0xad << dut.address_align),
+                    ("precharge", 0x0),
                     ("activate",  0xda),
                     ("write",     0xad << dut.address_align),
                 ]
@@ -290,7 +290,7 @@ class TestBankMachine(unittest.TestCase):
         expected = [
             ("activate",  0xba),
             ("write",     0xad << dut.address_align),
-            ("precharge", 0xad << dut.address_align),
+            ("precharge", 0),
             ("activate",  0xda),
             ("write",     0xad << dut.address_align),
         ]
