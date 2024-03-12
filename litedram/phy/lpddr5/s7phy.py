@@ -244,10 +244,9 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
                     inc  = self.get_inc(bit//8, wdly_dq_inc),
                     clk  = "sys"
                 )
-            self.iobuf(
+            self.obuft(
                 din    = dq_dly,
-                dout   = Signal(),
-                dinout = self.pads.dq_in[bit],
+                dout = self.pads.dq_in[bit],
                 tin    = dq_t
             )
 

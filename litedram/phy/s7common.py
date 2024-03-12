@@ -243,3 +243,9 @@ class S7Common(Module):
             i_I   = din,
             o_O   = dout
         )
+    def obuft(self, *, din, dout, tin):
+        self.specials += Instance("OBUFT",
+            i_I   = din,
+            i_T   = tin,
+            o_O   = dout
+        )

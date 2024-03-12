@@ -675,10 +675,11 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
     wl = phy_settings.cwl
     wck_ck_ratio = phy_settings.wck_ck_ratio
     bl = 16
-    dq_odt = getattr(phy_settings, "dq_odt", "disable")
-    ca_odt = getattr(phy_settings, "ca_odt", "disable")
-    pull_down_drive_strength = getattr(phy_settings, "pull_down_drive_strength", "RZQ/2")
-    soc_odt = getattr(phy_settings, "soc_odt", "disable")
+    dq_odt =  getattr(phy_settings, "dq_odt", "disable")
+    ca_odt =  getattr(phy_settings, "ca_odt", "disable")
+    pull_down_drive_strength = \
+              getattr(phy_settings, "pull_down_drive_strength", "RZQ/6")
+    soc_odt = getattr(phy_settings, "soc_odt", "RZQ/6")
     wck_odt = getattr(phy_settings, "wck_odt", "disable")
     vref_ca = getattr(phy_settings, "vref_ca", 34.0)
     vref_dq = getattr(phy_settings, "vref_dq", 34.0)
@@ -825,7 +826,7 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
         ("Release reset",        0x0000,                    0,                 cmds["UNRESET"],                   sec_to_us(2e-3) + ck_to_us(5)),       # tINIT3 (2ms) + tINIT4 (5nCK) - After reset before CS
         ("Toggle CS",            0,                         SpecialCmd.NOP,    "DFII_COMMAND_WE|DFII_COMMAND_CS", sec_to_us(2e-6)),                     # tINIT5 = 2 µs - stable clock before MRW / MRR
         *[cmd_mr(ma) for ma in sorted(mr.keys())],                                                                                                      # MRW
-        *[cmd_mrr(ma) for ma in range(0, 47)],                                                                                                      # MRR
+        #*[cmd_mrr(ma) for ma in range(0, 47)],                                                                                                          # MRR
         ("ZQ Calibration latch", MPC.ZQC_LATCH,             SpecialCmd.MPC,    "DFII_COMMAND_WE|DFII_COMMAND_CS", max(ck_to_us(4), sec_to_us(30e-9))),  # MAX(30ns, 4nCK) ZQCAL latch quiet time
     ]
 

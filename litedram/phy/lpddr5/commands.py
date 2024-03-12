@@ -128,9 +128,9 @@ class DFIPhaseAdapter(Module):
             self.ca[3].eq(self.cmd2.ca[1]),
         ]
 
-        def wck_sync_to(type):
+        def wck_sync_to(kind):
             return If(self.wck_sync_done == 0,
-                self.wck_sync.eq(getattr(WCKSyncType, type.upper())),
+                self.wck_sync.eq(getattr(WCKSyncType, kind.upper())),
             )
 
         def cmds(*cmd, valid=1):
