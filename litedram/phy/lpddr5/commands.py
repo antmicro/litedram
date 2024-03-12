@@ -148,16 +148,16 @@ class DFIPhaseAdapter(Module):
         self.comb += If(dfi_phase.cs_n == 0,
             Case(dfi_cmd(dfi_phase), {
                 CMD["ACT"]: cmds("ACT-1", "ACT-2"),
-                CMD["RD"]: [*cmds("CAS", "RD16"), wck_sync_to("RD")],
+                CMD["RD"]: [wck_sync_to("RD"), *cmds("CAS", "RD16")],
                 CMD["WR"]:  Case(masked_write, {
-                    0: [*cmds("CAS", "WR16"), wck_sync_to("WR")],
-                    1: [*cmds("CAS", "MWR"), wck_sync_to("WR")],
+                    0: [wck_sync_to("WR"), *cmds("CAS", "WR16")],
+                    1: [wck_sync_to("WR"), *cmds("CAS", "MWR")],
                 }),
                 CMD["PRE"]: cmds("PRE"),
                 CMD["REF"]: cmds("REF"),
                 CMD["ZQC"]: Case(dfi_phase.bank, {
                     SpecialCmd.MPC: cmds("MPC"),
-                    SpecialCmd.MRR: [*cmds("CAS", "MRR"), wck_sync_to("RD")],
+                    SpecialCmd.MRR: [wck_sync_to("RD"), *cmds("CAS", "MRR")],
                     SpecialCmd.NOP: cmds("NOP"),
                     "default": deselect,
                 }),
