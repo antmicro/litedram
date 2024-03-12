@@ -518,7 +518,7 @@ class LPDDR5PHY(Module, AutoCSR):
 
         for bit in range(self.databits):
             # output
-            wrdata = [0xff for i in range(2*wck_ck_ratio)]
+            wrdata = [wrdata_ck[i * self.databits + bit] for i in range(2*wck_ck_ratio)]
             self.submodules += BitSlip(
                 dw     = 2*wck_ck_ratio,
                 cycles = bitslip_cycles,
