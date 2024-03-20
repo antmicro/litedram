@@ -749,7 +749,7 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
         (0, 2, 0),                                 # Thermal Offset (no offset, 0-5°C gradient)
         (2, 1, 0),                                 # Vref Output (normal operation)
         (4, 1, 0),                                 # DMI Behaviour (default)
-        (5, 1, 1),                                 # Data Mask operation Disabled
+        (5, 1, 0),                                 # Data Mask operation Enabled
         (6, 1, 0),                                 # CBT Trainig Mode 1
         (7, 1, 0)                                  # Dual VDD2 rail (1.05V & 0.9V)
     ])
@@ -779,10 +779,10 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
     ])
     mr[20] = reg([
         (0, 2, 0b10),                              # RDQS (RDQS_T enabled; RDQS_C enable)
-        (2, 2, 0b00)                               # WCK differential
+        (2, 2, 0b00),                              # WCK differential
         (6, 1, 0b1),                               # DMI low-fixed during RDC
         (7, 1, 0b0),                               # MR 31/32 will invert DQ during RDC
-        # zero-defaults
+    #    # zero-defaults
     ])
     mr[22] = 0                                     # Write/read link ECC disabled
     mr[23] = 0                                     # Segment Refresh Enable
