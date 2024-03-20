@@ -512,6 +512,8 @@ class LPDDR5PHY(Module, AutoCSR):
                 wck_sync_done.eq(0),
                 self.wck_sync_state.eq(0b00),
             )
+        ).Else(
+            wck_sync_done.eq(0)
         )
 
         self.comb += self.adapter.wck_sync_done.eq(wck_sync_done)

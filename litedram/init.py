@@ -675,7 +675,7 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
     wl = phy_settings.cwl
     wck_ck_ratio = phy_settings.wck_ck_ratio
     bl = 16
-    dq_odt =  getattr(phy_settings, "dq_odt", "disable")
+    dq_odt =  getattr(phy_settings, "dq_odt", "RZQ/3")
     ca_odt =  getattr(phy_settings, "ca_odt", "disable")
     pull_down_drive_strength = \
               getattr(phy_settings, "pull_down_drive_strength", "RZQ/6")
@@ -738,28 +738,29 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
     ])
     mr[11] = reg([
         (0, 3, rzq_map[dq_odt]),                   # DQ Bus Reciever On-Die-Termination
-        (3, 1, 0),                                 # Non-Target ODT (disabled)
+        (3, 1, 1),                                 # Non-Target ODT (enable)
         (4, 3, rzq_map[ca_odt]),                   # CA Bus Reviever On-Die-Termination
     ])
     mr[12] = reg([
         (0, 7, get_vref(vref_ca)),                 # Vref(CA) Setting
         (7, 1, 0),                                 # Vref(CA) Byte Select
     ])
-    # mr[13] = reg([
-    #     (0, 2, 0),                                 # Thermal Offset (no offset, 0-5°C gradient)
-    #     (2, 1, 0),                                 # Vref Output (normal operation)
-    #     (4, 1, 0),                                 # DMI Behaviour (default)
-    #     (5, 1, 0),                                 # Data Mask operation Disabled
-    #     (6, 1, 0),                                 # CBT Trainig Mode 1
-    #     (7, 1, 0)                                  # Dual VDD2 rail (1.05V & 0.9V)
-    # ])
+    mr[13] = reg([
+        (0, 2, 0),                                 # Thermal Offset (no offset, 0-5°C gradient)
+        (2, 1, 0),                                 # Vref Output (normal operation)
+        (4, 1, 0),                                 # DMI Behaviour (default)
+        (5, 1, 1),                                 # Data Mask operation Disabled
+        (6, 1, 0),                                 # CBT Trainig Mode 1
+        (7, 1, 0)                                  # Dual VDD2 rail (1.05V & 0.9V)
+    ])
     mr[14] = reg([
         (0, 7, get_vref(vref_dq)),                 # Vref(DQ) Setting
         (7, 1, 0),                                 # Vref(DQ[15:8]) Lower byte copy (follow MR15)
     ])
     mr[15] = get_vref(vref_dq)                     # Vref(DQ[15:8])
+    mr[16] = 0                                     # CA training and FSP control register
     mr[17] = reg([
-        (0, 3, rzq_map[soc_odt]),                  # Frequency-Set-Point
+        (0, 3, rzq_map[soc_odt]),                  # SoC termination/ PUDS
         (3, 1, 1),                                 # CK ODT termination (disabled)
         (4, 1, 1),                                 # CS ODT termination (disabled)
         (5, 1, 1),                                 # CA ODT termination (disabled)
@@ -777,8 +778,10 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
         (0, 2, 0b00),                              # Low speed mode (use VDDL2: 0.9V rail)
     ])
     mr[20] = reg([
-        (0, 2, 0b01),                              # RDQS (RDQS_T enabled; RDQS_C disabled)
+        (0, 2, 0b10),                              # RDQS (RDQS_T enabled; RDQS_C enable)
         (2, 2, 0b00)                               # WCK differential
+        (6, 1, 0b1),                               # DMI low-fixed during RDC
+        (7, 1, 0b0),                               # MR 31/32 will invert DQ during RDC
         # zero-defaults
     ])
     mr[22] = 0                                     # Write/read link ECC disabled
@@ -793,9 +796,39 @@ def get_lpddr5_phy_init_sequence(phy_settings, timing_settings):
         (2, 2, 0b01),                              # ZQ background calibration interval (64ms)
         (5, 1, 0),                                 # ZQ mode (background ZQ calibration)
     ])
-    # mr[46] = reg([
-    #     (1, 1, 1),                               # RDQS toggle mode enabled
-    # ])
+    # mr29 <- PPR banks 0-7 availibity
+    # mr30 <- DCA control
+    # mr31 <- Lower byte DQ calibration invert control
+    # mr32 <- Upper byte DQ calibration invert control
+    # mr33 <- DQ calibration pattern, first 8 bits
+    # mr34 <- DQ calibration pattern, last 8 bits
+    # mr35 <- read-only WCK2DQI oscillator LSB, DQ input
+    # mr36 <- read-only WCK2DQI oscillator MSB, DQ input
+    # mr37 <- WCK2DQI  interval run time
+    # mr38 <- read-only WCK2DQO oscillator LSB, DQ output
+    # mr39 <- read-only WCK2DQO oscillator MSB, DQ output
+    # mr40 <- WCK2DQO  interval run time
+    mr[41] = reg([
+        (5, 3, rzq_map[dq_odt])                    # NT DQ-ODT
+    ])
+    # mr42 <- PPR Key protection code
+    # mr43 <- read-only Error detection
+    # mr44 <- read-only ECC syndrome
+    # mr45 <- read-only ECC syndrome
+    # mr46 <- RDQS training
+    # mr47 <- Serial ID-1
+    # mr48 <- Serial ID-2
+    # mr49 <- Serial ID-3
+    # mr50 <- Serial ID-4
+    # mr51 <- Serial ID-5
+    # mr52 <- Serial ID-6
+    # mr53 <- Serial ID-7
+    # mr54 <- Serial ID-8
+    # mr55 <- DNU
+    # mr56 <- ignore
+    # mr57 <- Refresh/ACT register
+    # mr58 <- DQ pre-emphasis
+    # mr59 - mr127 <- RFU/DNU
 
     def cmd_mr(ma):
         # Convert Mode Register Write command to DFI as expected by PHY

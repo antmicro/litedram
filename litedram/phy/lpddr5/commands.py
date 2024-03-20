@@ -31,6 +31,9 @@ class SpecialCmd(enum.IntEnum):
     MPC = 0
     MRR = 1
     NOP = 2
+    WFF = 3
+    RDD = 4
+    RDC = 5
 
 @enum.unique
 class MPC(enum.IntEnum):
@@ -159,6 +162,9 @@ class DFIPhaseAdapter(Module):
                     SpecialCmd.MPC: cmds("MPC"),
                     SpecialCmd.MRR: [wck_sync_to("RD"), *cmds("CAS", "MRR")],
                     SpecialCmd.NOP: cmds("NOP"),
+                    SpecialCmd.WFF: [wck_sync_to("WR"), *cmds("CAS", "WFF")],
+                    SpecialCmd.RDD: [wck_sync_to("RD"), *cmds("CAS", "RDD")],
+                    SpecialCmd.RDC: [wck_sync_to("RD"), *cmds("CAS", "RDC")],
                     "default": deselect,
                 }),
                 CMD["MRS"]: cmds("MRW-1", "MRW-2"),

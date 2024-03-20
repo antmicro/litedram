@@ -28,7 +28,6 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
             **kwargs
         )
 
-        self.settings.delays = 32
         self.settings.write_leveling = True
         self.settings.write_latency_calibration = True
         self.settings.write_dq_dqs_training = True
@@ -38,9 +37,11 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
         # Calculate value of taps needed to shift a signal by 90 degrees.
         # Using iodelay_clk_freq of 300MHz/400MHz is only valid for -3 and -2/2E speed grades.
         assert iodelay_clk_freq in [200e6, 300e6, 400e6]
-        iodelay_tap_average = 1 / (2*32 * iodelay_clk_freq)
-        half_sys4x_taps = math.floor(self.twck / (4 * iodelay_tap_average))
-        assert half_sys4x_taps < 32, "Exceeded ODELAYE2 max value: {} >= 32".format(half_sys4x_taps)
+        # Calculate number of taps that cover halt of WCK period
+        max_delay_taps = math.ceil((self.twck/2)/(1/2/32/iodelay_clk_freq))
+        assert max_delay_taps <= 32, "Exceeded ODELAYE2 max value: {} >= 32".format(half_sys4x_taps)
+        self.max_delay_taps = max_delay_taps
+        self.settings.delays = max_delay_taps
 
         # Power enable
         if hasattr(self.pads, "pwr_en"):
@@ -48,8 +49,6 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
             self.ibuf(din=self.pads.pwr_good, dout=Signal())
 
         # Registers --------------------------------------------------------------------------------
-        # Note: this should be named sys4x, but using sys8x due to a name hard-coded in BIOS
-        self._half_sys8x_taps = CSRStorage(5, reset=half_sys4x_taps)
 
         # delay control
         self._rdly_dq_rst  = CSR()
@@ -165,7 +164,7 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
             wck_dly = Signal()
             data_ser(din=self.out.wck[byte], dout=wck_ser if with_odelay else wck_dly, clk="sys4x", clkdiv="sys")
             if with_odelay:
-                self.odelaye2(din=wck_ser, dout=wck_dly, rst=cdly_rst, inc=cdly_inc, clk="sys")
+                self.odelaye2(din=wck_ser, dout=wck_dly, rst=wdly_dqs_rst, inc=wdly_dqs_inc, clk="sys")
 
             self.obufds(din=wck_dly, dout=self.pads.wck_p[byte], dout_b=self.pads.wck_n[byte])
 
@@ -173,10 +172,15 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
         for byte in range(self.databits//8):
             dqs_i     = Signal()
             dqs_i_dly = Signal()
-            self.ibufds(
-                din   = self.pads.rdqs_p[byte],
-                din_b = self.pads.rdqs_n[byte],
-                dout  = dqs_i,
+
+            self.iobufds_dcien(
+                din             = Signal(),
+                ibufdisable     = 0,
+                dcitermdisable  = 1,
+                tin             = 1,
+                dinout          = self.pads.rdqs_p[byte],
+                dinout_b        = self.pads.rdqs_n[byte],
+                dout            = dqs_i,
             )
             self.idelaye2(
                 din  = dqs_i,
@@ -246,20 +250,26 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
                 )
             self.obuft(
                 din    = dq_dly,
-                dout = self.pads.dq_in[bit],
+                dout   = self.pads.dq_in[bit],
                 tin    = dq_t
             )
 
             # DQ MEM -> FPGA
-            self.ibuf(
-                din    = self.pads.dq_out[bit],
-                dout   = dq_i,
+            self.iobuf_dcien(
+                din             = Signal(),
+                ibufdisable     = 0,
+                dcitermdisable  = 1,
+                tin             = 1,
+                dinout          = self.pads.dq_out[bit],
+                dout            = dq_i,
             )
             self.idelaye2(
                 din  = dq_i,
                 dout = dq_i_dly,
                 rst  = self.get_rst(bit//8, rdly_dq_rst),
                 inc  = self.get_inc(bit//8, rdly_dq_inc),
+                init = self.max_delay_taps-1,
+                dec  = True,
                 clk  = "sys"
             )
             data_des(

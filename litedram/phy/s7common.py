@@ -225,6 +225,18 @@ class S7Common(Module):
             io_IOB = dinout_b,
         )
 
+    def iobufds_dcien(self, *, din, dout, dinout, dinout_b,
+        ibufdisable, dcitermdisable, tin):
+        self.specials += Instance("IOBUFDS_DCIEN",
+            io_IO            = dinout,
+            io_IOB           = dinout_b,
+            i_I              = din,
+            i_IBUFDISABLE    = ibufdisable,
+            i_DCITERMDISABLE = dcitermdisable,
+            i_T              = tin,
+            o_O              = dout
+        )
+
     def iobuf(self, *, din, dout, dinout, tin):
         self.specials += Instance("IOBUF",
             i_T   = tin,
@@ -233,16 +245,29 @@ class S7Common(Module):
             io_IO = dinout,
         )
 
+    def iobuf_dcien(self, *, din, dout, dinout, ibufdisable,
+        dcitermdisable, tin):
+        self.specials += Instance("IOBUF_DCIEN",
+            io_IO            = dinout,
+            i_I              = din,
+            i_IBUFDISABLE    = ibufdisable,
+            i_DCITERMDISABLE = dcitermdisable,
+            i_T              = tin,
+            o_O              = dout
+        )
+
     def ibuf(self, *, din, dout):
         self.specials += Instance("IBUF",
             i_I   = din,
             o_O   = dout
         )
+
     def obuf(self, *, din, dout):
         self.specials += Instance("OBUF",
             i_I   = din,
             o_O   = dout
         )
+
     def obuft(self, *, din, dout, tin):
         self.specials += Instance("OBUFT",
             i_I   = din,
