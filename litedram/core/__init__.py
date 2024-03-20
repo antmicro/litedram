@@ -23,8 +23,9 @@ class LiteDRAMCore(Module, AutoCSR):
             nranks      = phy.settings.nranks,
             databits    = phy.settings.dfi_databits,
             nphases     = phy.settings.nphases,
-            memtype     = phy.settings.memtype,
-            strobes     = phy.settings.strobes,
+            write_latency  = phy.settings.write_latency,
+            memtype        = phy.settings.memtype,
+            strobes        = phy.settings.strobes,
             with_sub_channels = phy.settings.with_sub_channels,
             masked_writes_arg = phy.settings.masked_write)
         self.comb += self.dfii.master.connect(phy.dfi)

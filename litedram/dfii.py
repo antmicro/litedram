@@ -17,7 +17,7 @@ from litedram.phy.ddr5.commands import DFIPhaseAdapter
 # PhaseInjector ------------------------------------------------------------------------------------
 
 class PhaseInjector(Module, AutoCSR):
-    def __init__(self, phase):
+    def __init__(self, phase, write_latency):
         self._command       = CSRStorage(fields=[
             CSRField("cs",   size=1, description="DFI chip select bus"),
             CSRField("we",   size=1, description="DFI write enable bus"),
@@ -35,6 +35,12 @@ class PhaseInjector(Module, AutoCSR):
 
         # # #
 
+        wdata_ready = phase.wrdata_en
+        for _ in range(write_latency):
+            new_wdata_ready = Signal.like(wdata_ready)
+            self.sync += new_wdata_ready.eq(wdata_ready)
+            wdata_ready = new_wdata_ready
+
         self.comb += [
             If(self._command_issue.re,
                 phase.cs_n.eq(Replicate(~self._command.fields.cs, len(phase.cs_n))),
@@ -51,7 +57,7 @@ class PhaseInjector(Module, AutoCSR):
             phase.bank.eq(self._baddress.storage),
             phase.wrdata_en.eq(self._command_issue.re & self._command.fields.wren),
             phase.rddata_en.eq(self._command_issue.re & self._command.fields.rden),
-            phase.wrdata.eq(self._wrdata.storage),
+            phase.wrdata.eq(self._wrdata.storage & Replicate(wdata_ready, len(phase.wrdata))),
             phase.wrdata_mask.eq(0)
         ]
         self.sync += If(phase.rddata_valid, self._rddata.status.eq(phase.rddata))
@@ -417,7 +423,7 @@ class DFISamplerDDR5(Module, AutoCSR):
 # DFIInjector --------------------------------------------------------------------------------------
 
 class DFIInjector(Module, AutoCSR):
-    def __init__(self, addressbits, bankbits, nranks, databits, nphases=1,
+    def __init__(self, addressbits, bankbits, nranks, databits, nphases=1, write_latency=0,
                  memtype=None, strobes=None, with_sub_channels=False, masked_writes_arg=None):
         self.slave   = dfi.Interface(addressbits, bankbits, nranks, databits, nphases)
         self.master  = dfi.Interface(addressbits, bankbits, nranks, databits, nphases)
@@ -477,7 +483,7 @@ class DFIInjector(Module, AutoCSR):
 
         if memtype != "DDR5":
             for n, phase in enumerate(csr1_dfi.phases):
-                setattr(self.submodules, "pi" + str(n), PhaseInjector(phase))
+                setattr(self.submodules, "pi" + str(n), PhaseInjector(phase, write_latency))
             # # #
 
             self.comb += [

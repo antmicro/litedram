@@ -430,7 +430,7 @@ class LPDDR5PHY(Module, AutoCSR):
         self.submodules += wrdata_en
 
         dq_oe = Signal()
-        self.comb += dq_oe.eq(reduce(or_, wrdata_en.taps[wrtap:wrtap+burst_ck_cycles]))
+        self.comb += dq_oe.eq(reduce(or_, wrdata_en.taps[wrtap:wrtap+burst_ck_cycles+1]))
 
         # Read Control Path ------------------------------------------------------------------------
         rddata_en = TappedDelayLine(
