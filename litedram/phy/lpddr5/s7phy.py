@@ -56,8 +56,8 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
         self._rdly_dqs_rst = CSR()
         self._rdly_dqs_inc = CSR()
         if with_odelay:
-            self._cdly_rst     = CSR()
-            self._cdly_inc     = CSR()
+            self._cadly_rst     = CSR()
+            self._cadly_inc     = CSR()
             self._wdly_dq_rst  = CSR()
             self._wdly_dq_inc  = CSR()
             self._wdly_dqs_rst = CSR()
@@ -73,8 +73,8 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
         rdly_dqs_rst = cdc(self._rdly_dqs_rst.re)
         rdly_dqs_inc = cdc(self._rdly_dqs_inc.re)
         if with_odelay:
-            cdly_rst     = cdc(self._cdly_rst.re) | self._rst.storage
-            cdly_inc     = cdc(self._cdly_inc.re)
+            cdly_rst     = cdc(self._cadly_rst.re) | self._rst.storage
+            cdly_inc     = cdc(self._cadly_inc.re)
             wdly_dq_rst  = cdc(self._wdly_dq_rst.re)
             wdly_dq_inc  = cdc(self._wdly_dq_inc.re)
             wdly_dqs_rst = cdc(self._wdly_dqs_rst.re)
