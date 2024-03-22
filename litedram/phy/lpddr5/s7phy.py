@@ -39,7 +39,7 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
         assert iodelay_clk_freq in [200e6, 300e6, 400e6]
         # Calculate number of taps that cover halt of WCK period
         max_delay_taps = math.ceil((self.twck/2)/(1/2/32/iodelay_clk_freq))
-        assert max_delay_taps <= 32, "Exceeded ODELAYE2 max value: {} >= 32".format(half_sys4x_taps)
+        assert max_delay_taps <= 32, "Exceeded ODELAYE2 max value: {} >= 32".format(max_delay_taps)
         self.max_delay_taps = max_delay_taps
         self.settings.delays = max_delay_taps
 
