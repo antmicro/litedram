@@ -15,7 +15,7 @@ from migen import *
 from litex.soc.interconnect import stream
 from litex.soc.interconnect.csr import AutoCSR, CSRStorage, CSR
 
-from litedram.common import BitSlip, get_sys_latency, get_sys_phase, PhySettings, TappedDelayLine
+from litedram.common import BitSlip, BitSlipInv, get_sys_latency, get_sys_phase, PhySettings, TappedDelayLine
 from litedram.phy.dfi import Interface as DFIInterface, DFIRateConverter
 from litedram.phy.utils import CommandsPipeline, bitpattern, delayed, HoldValid
 from litedram.phy.lpddr5.commands import DFIPhaseAdapter, WCKSyncType
@@ -175,8 +175,8 @@ class LPDDR5PHY(Module, AutoCSR):
         burst_len = 16
         burst_ck_cycles = burst_len // (2*wck_ck_ratio)
 
-        # Bitslip introduces latency from 1 up to `cycles + 1` (sys)
-        bitslip_cycles  = 1
+        # Bitslip introduces latency from 1 up to `cycles + 2` (sys)
+        bitslip_cycles  = 2
         bitslip_range   = 1
         # Commands are sent over 2 CK and we count cl/cwl from the 2nd CK
         cmd_latency     = 1
@@ -187,7 +187,7 @@ class LPDDR5PHY(Module, AutoCSR):
         # DFI cmd -> cmd buf -> PHY serializers -> DRAM -> Read Latency -> DQ data
         # -> PHY deserializers -> Bitslip -> Burst cycles -> StrideConverter -> DFI rddata
         read_data_delay = cmd_latency + ser_latency.sys + cl  # DFI cmd -> read data on DQ
-        read_des_delay  = des_latency.sys + bitslip_cycles+bitslip_range + burst_ck_cycles  # DQ -> DFI rddata
+        read_des_delay  = des_latency.sys + bitslip_cycles + bitslip_range + burst_ck_cycles  # DQ -> DFI rddata
         read_latency    = read_data_delay + read_des_delay
 
         # Write latency
@@ -231,7 +231,7 @@ class LPDDR5PHY(Module, AutoCSR):
             write_latency = write_latency,
             cmd_latency   = cmd_latency,
             cmd_delay     = cmd_delay,
-            bitslips      = 8,
+            bitslips      = 16,
             soc_freq      = ck_freq,
         )
         self.settings.wck_ck_ratio  = wck_ck_ratio
@@ -544,7 +544,7 @@ class LPDDR5PHY(Module, AutoCSR):
 
             # input
             dq_i_bs = Signal(2*wck_ck_ratio)
-            self.submodules += BitSlip(
+            self.submodules += BitSlipInv(
                 dw     = 2*wck_ck_ratio,
                 cycles = bitslip_cycles,
                 rst    = self.get_rst(bit//8, rdly_dq_bitslip_rst),

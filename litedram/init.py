@@ -1287,7 +1287,7 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
     r.define("SDRAM_PHY_WRPHASE", wrphase)
 
     # Define Read/Write Leveling capability
-    if phy_settings.memtype != "DDR5":
+    if phy_settings.memtype not in ["DDR5", "LPDDR5"]:
         if phy_settings.write_leveling:
             r.define("SDRAM_PHY_WRITE_LEVELING_CAPABLE")
         if phy_settings.write_latency_calibration:
@@ -1298,7 +1298,7 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
             r.define("SDRAM_PHY_READ_LEVELING_CAPABLE")
         if phy_settings.with_alert:
             r.define("SDRAM_PHY_ALERT_CAPABLE")
-    else:
+    elif phy_settings.memtype == "DDR5":
         if phy_settings.with_clock_odelay or phy_settings.with_odelay:
             r.define("SDRAM_PHY_CLK_DELAY_CAPABLE")
         if phy_settings.with_address_odelay or phy_settings.with_odelay:
