@@ -12,12 +12,13 @@ from operator import or_
 from functools import reduce
 
 class S7PHYCRG(Module):
-    def __init__(self, reset_clock_domain,
+    def __init__(self,
+                 reset_clock_domain, reset_clock_90_domain,
                  source_4x, source_4x_90):
 
         self.rst                = Signal(reset=1)
         self.rst_set            = False
-        self.reset_clock_domain = reset_clock_domain
+        self.reset_clock_domain = reset_clock_90_domain
         self.domain_resets      = {}
         self.domain_CEs         = {}
         self.domain_OCEs        = {}
@@ -27,6 +28,7 @@ class S7PHYCRG(Module):
         self.bufr_clr = bufr_clr = Signal()
         bufmrce_CE = Signal()
         bufmrce_90_CE = Signal()
+        bufmrce_90_CE_1 = Signal()
         counter = Signal(8)
         self.stable_clk = Signal()
 
@@ -46,15 +48,14 @@ class S7PHYCRG(Module):
             "BUFMRCE",
             i_I=source_4x_90,
             o_O=self.intermediate_90,
-            i_CE=bufmrce_CE,
+            i_CE=bufmrce_90_CE_1,
         )
 
         # Reset sequencer
-        cd_reset = getattr(self.sync, reset_clock_domain)
+        cd_reset = getattr(self.sync, reset_clock_90_domain)
         cd_reset += [
             If(self.rst,
                 counter.eq(0),
-                bufmrce_CE.eq(0),
                 bufmrce_90_CE.eq(0),
                 self.stable_clk.eq(0),
             ).Elif(counter != 0xFF,
@@ -64,23 +65,25 @@ class S7PHYCRG(Module):
                 bufr_clr.eq(1),
             ),
             If(counter == 0x40,
-                bufmrce_CE.eq(1),
                 bufmrce_90_CE.eq(1),
             ),
             If(counter == 0x60,
-                bufmrce_CE.eq(0),
                 bufmrce_90_CE.eq(0),
             ),
             If(counter == 0x80,
                 bufr_clr.eq(0),
             ),
             If(counter == 0xA0,
-                bufmrce_CE.eq(1),
                 bufmrce_90_CE.eq(1),
             ),
             If(counter == 0xF0,
                 self.stable_clk.eq(1),
             ),
+            bufmrce_90_CE_1.eq(bufmrce_90_CE),
+        ]
+        cd_reset = getattr(self.sync, reset_clock_domain)
+        cd_reset += [
+            bufmrce_CE.eq(bufmrce_90_CE),
         ]
 
 
