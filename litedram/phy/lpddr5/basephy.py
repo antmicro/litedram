@@ -32,14 +32,14 @@ class LPDDR5Output:
         # WCK DDR
         self.dq_o    = [Signal(2*wck_ck_ratio) for _ in range(databits)]
         self.dq_i    = [Signal(2*wck_ck_ratio) for _ in range(databits)]
-        self.dq_oe   = Signal()
+        self.dq_oe   = [Signal() for _ in range(databits//8)]
         self.wck     = [Signal(2*wck_ck_ratio)   for _ in range(databits//8)]
         self.rdqs_o  = [Signal(2*wck_ck_ratio)   for _ in range(databits//8)]
         self.rdqs_i  = [Signal(2*wck_ck_ratio)   for _ in range(databits//8)]
         self.rdqs_oe = Signal()
         self.dmi_o   = [Signal(2*wck_ck_ratio) for _ in range(databits//8)]
         self.dmi_i   = [Signal(2*wck_ck_ratio) for _ in range(databits//8)]
-        self.dmi_oe  = Signal()
+        self.dmi_oe  = [Signal() for _ in range(databits//8)]
 
 
 def namedtuple(cls):
@@ -191,7 +191,7 @@ class LPDDR5PHY(Module, AutoCSR):
         read_latency    = read_data_delay + read_des_delay
 
         # Write latency
-        write_latency = cwl + cmd_latency
+        write_latency = cwl + cmd_latency - 1
 
         # Registers --------------------------------------------------------------------------------
         self._rst = CSRStorage()
@@ -204,6 +204,8 @@ class LPDDR5PHY(Module, AutoCSR):
         self._rdly_dq_bitslip_rst = CSR()
         self._rdly_dq_bitslip     = CSR()
 
+        self._wdly_dqs_bitslip_rst = CSR()
+        self._wdly_dqs_bitslip     = CSR()
         self._wdly_dq_bitslip_rst = CSR()
         self._wdly_dq_bitslip     = CSR()
 
@@ -413,8 +415,8 @@ class LPDDR5PHY(Module, AutoCSR):
             self.submodules += BitSlip(
                 dw     = 2*wck_ck_ratio,
                 cycles = bitslip_cycles,
-                rst    = self.get_rst(byte, self._wdly_dq_bitslip_rst.re),
-                slp    = self.get_inc(byte, self._wdly_dq_bitslip.re),
+                rst    = self.get_rst(byte, self._wdly_dqs_bitslip_rst.re),
+                slp    = self.get_inc(byte, self._wdly_dqs_bitslip.re),
                 i      = wck_pattern_selected,
                 o      = self.out.wck[byte],
             )
@@ -440,8 +442,16 @@ class LPDDR5PHY(Module, AutoCSR):
         self.submodules += rddata_en
 
         # Data Path --------------------------------------------------------------------------------
-        self.comb += self.out.dq_oe.eq(delayed(self, dq_oe))
-        self.comb += self.out.dmi_oe.eq(self.out.dq_oe if masked_write else 0)
+        for module in range(databits//8):
+            self.submodules += BitSlip(
+                dw     = 1,
+                cycles = bitslip_cycles,
+                rst    = self.get_rst(module, wdly_dq_bitslip_rst),
+                slp    = self.get_inc(module, wdly_dq_bitslip),
+                i      = dq_oe,
+                o      = self.out.dq_oe[module],
+            )
+            self.comb += self.out.dmi_oe[module].eq(self.out.dq_oe[module] if masked_write else 0)
 
         wrdata_ck = Signal(self.settings.dfi_databits//burst_ck_cycles)
         wrdata_hold = HoldValid([("data", self.settings.dfi_databits)])
@@ -488,7 +498,7 @@ class LPDDR5PHY(Module, AutoCSR):
         rddata_start = read_latency - burst_ck_cycles - 1
         self.comb += [
             rddata_converter.sink.data.eq(rddata_ck),
-            rddata_converter.sink.valid.eq(reduce(or_, rddata_en.taps[rddata_start:rddata_start+burst_ck_cycles]) | self._wlevel_en.storage),
+            rddata_converter.sink.valid.eq(reduce(or_, rddata_en.taps[rddata_start:rddata_start+burst_ck_cycles])),
             rddata_converter.source.ready.eq(1),
             self.dfi.p0.rddata.eq(rddata_converter.source.data),
             self.dfi.p0.rddata_valid.eq(rddata_converter.source.valid),

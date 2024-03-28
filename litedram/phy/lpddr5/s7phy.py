@@ -204,7 +204,7 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
             data_ser(
                 din     = self.out.dmi_o[byte],
                 **(dict(dout_fb=dmi_ser) if with_odelay else dict(dout=dmi_dly)),
-                tin     = ~oe_delay_data(self.out.dmi_oe),
+                tin     = ~oe_delay_data(self.out.dmi_oe[byte]),
                 tout    = dmi_t,
                 clk     = "sys4x",
                 clkdiv  = "sys"
@@ -235,7 +235,7 @@ class S7LPDDR5PHY(LPDDR5PHY, S7Common):
             data_ser(
                 din     = self.out.dq_o[bit],
                 **(dict(dout_fb=dq_ser) if with_odelay else dict(dout=dq_dly)),
-                tin     = ~oe_delay_data(self.out.dq_oe),
+                tin     = ~oe_delay_data(self.out.dq_oe[bit//8]),
                 tout    = dq_t,
                 clk     = "sys4x",
                 clkdiv  = "sys"
