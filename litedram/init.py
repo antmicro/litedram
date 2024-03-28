@@ -1337,6 +1337,8 @@ def get_sdram_phy_c_header(phy_settings, timing_settings, geom_settings):
     supported_memory = 2 ** (geom_settings.bankbits +
                         geom_settings.rowbits +
                         geom_settings.colbits) * phy_settings.databits // 8
+    if phy_settings.memtype == "LPDDR5":
+        supported_memory *= 16
     r.define("SDRAM_PHY_SUPPORTED_MEMORY", f"0x{supported_memory:016x}ULL")
 
     r.newline()
