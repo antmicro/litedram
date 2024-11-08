@@ -127,10 +127,13 @@ class LiteDRAMCrossbar(Module):
         nmasters   = len(self.masters)
 
         # Address mapping --------------------------------------------------------------------------
-        cba_shifts = {"ROW_BANK_COL": controller.settings.geom.colbits - controller.address_align}
-        cba_shift = cba_shifts[controller.settings.address_mapping]
-        m_ba      = [m.get_bank_address(self.bank_bits, cba_shift)for m in self.masters]
-        m_rca     = [m.get_row_column_address(self.bank_bits, self.rca_bits, cba_shift) for m in self.masters]
+        ba_shifts = {
+            "ROW_BANK_COL": controller.settings.geom.colbits - controller.address_align,
+            "BANK_ROW_COL": controller.settings.geom.rowbits + controller.settings.geom.colbits - controller.address_align,
+        }
+        ba_shift = ba_shifts[controller.settings.address_mapping]
+        m_ba      = [m.get_bank_address(self.bank_bits, ba_shift)for m in self.masters]
+        m_rca     = [m.get_row_column_address(self.bank_bits, self.rca_bits, ba_shift) for m in self.masters]
 
         master_readys       = [0]*nmasters
         master_wdata_readys = [0]*nmasters

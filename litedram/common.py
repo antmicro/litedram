@@ -507,9 +507,9 @@ class LiteDRAMNativePort(Settings):
         self.dw = self.data_width
         self.cd = self.clock_domain
 
-    def get_bank_address(self, bank_bits, cba_shift):
-        cba_upper = cba_shift + bank_bits
-        return self.cmd.addr[cba_shift:cba_upper]
+    def get_bank_address(self, bank_bits, ba_shift):
+        ba_upper = ba_shift + bank_bits
+        return self.cmd.addr[ba_shift:ba_upper]
 
     def get_row_column_address(self, bank_bits, rca_bits, cba_shift):
         cba_upper = cba_shift + bank_bits
