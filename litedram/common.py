@@ -546,6 +546,8 @@ class tXXDController(Module):
     def __init__(self, txxd):
         self.valid = valid = Signal()
         self.ready = ready = Signal(reset=1)
+        # Strobes one cycle before ready is set
+        self.almost_ready = almost_ready = Signal(reset=1)
         ready.attr.add("no_retiming")
 
         # # #
@@ -556,10 +558,14 @@ class tXXDController(Module):
                 If(valid,
                     count.eq(txxd - 1),
                     ready.eq(txxd <= 1),
+                    almost_ready.eq(txxd == 2)
                 ).Elif(~ready,
                     count.eq(count - 1),
                     If(count == 1,
                         ready.eq(1)
+                    ),
+                    If(count == 2,
+                        almost_ready.eq(1)
                     )
                 )
 

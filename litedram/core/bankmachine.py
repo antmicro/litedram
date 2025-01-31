@@ -106,6 +106,7 @@ class BankMachine(Module, AutoCSR):
 
         # # #
 
+        precharge_required = Signal()
         auto_precharge = Signal()
 
         # Command buffer ---------------------------------------------------------------------------
@@ -153,7 +154,7 @@ class BankMachine(Module, AutoCSR):
 
         # Address generation -----------------------------------------------------------------------
         row_col_n_addr_sel = Signal()
-        pre_n_addr_sel = Signal()
+        pre_addr_n_sel = Signal()
         pre_sig = Signal(12)
         if settings.phy.memtype != "DDR5":
             self.comb += [pre_sig.eq((auto_precharge << 10))]
@@ -163,7 +164,7 @@ class BankMachine(Module, AutoCSR):
             cmd.ba.eq(n),
             If(row_col_n_addr_sel,
                 cmd.a.eq(slicer.row(cmd_buffer.source.addr))
-            ).Elif(pre_n_addr_sel,
+            ).Elif(pre_addr_n_sel,
                 cmd.a.eq(0),
             ).Else(
                 cmd.a.eq(pre_sig | slicer.col(cmd_buffer.source.addr))
@@ -200,42 +201,65 @@ class BankMachine(Module, AutoCSR):
 
         # Auto Precharge generation ----------------------------------------------------------------
         # generate auto precharge when current and next cmds are to different rows
-        if settings.with_auto_precharge:
-            self.comb += \
-                If(cmd_buffer_lookahead.source.valid & cmd_buffer.source.valid,
-                    If(slicer.row(cmd_buffer_lookahead.source.addr) !=
-                       slicer.row(cmd_buffer.source.addr),
-                        auto_precharge.eq(row_close == 0)
-                    )
+        self.comb += \
+            If(cmd_buffer_lookahead.source.valid & cmd_buffer.source.valid,
+                If(slicer.row(cmd_buffer_lookahead.source.addr) !=
+                   slicer.row(cmd_buffer.source.addr),
+                    precharge_required.eq(row_close == 0)
                 )
+            )
+        if settings.with_auto_precharge:
+            self.comb += auto_precharge.eq(precharge_required)
 
         # Control and command generation FSM -------------------------------------------------------
         # Note: tRRD, tFAW, tCCD, tWTR timings are enforced by the multiplexer
-        def ddr5_write_next_state():
+
+        def write_next_state(if_obj):
+            # cmd_buffer_lookahead.source.valid is set here
+            read_after_write = Signal()
+            self.comb += read_after_write.eq(~cmd_buffer_lookahead.source.we)
             if settings.phy.memtype != "DDR5":
-                return []
-            write_after_write = Signal()
-            self.comb += write_after_write.eq(
-                cmd_buffer_lookahead.source.valid & cmd_buffer_lookahead.source.we)
+                return if_obj.Elif(read_after_write,
+                    NextValue(cmd.is_write, 0),
+                    NextValue(cmd.we, 0),
+                    NextValue(cmd.is_read, 1),
+                    NextState("READ")
+                )
 
-            return [If(cmd.ready & write_after_write,
-                        NextState("TW2W"),
-                    ).Elif(cmd.ready,
-                        NextState("TW2R")
-                    )]
+            return if_obj.Elif(read_after_write,
+                        NextValue(cmd.valid, 0),
+                        NextValue(cmd.is_write, 0),
+                        NextValue(cmd.we, 0),
+                        NextValue(cmd.is_read, 1),
+                        NextState("TW2R"),
+                    ).Else(
+                        NextValue(cmd.valid, 0),
+                        NextState("TW2W")
+                    )
 
-        def ddr5_read_next_state():
+        def read_next_state(if_obj):
+            # cmd_buffer_lookahead.source.valid is set here
+            write_after_read = Signal()
+            self.comb += write_after_read.eq(cmd_buffer_lookahead.source.we)
             if settings.phy.memtype != "DDR5":
-                return []
-            read_after_read = Signal()
-            self.comb += read_after_read.eq(
-                cmd_buffer_lookahead.source.valid & ~cmd_buffer_lookahead.source.we)
+                if_obj.Elif(write_after_read,
+                    NextValue(cmd.is_write, 1),
+                    NextValue(cmd.we, 1),
+                    NextValue(cmd.is_read, 0),
+                    NextState("WRITE")
+                )
+                return if_obj
 
-            return [If(cmd.ready & read_after_read,
-                        NextState("TR2R"),
-                    ).Elif(cmd.ready,
-                        NextState("TR2W")
-                    )]
+            return if_obj.Elif(write_after_read,
+                        NextValue(cmd.valid, 0),
+                        NextValue(cmd.is_write, 1),
+                        NextValue(cmd.we, 1),
+                        NextValue(cmd.is_read, 0),
+                        NextState("TR2W"),
+                    ).Else(
+                        NextValue(cmd.valid, 0),
+                        NextState("TR2R")
+                    )
 
         self.last_addr = CSRStatus(size=len(cmd_buffer_lookahead.source.addr),
                                    name=f"last_addr_{n}");
@@ -250,43 +274,115 @@ class BankMachine(Module, AutoCSR):
             )
         ]
         self.submodules.fsm = fsm = FSM()
-        fsm.act("REGULAR",
+        fsm.act("CLOSED",
+            If(cmd_buffer.source.valid,
+                If(trccon.almost_ready | trccon.ready,
+                    NextValue(cmd.valid, 1),
+                    NextValue(row_col_n_addr_sel, 1),
+                    NextValue(cmd.is_cmd, 1),
+                    NextValue(cmd.ras, 1),
+                ),
+                NextState("ACTIVATE")
+            )
+        )
+        fsm.act("OPENED",
             If(refresh_req,
                 NextState("REFRESH")
             ).Elif(cmd_buffer.source.valid & row_opened & row_hit,
-                cmd.valid.eq(1),
+                NextValue(cmd.valid, 1),
+                NextValue(cmd.cas, 1),
                 If(cmd_buffer.source.we,
-                    req.wdata_ready.eq(cmd.ready),
-                    cmd.is_write.eq(1),
-                    cmd.we.eq(1),
-                    *(ddr5_write_next_state())
+                    NextValue(cmd.is_write, 1),
+                    NextValue(cmd.we, 1),
+                    NextState("WRITE")
                 ).Else(
-                    req.rdata_valid.eq(cmd.ready),
-                    cmd.is_read.eq(1),
-                    *(ddr5_read_next_state())
-                ),
-                cmd.cas.eq(1),
-                If(cmd.ready & auto_precharge,
-                   NextState("AUTOPRECHARGE")
+                    NextValue(cmd.is_read, 1),
+                    NextState("READ")
                 )
             ).Elif(cmd_buffer.source.valid & row_opened,
                 NextState("PRECHARGE")
-            ).Elif(cmd_buffer.source.valid,
-                NextState("ACTIVATE")
+            )
+        )
+        fsm.act("WRITE",
+            req.wdata_ready.eq(cmd.ready),
+            If(refresh_req,
+                NextValue(cmd.valid, 0),
+                NextValue(cmd.cas, 0),
+                NextValue(cmd.is_write, 0),
+                NextValue(cmd.we, 0),
+                NextState("REFRESH"),
+            ).Elif(cmd.ready | refresh_req,
+                write_next_state(
+                    # Handles lookahead.valid & row != lookahead.row
+                    If(precharge_required,
+                        NextValue(cmd.valid, 0),
+                        NextValue(cmd.cas, 0),
+                        NextValue(cmd.is_write, 0),
+                        NextValue(cmd.we, 0),
+                        If(auto_precharge,
+                            NextState("AUTOPRECHARGE"),
+                        ).Else(
+                            NextState("PRECHARGE"),
+                        )
+                    ).Elif(~cmd_buffer_lookahead.source.valid,
+                        NextValue(cmd.valid, 0),
+                        NextValue(cmd.cas, 0),
+                        NextValue(cmd.is_write, 0),
+                        NextValue(cmd.we, 0),
+                        NextState("OPENED")
+                    )
+                )
+            )
+        )
+        fsm.act("READ",
+            req.rdata_valid.eq(cmd.ready),
+            If(refresh_req,
+                NextValue(cmd.valid, 0),
+                NextValue(cmd.cas, 0),
+                NextValue(cmd.is_read, 0),
+                NextState("REFRESH")
+            ).Elif(cmd.ready,
+                read_next_state(
+                    # Handles lookahead.valid & row != lookahead.row
+                    If(precharge_required,
+                        NextValue(cmd.valid, 0),
+                        NextValue(cmd.cas, 0),
+                        NextValue(cmd.is_read, 0),
+                        If(auto_precharge,
+                            NextState("AUTOPRECHARGE"),
+                        ).Else(
+                            NextState("PRECHARGE"),
+                        )
+                    ).Elif(~cmd_buffer_lookahead.source.valid,
+                        NextValue(cmd.valid, 0),
+                        NextValue(cmd.cas, 0),
+                        NextValue(cmd.is_read, 0),
+                        NextState("OPENED")
+                    )
+                )
             )
         )
         fsm.act("PRECHARGE",
             # Note: we are presenting the column address, A10 is always low
+            If((twtpcon.almost_ready & trascon.almost_ready) |
+               (twtpcon.almost_ready & trascon.ready) |
+               (twtpcon.ready & trascon.almost_ready),
+                NextValue(cmd.valid, 1),
+                NextValue(pre_addr_n_sel, 1),
+                NextValue(cmd.ras, 1),
+                NextValue(cmd.we, 1),
+                NextValue(cmd.is_cmd, 1),
+            ),
             If(twtpcon.ready & trascon.ready,
-                cmd.valid.eq(1),
                 If(cmd.ready,
+                    NextValue(cmd.valid, 0),
+                    NextValue(pre_addr_n_sel, 0),
+                    NextValue(cmd.ras, 0),
+                    NextValue(cmd.we, 0),
+                    NextValue(cmd.is_cmd, 0),
                     NextValue(self.timer, timing_regs['tRP'] - 1),
                     NextState("TRP")
                 ),
-                pre_n_addr_sel.eq(1),
-                cmd.ras.eq(1),
-                cmd.we.eq(1),
-                cmd.is_cmd.eq(1)
             ),
             row_close.eq(1)
         )
@@ -299,26 +395,49 @@ class BankMachine(Module, AutoCSR):
         )
         fsm.act("TRP",
             If(self.timer_done,
+                If(trccon.almost_ready | trccon.ready,
+                    NextValue(cmd.valid, 1),
+                    NextValue(row_col_n_addr_sel, 1),
+                    NextValue(cmd.is_cmd, 1),
+                    NextValue(cmd.ras, 1),
+                ),
                 NextState("ACTIVATE")
             )
         )
         fsm.act("ACTIVATE",
             row_hit_reeval.eq(1),
+            If(trccon.almost_ready,
+                NextValue(cmd.valid, 1),
+                NextValue(row_col_n_addr_sel, 1),
+                NextValue(cmd.is_cmd, 1),
+                NextValue(cmd.ras, 1),
+            ),
             If(trccon.ready,
-                row_col_n_addr_sel.eq(1),
-                row_open.eq(1),
-                cmd.valid.eq(1),
-                cmd.is_cmd.eq(1),
                 If(cmd.ready,
+                    row_open.eq(1),
+                    NextValue(cmd.valid, 0),
+                    NextValue(row_col_n_addr_sel, 0),
+                    NextValue(cmd.is_cmd, 0),
+                    NextValue(cmd.ras, 0),
                     NextValue(self.timer, timing_regs['tRCD'] - 1),
                     NextState("TRCD")
                 ),
-                cmd.ras.eq(1)
             )
         )
         fsm.act("TRCD",
             If(self.timer_done,
-                NextState("REGULAR")
+                # Go to READ/WRITE state directly
+                # This state is only reached from ACTIVATE
+                NextValue(cmd.valid, 1),
+                NextValue(cmd.cas, 1),
+                If(cmd_buffer.source.we,
+                    NextValue(cmd.is_write, 1),
+                    NextValue(cmd.we, 1),
+                    NextState("WRITE")
+                ).Else(
+                    NextValue(cmd.is_read, 1),
+                    NextState("READ")
+                )
             )
         )
         fsm.act("REFRESH",
@@ -326,29 +445,32 @@ class BankMachine(Module, AutoCSR):
                 refresh_gnt.eq(1),
             ),
             row_close.eq(1),
-            cmd.is_cmd.eq(1),
             If(~refresh_req,
-                NextState("REGULAR")
+                NextState("CLOSED")
             )
         )
         if settings.phy.memtype == "DDR5":
             fsm.act("TR2R",
                 If(tccd.ready,
-                    NextState("REGULAR"),
-                ),
-            )
-            fsm.act("TW2W",
-                If(tccdwr.ready,
-                    NextState("REGULAR"),
-                ),
-            )
-            fsm.act("TR2W",
-                If(trtw.ready,
-                    NextState("REGULAR"),
+                    NextValue(cmd.valid, 1),
+                    NextState("READ"),
                 ),
             )
             fsm.act("TW2R",
                 If(twtr.ready,
-                    NextState("REGULAR"),
+                    NextValue(cmd.valid, 1),
+                    NextState("READ"),
+                ),
+            )
+            fsm.act("TW2W",
+                If(tccdwr.ready,
+                    NextValue(cmd.valid, 1),
+                    NextState("WRITE"),
+                ),
+            )
+            fsm.act("TR2W",
+                If(trtw.ready,
+                    NextValue(cmd.valid, 1),
+                    NextState("WRITE"),
                 ),
             )
