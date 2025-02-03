@@ -275,7 +275,9 @@ class BankMachine(Module, AutoCSR):
         ]
         self.submodules.fsm = fsm = FSM()
         fsm.act("CLOSED",
-            If(cmd_buffer.source.valid,
+            If(refresh_req,
+                NextState("REFRESH")
+            ).Elif(cmd_buffer.source.valid,
                 If(trccon.almost_ready | trccon.ready,
                     NextValue(cmd.valid, 1),
                     NextValue(row_col_n_addr_sel, 1),
@@ -395,13 +397,17 @@ class BankMachine(Module, AutoCSR):
         )
         fsm.act("TRP",
             If(self.timer_done,
-                If(trccon.almost_ready | trccon.ready,
-                    NextValue(cmd.valid, 1),
-                    NextValue(row_col_n_addr_sel, 1),
-                    NextValue(cmd.is_cmd, 1),
-                    NextValue(cmd.ras, 1),
-                ),
-                NextState("ACTIVATE")
+                If(refresh_req,
+                    NextState("REFRESH")
+                ).Else(
+                    If(trccon.almost_ready | trccon.ready,
+                        NextValue(cmd.valid, 1),
+                        NextValue(row_col_n_addr_sel, 1),
+                        NextValue(cmd.is_cmd, 1),
+                        NextValue(cmd.ras, 1),
+                    ),
+                    NextState("ACTIVATE")
+                )
             )
         )
         fsm.act("ACTIVATE",
