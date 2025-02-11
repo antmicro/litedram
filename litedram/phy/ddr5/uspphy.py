@@ -1,10 +1,12 @@
 #
 # This file is part of LiteDRAM.
 #
-# Copyright (c) 2022 Antmicro <www.antmicro.com>
+# Copyright (c) 2024 Antmicro <www.antmicro.com>
 # SPDX-License-Identifier: BSD-2-Clause
 
-from operator import and_
+import random
+
+from operator import add, and_
 from functools import reduce
 from math import ceil
 
@@ -51,13 +53,13 @@ class XilinxUSPAsyncFIFO(Module):
             self.comb += [
                 intermediate_di.eq(
                     Cat(
-                        [self.DI[i*9:i*9+8] for i in range(input_width//base_width)],
-                        [self.DI[i*9+8] for i in range(input_width//base_width)]
+                        [self.DI[i*9:i*9+8] for i in range(input_width//9)],
+                        [self.DI[i*9+8] for i in range(input_width//9)]
                     )
                 ),
                 Cat(
-                    [self.DO[i*9:i*9+8] for i in range(output_width//base_width)],
-                    [self.DO[i*9+8] for i in range(output_width//base_width)]
+                    [self.DO[i*9:i*9+8] for i in range(output_width//9)],
+                    [self.DO[i*9+8] for i in range(output_width//9)]
                 ).eq(intermediate_do),
             ]
         else:
@@ -79,7 +81,7 @@ class XilinxUSPAsyncFIFO(Module):
         if input_width > 36 or output_width > 36:
             fifo_primitive = "FIFO36E2"
         params = dict(
-            fifo_primitive,
+            of = fifo_primitive,
             p_CASCADE_ORDER = "NONE",
             p_CLOCK_DOMAINS = "INDEPENDENT",
             p_EN_ECC_PIPE = "FALSE",
@@ -114,8 +116,8 @@ class XilinxUSPAsyncFIFO(Module):
             i_RDEN          = self.RDEN,
             i_RDCLK         = ClockSignal(rclk),
             o_EMPTY         = self.EMPTY,
-            o_DOUT          = self.DO[:(7*output_width)//8+1],
-            o_DOUTP         = self.DO[(7*output_width)//8+1:],
+            o_DOUT          = intermediate_do[:(7*output_width)//8+1],
+            o_DOUTP         = intermediate_do[(7*output_width)//8+1:],
         )
         if base_width%9 != 0:
             params["i_DIN"] = intermediate_di
@@ -132,8 +134,10 @@ class XilinxUSPAsyncFIFOWrap(Module, _FIFOInterface):
 
     def __init__(self, wclk, rclk, i_dw, o_dw, name=None):
         _FIFOInterface.__init__(self, max(i_dw, o_dw), 512)
+        self.wclk = wclk
         self.rclk = rclk
-        assert i_dw//o_dw == i_dw/o_dw
+        if i_dw//o_dw != i_dw/o_dw and o_dw//i_dw != o_dw/i_dw:
+            raise AssertionError(f"Invalid input and output widths: {i_dw}, {o_dw}")
         ratio = max(i_dw, o_dw)//min(i_dw, o_dw)
         assert ratio in [1,2,4,8]
         w_ratio = max(i_dw//o_dw, 1)
@@ -147,13 +151,42 @@ class XilinxUSPAsyncFIFOWrap(Module, _FIFOInterface):
 
         width = max(i_dw, o_dw)
         min_width = min(i_dw, o_dw)
-        sliced_input = [self.din[i*min_width:(i+1)*min_width] for i in range(w_ratio)]
-        sliced_output = [self.dout[i*min_width:(i+1)*min_width] for i in range(r_ratio)]
-
         num_cdcs = ceil((width//ratio)/max_width[ratio])
+        base_width = max_width[ratio]
+        # Slice input
+        cdc_input = []
+        input_width = base_width*w_ratio
+        for i in range(num_cdcs):
+            _input = Signal(input_width)
+            start_idx = i*base_width
+            last_idx = min((i+1)*base_width, min_width)
+            for j in range(w_ratio):
+                base_offset = j*min_width
+                self.comb += [
+                    _input[j*base_width:(j+1)*base_width].eq(
+                        self.din[base_offset+start_idx:base_offset+last_idx]
+                    )
+                ]
+            cdc_input.append(_input)
+
+        # Slice output
+        cdc_output = []
+        output_width = base_width*r_ratio
+        for i in range(num_cdcs):
+            _output = Signal(output_width)
+            start_idx = i*base_width
+            last_idx = min((i+1)*base_width, min_width)
+            for j in range(r_ratio):
+                base_offset = j*min_width
+                self.comb += [
+                    self.dout[base_offset+start_idx:base_offset+last_idx].eq(
+                        _output[j*base_width:(j+1)*base_width]
+                    )
+                ]
+            cdc_output.append(_output)
+
         cdcs = []
         for i in range(num_cdcs):
-            base_width = max_width[ratio]
             num_valid_bits = min(base_width, min_width-i*base_width)
             cdc = XilinxUSPAsyncFIFO(
                 wclk=wclk,
@@ -161,23 +194,9 @@ class XilinxUSPAsyncFIFOWrap(Module, _FIFOInterface):
                 input_width=base_width*w_ratio,
                 output_width=base_width*r_ratio
             )
-            _input = []
-            _output = []
-            for j in range(w_ratio):
-                for k in range(base_width):
-                    if k < num_valid_bits:
-                        _input.append(sliced_input[j][i*base_width+k])
-                    else:
-                        _input.append(0)
-            for j in range(r_ratio):
-                for k in range(base_width):
-                    if k < num_valid_bits:
-                        _output.append(sliced_output[j][i*base_width+k])
-                    else:
-                        _output.append(Signal())
             self.comb += [
-                cdc.DI.eq(Cat(_input)),
-                Cat(_output).eq(cdc.DO),
+                cdc.DI.eq(cdc_input[i]),
+                cdc_output[i].eq(cdc.DO),
             ]
             cdcs.append(cdc)
         self.cdcs = cdcs
@@ -197,13 +216,22 @@ class XilinxUSPAsyncFIFOWrap(Module, _FIFOInterface):
 
 
 class USPCompoDDR5PHY(DDR5PHY):
-    def __init__(self, pads, *, iodelay_clk_freq, crg, voltage_ctrl, with_per_dq_idelay=False,
-                 with_sub_channels=False, pin_domains=None, pin_banks=None,
-                 **kwargs):
+    def __init__(
+        self,
+        pads,
+        *,
+        iodelay_clk_freq,
+        crg,
+        pin_vref_mapping,
+        with_per_dq_idelay=False,
+        with_sub_channels=False,
+        pin_domains=None,
+        **kwargs
+    ):
 
         self.iodelay_clk_freq = iodelay_clk_freq
+        self.pin_vref_mapping = pin_vref_mapping
         assert pin_domains is not None
-        assert pin_banks is not None
 
         def cdc_any(target):
             def new_cdc(i):
@@ -228,27 +256,16 @@ class USPCompoDDR5PHY(DDR5PHY):
                 if prefix+func in pin_domains:
                     assert ca_domain is None or ca_domain == pin_domains[prefix+func][0][0]
                     ca_domain = pin_domains[prefix+func][0][0]
-                    if pin_banks[prefix+func][0] not in ca_bank:
-                        ca_bank[pin_banks[prefix+func][0]] = 0
-                    ca_bank[pin_banks[prefix+func][0]] += 1
-                    per_pin_ca_domain[prefix+func] = [f"{ca_domain}_{bank}" for bank in pin_banks[prefix+func]]
+                    per_pin_ca_domain[prefix+func] = [f"{ca_domain}"]
 
         if "reset_n" in pin_domains:
-            per_pin_ca_domain["reset_n"] = [f"{ca_domain}_{bank}" for bank in pin_banks["reset_n"]]
-
-        _max = ("", -1)
-        for bank, count in ca_bank.items():
-            if count > _max[1]:
-                _max = (bank, count)
-        ca_domain = f"{ca_domain}_{_max[0]}"
+            per_pin_ca_domain["reset_n"] = [f"{ca_domain}"]
 
         wr_dqs_domains = {}
         for prefix in prefixes:
             if prefix+"dqs_t" in pin_domains:
                 wr_dqs_domain = pin_domains[prefix+"dqs_t"][0][0]
-                wr_dqs_bank = pin_banks[prefix+"dqs_t"][0]
-                assert reduce(and_, [wr_dqs_bank == bank for bank in pin_banks[prefix+"dqs_t"]])
-                wr_dqs_domains[prefix] = f"{wr_dqs_domain}_{wr_dqs_bank}"
+                wr_dqs_domains[prefix] = f"{wr_dqs_domain}"
 
         dq_wr_domains = {}
         dq_rd_domains = {}
@@ -257,14 +274,12 @@ class USPCompoDDR5PHY(DDR5PHY):
                 if prefix+func in pin_domains:
                     dq_wr_domain = pin_domains[prefix+func][0][0]
                     dq_rd_domain = pin_domains[prefix+func][1][0]
-                    dq_bank = pin_banks[prefix+func][0]
-                    assert reduce(and_, [dq_bank == bank for bank in pin_banks[prefix+func]])
                     if prefix not in dq_wr_domains:
-                        dq_wr_domains[prefix] = f"{dq_wr_domain}_{dq_bank}"
+                        dq_wr_domains[prefix] = f"{dq_wr_domain}"
                     if prefix not in dq_rd_domains:
-                        dq_rd_domains[prefix] = f"{dq_rd_domain}_{dq_bank}"
-                    assert dq_wr_domains[prefix] == f"{dq_wr_domain}_{dq_bank}"
-                    assert dq_rd_domains[prefix] == f"{dq_rd_domain}_{dq_bank}"
+                        dq_rd_domains[prefix] = f"{dq_rd_domain}"
+                    assert dq_wr_domains[prefix] == f"{dq_wr_domain}"
+                    assert dq_rd_domains[prefix] == f"{dq_rd_domain}"
 
         # It's easier to add reset signals to CDCs through type
         XilinxUSPAsyncFIFOWrap._rst = crg.get_rst
@@ -272,7 +287,7 @@ class USPCompoDDR5PHY(DDR5PHY):
         # DoubleRateDDR5PHY outputs half-width signals (comparing to DDR5PHY) in sys2x domain.
         super().__init__(pads,
             ser_latency       = Latency(sys4x=1),  # OSERDESE3 4:1 DDR (2 full-rate clocks)
-                         des_latency       = Latency(sys=4),  # ISERDESE3 1:8
+            des_latency       = Latency(sys=4),  # ISERDESE3 1:8
             phytype           = self.__class__.__name__,
             with_sub_channels = with_sub_channels,
             ca_domain         = ca_domain,
@@ -296,9 +311,9 @@ class USPCompoDDR5PHY(DDR5PHY):
             wr_cdc_min_max_delay =
                 (Latency(sys2x=XilinxUSPAsyncFIFOWrap.LATENCY), Latency(sys2x=(XilinxUSPAsyncFIFOWrap.WCL_LATENCY))),
 
-            with_odelay        = with_odelay,
-            with_idelay        = with_idelay,
-            rd_extra_delay     = Latency(sys2x=3),
+            with_odelay        = True,
+            with_idelay        = True,
+            rd_extra_delay     = Latency(sys2x=13),
             with_per_dq_idelay = with_per_dq_idelay,
             SyncFIFO_cls       = SimpleSyncFIFO,
             **kwargs
@@ -308,12 +323,27 @@ class USPCompoDDR5PHY(DDR5PHY):
         self.mult = self.dq_dqs_ratio//4
         self.max_delay_taps = 512
 
+        self._en_vtc = CSRStorage(reset=1)
+
+        self.handled_ca_vref_status = {}
+        for prefix in prefixes + [""]:
+            self.handled_ca_vref_status[prefix] = False
+            setattr(self, f"{prefix}ca_vref_status", CSRStatus(7, name=f"{prefix}ca_vref_status"))
+            setattr(self, f"{prefix}ca_vref_write", CSR(7, name=f"{prefix}ca_vref_write"))
+            setattr(self, f"{prefix}vref_status", CSRStatus(7, name=f"{prefix}vref_status"))
+            setattr(self, f"{prefix}vref_write", CSR(7, name=f"{prefix}vref_write"))
+
         CSRs    = self.CSRs
+        for prefix in prefixes + [""]:
+            self.CSRs[f"{prefix}ca_vref_status"] = getattr(self, f"{prefix}ca_vref_status")
+            self.CSRs[f"{prefix}ca_vref_write"] = getattr(self, f"{prefix}ca_vref_write")
+            self.CSRs[f"{prefix}vref_status"] = getattr(self, f"{prefix}vref_status")
+            self.CSRs[f"{prefix}vref_write"] = getattr(self, f"{prefix}vref_write")
         CDCCSRs = self.CDCCSRs
         crg.add_rst(CSRs['_rst'].storage)
         self.crg = crg
 
-        self.settings.delays = max_delay_taps
+        self.settings.delays = 512
         self.settings.write_leveling = True
         self.settings.write_latency_calibration = True
         self.settings.write_dq_dqs_training = True
@@ -325,6 +355,9 @@ class USPCompoDDR5PHY(DDR5PHY):
             "A_ck_t":    ((CSRs["ckdly_inc"].re,      CSRs["ckdly_rst"].re),      None),
             "B_ck_t":    ((CSRs["ckdly_inc"].re,      CSRs["ckdly_rst"].re),      None),
         }
+
+        self.vref_cache = {}
+
         for prefix in prefixes:
             pin_csr_mapping |= {
                 f"{prefix}par":   (
@@ -345,20 +378,24 @@ class USPCompoDDR5PHY(DDR5PHY):
             }
 
         self.pin_domains     = pin_domains
-        self.pin_banks       = pin_banks
         self.pin_csr_mapping = pin_csr_mapping
-        self.with_odelay     = with_odelay
 
         self.cdc_cache  = cdc_cache = {}
         pin_oe_cache = {}
+        # key = clock doamin, value = [(iserdes_output, phy_input)]
+        self.fast_input = {}
         for pin, count in pads.layout:
             if pin in ["mir", "cai", "ca_odt"]:
                 self.comb += getattr(self.pads, pin).eq(0)
                 continue
 
+            unused_ddr5_signals = [
+                prefix+sig for sig in ["cb", "dqsb_t", "dqsb_c"] for prefix in prefixes] + \
+                ["pgood", "dlbdq", "dlbdqs"]
+            if pin in unused_ddr5_signals:
+                continue
+
             assert pin in pin_domains, (pin, pin_domains)
-            assert pin in pin_banks or count == len(pin_banks[pin]), (pin, count)
-            assert reduce(and_, [pin_banks[pin][0] == pin_banks[pin][i] for i in range(1, count)], 1)
             if pin[-2:] == "_c":
                 continue
 
@@ -367,12 +404,11 @@ class USPCompoDDR5PHY(DDR5PHY):
             _is_io  = reduce(or_, [pin_type in pin for pin_type in ["dq", "dm_n"]]) # dq is in dqs
             _is_out = pin_domains[pin][0] is not None
             _is_in  = pin_domains[pin][1] is not None
-            suffix  = f"_{pin_banks[pin][0]}"
 
             for i in range(count):
                 if "_c" == pin[-2:]:
                     continue
-                _in, _out = self.get_domains(pin, _is_in, _is_out, suffix)
+                _in, _out = self.get_domains(pin, _is_in, _is_out)
 
                 _pin = pin
                 _pin_o = _pin
@@ -450,15 +486,47 @@ class USPCompoDDR5PHY(DDR5PHY):
                     self.handle_o(cd_out=_out, out_sig=_sig_out, oe_sig=_sig_oe,
                                     pin=pin, offset=offset)
 
-    def get_domains(self, pin, is_in, is_out, suffix):
+        for source_cd, values in self.fast_input.items():
+            if len(values[0][0]) == len(values[0][1]):
+                for input_sig, output_sig in values:
+                    self.sync += output_sig.eq(input_sig)
+            else:
+                input_width = reduce(add, [len(_input) for _input, _ in values])
+                output_width = reduce(add, [len(_output) for _, _output in values])
+                input_sig = Signal(input_width)
+                output_sig = Signal(output_width)
+                self.comb += input_sig.eq(Cat([_input for _input, _ in values]))
+                cdc = XilinxUSPAsyncFIFOWrap(source_cd, "sys", input_width, output_width)
+                self.submodules += cdc
+                fast_cd = getattr(self.sync, source_cd)
+                en = Signal()
+                fast_cd += [
+                    en.eq(self.CSRs["_enable_fifos"].storage)
+                ]
+                self.comb += [
+                    cdc.din.eq(input_sig),
+                    output_sig.eq(cdc.dout),
+                    cdc.we.eq(en),
+                    cdc.re.eq(cdc.readable),
+                ]
+                rsum = 0
+                for _, _output in values:
+                    start = rsum
+                    end = rsum+len(_output)//2
+                    self.comb += [
+                        _output.eq(Cat(output_sig[start:end], output_sig[input_width+start:input_width+end]))
+                    ]
+                    rsum += len(_output)//2
+
+    def get_domains(self, pin, is_in, is_out):
         cd_out, cd_in = self.pin_domains[pin]
         if is_out:
-            cd_out = (cd_out[0]+suffix, cd_out[1]+suffix)
+            cd_out = (cd_out[0], cd_out[1])
         if is_in:
-            cd_in = (cd_in[0]+suffix, cd_in[1]+suffix)
+            cd_in = (cd_in[0], cd_in[1])
         return cd_in, cd_out
 
-    def iobuf(self, din, dout, tin, dinout, osc_en, osc, vref):
+    def iobuf(self, din, dout, tin, dinout, osc_en=None, osc=None, vref=None):
         random_offset = random.randrange(1, 51) * random.choice([-1, 1])
         self.specials += Instance(
             "IOBUFE3",
@@ -475,7 +543,7 @@ class USPCompoDDR5PHY(DDR5PHY):
             o_O=dout,
         )
 
-    def ibuf(self, din, dout, osc_en, osc, vref):
+    def ibuf(self, din, dout, osc_en=None, osc=None, vref=None):
         random_offset = random.randrange(1, 51) * random.choice([-1, 1])
         self.specials += Instance(
             "IBUFE3",
@@ -489,7 +557,7 @@ class USPCompoDDR5PHY(DDR5PHY):
             o_O=dout,
         )
 
-    def iobufds(self, din, dout, tin, dinout, dinout_b, osc_en, osc):
+    def iobufds(self, din, dout, tin, dinout, dinout_b, osc_en=None, osc=None):
         random_offset = random.randrange(1, 51) * random.choice([-1, 1])
         self.specials += Instance(
             "IOBUFDSE3",
@@ -514,11 +582,11 @@ class USPCompoDDR5PHY(DDR5PHY):
             i_I=din,
         )
 
-    def handle_single_ended(self, pad, *, out_sig=None, oe_sig=None, in_sig=None):
+    def handle_single_ended(self, pad, *, out_sig=None, oe_sig=None, in_sig=None, vref=None):
         if in_sig is not None and out_sig is not None:
-            self.iobuf(din=out_sig, dout=in_sig, tin=oe_sig, dinout=pad)
+            self.iobuf(din=out_sig, dout=in_sig, tin=oe_sig, dinout=pad, vref=vref)
         elif in_sig is not None:
-            self.ibuf(dout=in_sig, din=pad)
+            self.ibuf(dout=in_sig, din=pad, vref=vref)
         else:
             self.comb += pad.eq(out_sig)
 
@@ -530,7 +598,7 @@ class USPCompoDDR5PHY(DDR5PHY):
         else:
             self.obufds(din=out_sig, dout=pad_t, dout_b=pad_c)
 
-    def oserdese3_ddr(self, din, dout, tin, tout, clkdiv, clk, reset_sig):
+    def oserdese3_ddr(self, din, dout, tin, tout, clkdiv, clk, rst_sig):
         self.specials += Instance("OSERDESE3",
             p_SIM_DEVICE         = "ULTRASCALE_PLUS",
             p_DATA_WIDTH         = 4,
@@ -538,7 +606,7 @@ class USPCompoDDR5PHY(DDR5PHY):
             p_IS_RST_INVERTED    = 0,
             p_IS_CLK_INVERTED    = 0,
             p_IS_CLKDIV_INVERTED = 0,
-            i_RST    = reset_sig,
+            i_RST    = rst_sig,
             i_CLK    = ClockSignal(clk),
             i_CLKDIV = ClockSignal(clkdiv),
             i_D      = din,
@@ -555,8 +623,10 @@ class USPCompoDDR5PHY(DDR5PHY):
                 base_delay_reg.eq(cnt_value_out),
             )
         ]
+        attr = set()
+        attr.add(("IODELAY_GROUP", "DDR5_PHY"))
         self.specials += Instance("ODELAYE3",
-            attr = set(("IODELAY_GROUP", "DDR5_PHY")),
+            attr = attr,
             p_SIM_DEVICE         = "ULTRASCALE_PLUS",
             p_CASCADE          = "NONE",
             p_UPDATE_MODE      = "ASYNC",
@@ -567,7 +637,7 @@ class USPCompoDDR5PHY(DDR5PHY):
             i_RST     = self.crg.get_iodelay_rst(clk),
             i_LOAD    = rst,
             i_CLK     = ClockSignal(clk),
-            i_EN_VTC  = self.crg.get_iodelay_vtc(clk)& self._en_vtc.storage,
+            i_EN_VTC  = self.crg.get_iodelay_vtc(clk) & self._en_vtc.storage,
             i_CE      = inc,
             i_INC     = 1,
             i_ODATAIN = din,
@@ -583,16 +653,23 @@ class USPCompoDDR5PHY(DDR5PHY):
         _with_odelay = inc_sig is not None
         oser_method = self.oserdese3_ddr
         if oe_sig is not None:
+            old_oe = oe_sig
+            oe_sig = Signal()
             _tri_state = Signal()
             tri_state_domain = getattr(self.sync, cd_out[0])
-            tri_state_domain += _tri_state.eq(reduce(or_, oe_sig))
+            tri_state_domain += oe_sig.eq(reduce(or_, old_oe))
+        else:
+            oe_sig = Signal()
+            _tri_state = Signal()
+            self.comb += oe_sig.eq(0)
 
         oserdes = oser_method(
             din = out_sig,
-            dout=_output,
-            **(dict(tout=_tri_state, tin=oe_sig) if oe_sig is not None else dict()),
-            clkdiv  = cd_out[0],
-            clk     = cd_out[1],
+            dout = delay,
+            tout = _tri_state,
+            tin = oe_sig,
+            clkdiv = cd_out[0],
+            clk = cd_out[1],
             rst_sig = self.crg.get_serdes_rst(cd_out[0]),
         )
         delay_state = None
@@ -602,18 +679,19 @@ class USPCompoDDR5PHY(DDR5PHY):
             dout = _output,
             rst  = rst_sig,
             inc  = inc_sig,
-            clk  = "sys",
+            clk  = cd_out[0],
             cnt_value_out = delay_state,
         )
         return _output, _tri_state, delay_state
 
-    def iserdese3_ddr(self, din, dout, clkdiv, clk, reset_sig):
+    def iserdese3_ddr(self, din, dout, clkdiv, clk, rst_sig):
         self.specials += Instance("ISERDESE3",
             p_SIM_DEVICE         = "ULTRASCALE_PLUS",
             p_DATA_WIDTH         = 8,
-            i_RST    = reset_sig,
+            p_IS_CLK_B_INVERTED  = 1,
+            i_RST    = rst_sig,
             i_CLK    = ClockSignal(clk),
-            i_CLK_B  = ~ClockSignal(clk),
+            i_CLK_B  = ClockSignal(clk),
             i_CLKDIV = ClockSignal(clkdiv),
             i_D      = din,
             o_Q      = dout,
@@ -627,14 +705,16 @@ class USPCompoDDR5PHY(DDR5PHY):
                 base_delay_reg.eq(cnt_value_out),
             )
         ]
+        attr = set()
+        attr.add(("IODELAY_GROUP", "DDR5_PHY"))
         self.specials += Instance("IDELAYE3",
-            attr = set(("IODELAY_GROUP", "DDR5_PHY")),
+            attr = attr,
             p_SIM_DEVICE         = "ULTRASCALE_PLUS",
             p_CASCADE          = "NONE",
             p_UPDATE_MODE      = "ASYNC",
             p_REFCLK_FREQUENCY = self.iodelay_clk_freq/1e6,
             p_DELAY_FORMAT     = "TIME",
-            p_DELAY_TYPE       = "VARIABLE",
+            p_DELAY_TYPE       = "VAR_LOAD",
             p_DELAY_VALUE      = 0,
             i_RST     = self.crg.get_iodelay_rst(clk),
             i_LOAD    = rst,
@@ -648,7 +728,7 @@ class USPCompoDDR5PHY(DDR5PHY):
             i_CNTVALUEIN = cnt_value_out,
         )
 
-    def handle_iser(self, cd_in, in_sig, *, inc_sig=None, rst_sig=None):
+    def handle_iser(self, cd_in, in_sig, idelay_cd, *, inc_sig=None, rst_sig=None):
         _input = Signal()
         _delayed_input = Signal()
         delay_state = Signal(9)
@@ -657,13 +737,17 @@ class USPCompoDDR5PHY(DDR5PHY):
             dout = _delayed_input,
             rst  = rst_sig,
             inc  = inc_sig,
-            clk  = "sys",
+            clk  = idelay_cd,
             cnt_value_out = delay_state,
         )
 
+        iser_output = Signal(4)
+        if cd_in[0] not in self.fast_input:
+            self.fast_input[cd_in[0]] = []
+        self.fast_input[cd_in[0]].append((iser_output, in_sig))
         self.iserdese3_ddr(
             din     = _delayed_input,
-            dout    = in_sig,
+            dout    = iser_output,
             clk     = cd_in[1],
             clkdiv  = cd_in[0],
             rst_sig = self.crg.get_serdes_rst(cd_in[0]),
@@ -679,6 +763,44 @@ class USPCompoDDR5PHY(DDR5PHY):
             pad_c = pad_c[offset]
         return (pad_t, pad_c)
 
+    def get_vref(self, pin, prefix, *, data=False, offset=None, vref_select=None):
+        if offset is None:
+            offset=0
+        address = self.pin_vref_mapping[pin][offset]
+        if address not in self.vref_cache:
+            vref = Signal()
+            vref_ctrl = Signal(7)
+            self.specials += Instance(
+                "HPIO_VREF",
+                p_VREF_CNTR="FABRIC_RANGE1",
+                i_FABRIC_VREF_TUNE=vref_ctrl,
+                o_VREF=vref,
+            )
+            if data:
+                self.sync += [
+                    If(self.CSRs[prefix+'dly_sel'].storage[vref_select],
+                        self.CSRs[prefix+'vref_status'].status.eq(vref_ctrl),
+                        If(self.CSRs[prefix+'vref_write'].re,
+                            vref_ctrl.eq(self.CSRs[prefix+'vref_write'].r),
+                        ),
+                    ),
+                ]
+            else:
+                if not self.handled_ca_vref_status[prefix]:
+                    self.sync += [
+                        self.CSRs[prefix+'ca_vref_status'].status.eq(vref_ctrl),
+                    ]
+                    self.handled_ca_vref_status[prefix] = True
+
+                self.sync += [
+                    If(self.CSRs[prefix+'ca_vref_write'].re,
+                        vref_ctrl.eq(self.CSRs[prefix+'ca_vref_write'].r),
+                    ),
+                ]
+            self.vref_cache[address] = (vref, data)
+
+        assert self.vref_cache[address][1] == data
+        return self.vref_cache[address][0]
 
     def get_inc_rst(self, pin, cd, not_out, offset):
         prefix, _pin_func = ("", pin) if len(self.prefixes) == 1 else (pin[:2], pin[2:])
@@ -722,26 +844,25 @@ class USPCompoDDR5PHY(DDR5PHY):
         if _pin_func == "ck_t":
             offset = None
         inc_sig, rst_sig = None, None
-        if self.with_odelay and pin in self.pin_csr_mapping:
+        if pin in self.pin_csr_mapping:
             inc_sig, rst_sig = self.get_out_inc_rst(pin, offset=offset, cd="sys")
 
         to_pad, to_pad_oe, delay_state = self.handle_oser(
             cd_out, out_sig, oe_sig=oe_sig, inc_sig=inc_sig, rst_sig=rst_sig)
 
         offset = offset if offset else 0
-        if self.with_odelay:
-            if "ca" == _pin_func:
-                self.sync += [
-                    If(self.CSRs[prefix+'dly_sel'].storage[offset],
-                        self.CSRs[prefix+'cadly'].status.eq(delay_state),
-                    ),
-                ]
-            elif "cs_n" == _pin_func:
-                self.sync += [
-                    If(self.CSRs[prefix+'dly_sel'].storage[offset],
-                        self.CSRs[prefix+'csdly'].status.eq(delay_state),
-                    ),
-                ]
+        if "ca" == _pin_func:
+            self.sync += [
+                If(self.CSRs[prefix+'dly_sel'].storage[offset],
+                    self.CSRs[prefix+'cadly'].status.eq(delay_state),
+                ),
+            ]
+        elif "cs_n" == _pin_func:
+            self.sync += [
+                If(self.CSRs[prefix+'dly_sel'].storage[offset],
+                    self.CSRs[prefix+'csdly'].status.eq(delay_state),
+                ),
+            ]
 
         if pad_c is not None:
             self.handle_diff(pad_t, pad_c, out_sig=to_pad, oe_sig=to_pad_oe)
@@ -751,14 +872,15 @@ class USPCompoDDR5PHY(DDR5PHY):
     def handle_i(self, cd_in, in_sig, pin, *, offset=None):
         pad_t, pad_c = self.get_pads(pin, offset=offset)
 
-        inc_sig, rst_sig = self.get_in_inc_rst(pin, offset=offset, cd="sys")
+        inc_sig, rst_sig = self.get_in_inc_rst(pin, offset=offset, cd=cd_in[0])
         from_pad, delay_state = self.handle_iser(
-            cd_in=cd_in, in_sig=in_sig, inc_sig=inc_sig, rst_sig=rst_sig)
+            cd_in=cd_in, in_sig=in_sig, inc_sig=inc_sig, rst_sig=rst_sig, idelay_cd=cd_in[0])
 
         if pad_c is not None:
             self.handle_diff(pad_t, pad_c, in_sig=from_pad)
         else:
-            self.handle_single_ended(pad_t, in_sig=from_pad)
+            vref = self.get_vref(pin, prefix="", offset=offset)
+            self.handle_single_ended(pad_t, in_sig=from_pad, vref=vref)
 
     def handle_io(self, cd_out, cd_in, out_sig, oe_sig, in_sig, pin, *, offset=None):
         pad_t, pad_c = self.get_pads(pin, offset=offset)
@@ -768,47 +890,48 @@ class USPCompoDDR5PHY(DDR5PHY):
             offset *= self.dq_dqs_ratio//4
 
         inc_sig, rst_sig = None, None
-        if self.with_odelay and pin in self.pin_csr_mapping:
-            inc_sig, rst_sig = self.get_out_inc_rst(pin, offset=offset, cd="sys")
+        if pin in self.pin_csr_mapping:
+            inc_sig, rst_sig = self.get_out_inc_rst(pin, offset=offset, cd=cd_out[0])
 
         to_pad, to_pad_oe, odelay_state = self.handle_oser(
             cd_out=cd_out, out_sig=out_sig, oe_sig=oe_sig, inc_sig=inc_sig, rst_sig=rst_sig)
 
-        inc_sig, rst_sig = self.get_in_inc_rst(pin, offset=offset, cd="sys")
+        inc_sig, rst_sig = self.get_in_inc_rst(pin, offset=offset, cd=cd_out[0])
         from_pad, idelay_state = self.handle_iser(
-            cd_in=cd_in, in_sig=in_sig, inc_sig=inc_sig, rst_sig=rst_sig)
+            cd_in=cd_in, in_sig=in_sig, inc_sig=inc_sig, rst_sig=rst_sig, idelay_cd=cd_out[0])
 
         offset = offset if offset else 0
+        vref_select = None
+        data = False
         if "dq" == _pin_func:
+            data = True
+            vref_select = offset//8
             if offset%4 == 0:
                 self.sync += [
                     If(self.CSRs[prefix+'dly_sel'].storage[offset//4],
                         self.CSRs[prefix+'rdly_dq'].status.eq(idelay_state),
                     ),
+                    If(self.CSRs[prefix+'dly_sel'].storage[offset//4],
+                        self.CSRs[prefix+'wdly_dq'].status.eq(odelay_state),
+                    ),
                 ]
-                if self.with_odelay:
-                    self.sync += [
-                        If(self.CSRs[prefix+'dly_sel'].storage[offset//4],
-                            self.CSRs[prefix+'wdly_dq'].status.eq(odelay_state),
-                        ),
-                    ]
         elif "dqs" in _pin_func:
+            data = True
+            vref_select = offset
             self.sync += [
                 If(self.CSRs[prefix+'dly_sel'].storage[offset],
                     self.CSRs[prefix+'rdly_dqs'].status.eq(idelay_state),
                 ),
+                If(self.CSRs[prefix+'dly_sel'].storage[offset],
+                    self.CSRs[prefix+'wdly_dqs'].status.eq(odelay_state),
+                ),
             ]
-            if self.with_odelay:
-                self.sync += [
-                    If(self.CSRs[prefix+'dly_sel'].storage[offset],
-                        self.CSRs[prefix+'wdly_dqs'].status.eq(odelay_state),
-                    ),
-                ]
 
         if pad_c is not None:
             self.handle_diff(pad_t, pad_c, out_sig=to_pad, oe_sig=to_pad_oe, in_sig=from_pad)
         else:
-            self.handle_single_ended(pad_t, out_sig=to_pad, oe_sig=to_pad_oe, in_sig=from_pad)
+            vref = self.get_vref(pin, prefix=prefix, offset=offset, data=data, vref_select=vref_select)
+            self.handle_single_ended(pad_t, out_sig=to_pad, oe_sig=to_pad_oe, in_sig=from_pad, vref=vref)
 
     def handle_ck(self, cd_out, pin, offset=None):
         clk_sig = Signal(4)

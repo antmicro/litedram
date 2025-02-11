@@ -7,3 +7,4 @@
 from litedram.phy.ddr5.s7phy import A7DDR5PHY, K7DDR5PHY, V7DDR5PHY
 from litedram.phy.ddr5.S7PHYCRG import S7PHYCRG
 from litedram.phy.ddr5.uspphy import USPCompoDDR5PHY
+from litedram.phy.ddr5.USPPHYCRG import USPPHYCRG
