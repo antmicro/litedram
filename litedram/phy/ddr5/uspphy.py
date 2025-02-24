@@ -769,7 +769,7 @@ class USPCompoDDR5PHY(DDR5PHY):
         address = self.pin_vref_mapping[pin][offset]
         if address not in self.vref_cache:
             vref = Signal()
-            vref_ctrl = Signal(7)
+            vref_ctrl = Signal(7, reset=0b0100010)
             self.specials += Instance(
                 "HPIO_VREF",
                 p_VREF_CNTR="FABRIC_RANGE1",
@@ -845,7 +845,7 @@ class USPCompoDDR5PHY(DDR5PHY):
             offset = None
         inc_sig, rst_sig = None, None
         if pin in self.pin_csr_mapping:
-            inc_sig, rst_sig = self.get_out_inc_rst(pin, offset=offset, cd="sys")
+            inc_sig, rst_sig = self.get_out_inc_rst(pin, offset=offset, cd=cd_out[0])
 
         to_pad, to_pad_oe, delay_state = self.handle_oser(
             cd_out, out_sig, oe_sig=oe_sig, inc_sig=inc_sig, rst_sig=rst_sig)
