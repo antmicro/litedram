@@ -9,13 +9,14 @@ from migen import *
 from migen.fhdl.module import Module
 from migen.genlib.cdc import PulseSynchronizer, MultiReg
 
-from operator import or_
+from operator import or_, and_
 from functools import reduce
 
 class USPPHYCRG(Module):
     def __init__(
         self,
-        sys_clk_freq
+        sys_clk_freq,
+        banks
     ):
 
         self.rst = Signal(reset=1)
@@ -24,6 +25,8 @@ class USPPHYCRG(Module):
         self.domain_load = {}
         self.div_factors = {}
 
+        self.banks = banks
+        self.sys_clk_freq = sys_clk_freq
         # Clock buffer control
         bufg_div_clr = Signal()
         self.bufg_div_clr = Signal()
@@ -54,13 +57,15 @@ class USPPHYCRG(Module):
         attr.add(("CLOCK_DELAY_GROUP", "PHY_CE"))
         self.specials += Instance(
             "BUFG",
-            attr = attr,
+            name="_sys4x_raw_buf",
+            attr=attr,
             i_I=ClockSignal("sys4x_raw"),
             o_O=ClockSignal("sys4x_raw_buf"),
         )
         self.specials += Instance(
             "BUFG",
-            attr = attr,
+            name="_sys4x_90_raw_buf",
+            attr=attr,
             i_I=ClockSignal("sys4x_90_raw"),
             o_O=ClockSignal("sys4x_90_raw_buf")
         )
@@ -68,21 +73,34 @@ class USPPHYCRG(Module):
         self.source_4x = ClockSignal("sys4x_raw_buf")
         self.source_4x_90 = ClockSignal("sys4x_90_raw_buf")
 
+        self.clock_domains.cd_sys2x_ctrl = ClockDomain()
         self.clock_domains.cd_sys4x_ctrl = ClockDomain()
         self.clock_domains.cd_sys4x_90_ctrl = ClockDomain()
         attr = set()
         attr.add(("DONT_TOUCH", "TRUE"))
-        attr.add(("LOW_FANOUT_BUFG", "TRUE"))
         attr.add(("CLOCK_DELAY_GROUP", "PHY_CE"))
+        if self.sys_clk_freq > 150e6:
+            self.specials += Instance(
+                "BUFGCE_DIV",
+                name="_sys2x_ctrl_buf",
+                attr=attr,
+                p_BUFGCE_DIVIDE="2",
+                i_I=ClockSignal("sys4x_raw"),
+                o_O=self.cd_sys2x_ctrl.clk
+            )
+        else:
+            self.comb += [self.cd_sys2x_ctrl.clk.eq(self.cd_sys4x_ctrl.clk)]
         self.specials += Instance(
             "BUFG",
-            attr = attr,
+            name="_sys4x_ctrl_buf",
+            attr=attr,
             i_I=ClockSignal("sys4x_raw"),
             o_O=self.cd_sys4x_ctrl.clk
         )
         self.specials += Instance(
             "BUFG",
-            attr = attr,
+            name="_sys4x_90_ctrl_buf",
+            attr=attr,
             i_I=ClockSignal("sys4x_90_raw"),
             o_O=self.cd_sys4x_90_ctrl.clk
         )
@@ -92,22 +110,10 @@ class USPPHYCRG(Module):
         self.iodelay_rst = Signal()
         self.serdes_rst = Signal()
 
-        idelayctrl_rst = Signal()
-        idelayctrl_rst_reg = Signal()
-        idelayctrl_ready = Signal()
-        idelayctrl_ready_1 = Signal()
-
+        self.idelayctrl_rst = Signal()
+        self.idelayctrl_ready = Signal()
         self.load_base_delay = Signal()
 
-        attr = set()
-        attr.add(("IODELAY_GROUP", "DDR5_PHY"))
-        self.specials += Instance("IDELAYCTRL",
-            attr = attr,
-            p_SIM_DEVICE = "ULTRASCALE",
-            i_REFCLK     = ClockSignal("sys4x_raw_buf"),
-            i_RST        = idelayctrl_rst_reg,
-            o_RDY        = idelayctrl_ready
-        )
         halt = Signal(reset=0)
 
         # Reset sequencer
@@ -130,7 +136,7 @@ class USPPHYCRG(Module):
             # 3. Apply reset to all IO devices
                 self.iodelay_rst.eq(1),
                 self.serdes_rst.eq(1),
-                idelayctrl_rst.eq(1),
+                self.idelayctrl_rst.eq(1),
             ),
             # 4. Wait some time
 
@@ -168,32 +174,77 @@ class USPPHYCRG(Module):
             ),
             # 2. d Release IDELAYCTRL reset
             If(counter == 0x60,
-               idelayctrl_rst.eq(0),
+               self.idelayctrl_rst.eq(0),
             ),
             # 2. e Ready state is not indicated to SW. so no step for ready check
             If(counter == 0xFF,
                 self.stable_clk.eq(1),
             ),
         ]
-        _idelayctrl_rst_reg = Signal()
-        self.specials += MultiReg(idelayctrl_rst, _idelayctrl_rst_reg, self.source_4x.cd, reset=1)
-        self.sync.sys4x_raw_buf += [
-            idelayctrl_rst_reg.eq(_idelayctrl_rst_reg),
-        ]
-        self.sync += [
-            idelayctrl_ready_1.eq(idelayctrl_ready),
-        ]
-        self.comb += [
-            self.load_base_delay.eq(idelayctrl_ready & ~idelayctrl_ready_1)
-        ]
 
+        bufgdiv_CE_1 = Signal()
         self.sync.sys4x_ctrl += [
             self.bufg_div_clr.eq(bufg_div_clr),
-            self.bufgdiv_CE.eq(bufgdiv_CE),
+            self.bufgdiv_CE.eq(bufgdiv_CE_1),
         ]
+
         self.sync.sys4x_90_ctrl += [
             self.bufg_div_clr_90.eq(bufg_div_clr),
-            self.bufgdiv_90_CE.eq(self.bufgdiv_CE),
+            bufgdiv_CE_1.eq(bufgdiv_CE),
+            self.bufgdiv_90_CE.eq(bufgdiv_CE_1),
+        ]
+
+        # IDELAYCTRL setup
+
+        idelayctrl_rst_regs = {}
+        idelayctrl_readys = {}
+        for bank in banks:
+            idelayctrl_rst_regs[bank] = Signal()
+            idelayctrl_readys[bank] = Signal()
+        for bank in banks:
+            attr = set()
+            attr.add(("IODELAY_GROUP", f"DDR5_PHY_{bank}"))
+            self.specials += Instance("IDELAYCTRL",
+                attr = attr,
+                p_SIM_DEVICE = "ULTRASCALE",
+                i_REFCLK     = ClockSignal("sys2x_ctrl"),
+                i_RST        = idelayctrl_rst_regs[bank],
+                o_RDY        = idelayctrl_readys[bank]
+            )
+
+        _idelayctrl_rst_reg = Signal()
+        _idelayctrl_rst_reg_1 = Signal()
+        _idelayctrl_rst_reg_1.attr.add(("MAX_FANOUT", 1))
+        self.specials += MultiReg(self.idelayctrl_rst, _idelayctrl_rst_reg, "sys2x_ctrl", reset=1)
+        self.sync.sys2x_ctrl += [
+            _idelayctrl_rst_reg_1.eq(_idelayctrl_rst_reg),
+        ]
+        for bank in banks:
+            attr = set()
+            attr.add(("KEEP", "TRUE"))
+            attr.add(("MAX_FANOUT", 1))
+            self.specials += Instance(
+                "FDPE",
+                attr=attr,
+                p_INIT=1,
+                i_PRE=0,
+                i_CE=1,
+                i_D=_idelayctrl_rst_reg_1,
+                i_C=~ClockSignal("sys2x_ctrl"),
+                o_Q=idelayctrl_rst_regs[bank],
+            )
+
+        self.comb += [
+            self.idelayctrl_ready.eq(reduce(and_, [sig for _, sig in idelayctrl_readys.items()])),
+        ]
+        idelayctrl_ready_1 = Signal()
+        idelayctrl_ready_2 = Signal()
+        self.sync += [
+            idelayctrl_ready_1.eq(self.idelayctrl_ready),
+            idelayctrl_ready_2.eq(idelayctrl_ready_1),
+        ]
+        self.comb += [
+            self.load_base_delay.eq(idelayctrl_ready_1 & ~idelayctrl_ready_2),
         ]
 
     def create_clock_domains(self, clock_domains):
@@ -221,6 +272,7 @@ class USPPHYCRG(Module):
             )
             clk = ClockSignal(f"{clk_domain}")
             buffer_dict = dict(
+                name=f"_{clk_domain}_buf",
                 i_I=in_clk,
                 o_O=clk,
             )

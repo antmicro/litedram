@@ -223,6 +223,7 @@ class USPCompoDDR5PHY(DDR5PHY):
         iodelay_clk_freq,
         crg,
         pin_vref_mapping,
+        pin_bank_mapping,
         with_per_dq_idelay=False,
         with_sub_channels=False,
         pin_domains=None,
@@ -231,6 +232,7 @@ class USPCompoDDR5PHY(DDR5PHY):
 
         self.iodelay_clk_freq = iodelay_clk_freq
         self.pin_vref_mapping = pin_vref_mapping
+        self.pin_bank_mapping = pin_bank_mapping
         assert pin_domains is not None
 
         def cdc_any(target):
@@ -250,7 +252,6 @@ class USPCompoDDR5PHY(DDR5PHY):
 
         ca_domain = None
         per_pin_ca_domain = {}
-        ca_bank = {}
         for prefix in prefixes:
             for func in ["ca", "cs_n", "par"]:
                 if prefix+func in pin_domains:
@@ -615,7 +616,7 @@ class USPCompoDDR5PHY(DDR5PHY):
             o_T_OUT  = tout,
         )
 
-    def odelaye3(self, din, dout, rst, inc, clk, cnt_value_out):
+    def odelaye3(self, din, dout, rst, inc, clk, cnt_value_out, bank):
         base_delay_reg = Signal(9)
         clk_domain = getattr(self.sync, clk)
         clk_domain += [
@@ -624,7 +625,7 @@ class USPCompoDDR5PHY(DDR5PHY):
             )
         ]
         attr = set()
-        attr.add(("IODELAY_GROUP", "DDR5_PHY"))
+        attr.add(("IODELAY_GROUP", f"DDR5_PHY_{bank}"))
         self.specials += Instance("ODELAYE3",
             attr = attr,
             p_SIM_DEVICE         = "ULTRASCALE_PLUS",
@@ -646,7 +647,7 @@ class USPCompoDDR5PHY(DDR5PHY):
             o_CNTVALUEOUT = cnt_value_out,
         )
 
-    def handle_oser(self, cd_out, out_sig, *, oe_sig=None, inc_sig=None, rst_sig=None):
+    def handle_oser(self, cd_out, out_sig, bank, *, oe_sig=None, inc_sig=None, rst_sig=None):
         delay     = Signal()
         _output    = Signal()
         _tri_state = None
@@ -681,6 +682,7 @@ class USPCompoDDR5PHY(DDR5PHY):
             inc  = inc_sig,
             clk  = cd_out[0],
             cnt_value_out = delay_state,
+            bank = bank,
         )
         return _output, _tri_state, delay_state
 
@@ -697,7 +699,7 @@ class USPCompoDDR5PHY(DDR5PHY):
             o_Q      = dout,
         )
 
-    def idelaye3(self, din, dout, rst, inc, clk, cnt_value_out):
+    def idelaye3(self, din, dout, rst, inc, clk, cnt_value_out, bank):
         base_delay_reg = Signal(9)
         clk_domain = getattr(self.sync, clk)
         clk_domain += [
@@ -706,7 +708,7 @@ class USPCompoDDR5PHY(DDR5PHY):
             )
         ]
         attr = set()
-        attr.add(("IODELAY_GROUP", "DDR5_PHY"))
+        attr.add(("IODELAY_GROUP", f"DDR5_PHY_{bank}"))
         self.specials += Instance("IDELAYE3",
             attr = attr,
             p_SIM_DEVICE         = "ULTRASCALE_PLUS",
@@ -728,7 +730,7 @@ class USPCompoDDR5PHY(DDR5PHY):
             i_CNTVALUEIN = cnt_value_out,
         )
 
-    def handle_iser(self, cd_in, in_sig, idelay_cd, *, inc_sig=None, rst_sig=None):
+    def handle_iser(self, cd_in, in_sig, idelay_cd, bank, *, inc_sig=None, rst_sig=None):
         _input = Signal()
         _delayed_input = Signal()
         delay_state = Signal(9)
@@ -739,6 +741,7 @@ class USPCompoDDR5PHY(DDR5PHY):
             inc  = inc_sig,
             clk  = idelay_cd,
             cnt_value_out = delay_state,
+            bank = bank,
         )
 
         iser_output = Signal(4)
@@ -802,6 +805,11 @@ class USPCompoDDR5PHY(DDR5PHY):
         assert self.vref_cache[address][1] == data
         return self.vref_cache[address][0]
 
+    def get_bank(self, pin, *, offset=None):
+        if offset is None:
+            offset=0
+        return self.pin_bank_mapping[pin][offset]
+
     def get_inc_rst(self, pin, cd, not_out, offset):
         prefix, _pin_func = ("", pin) if len(self.prefixes) == 1 else (pin[:2], pin[2:])
         dq = True if _pin_func in "dq" else False
@@ -847,8 +855,9 @@ class USPCompoDDR5PHY(DDR5PHY):
         if pin in self.pin_csr_mapping:
             inc_sig, rst_sig = self.get_out_inc_rst(pin, offset=offset, cd=cd_out[0])
 
+        bank = self.get_bank(pin=pin, offset=offset)
         to_pad, to_pad_oe, delay_state = self.handle_oser(
-            cd_out, out_sig, oe_sig=oe_sig, inc_sig=inc_sig, rst_sig=rst_sig)
+            cd_out, out_sig, bank, oe_sig=oe_sig, inc_sig=inc_sig, rst_sig=rst_sig)
 
         offset = offset if offset else 0
         if "ca" == _pin_func:
@@ -873,8 +882,15 @@ class USPCompoDDR5PHY(DDR5PHY):
         pad_t, pad_c = self.get_pads(pin, offset=offset)
 
         inc_sig, rst_sig = self.get_in_inc_rst(pin, offset=offset, cd=cd_in[0])
+        bank = self.get_bank(pin=pin, offset=offset)
         from_pad, delay_state = self.handle_iser(
-            cd_in=cd_in, in_sig=in_sig, inc_sig=inc_sig, rst_sig=rst_sig, idelay_cd=cd_in[0])
+            cd_in=cd_in,
+            in_sig=in_sig,
+            idelay_cd=cd_in[0],
+            bank=bank,
+            inc_sig=inc_sig,
+            rst_sig=rst_sig,
+        )
 
         if pad_c is not None:
             self.handle_diff(pad_t, pad_c, in_sig=from_pad)
@@ -893,12 +909,25 @@ class USPCompoDDR5PHY(DDR5PHY):
         if pin in self.pin_csr_mapping:
             inc_sig, rst_sig = self.get_out_inc_rst(pin, offset=offset, cd=cd_out[0])
 
+        bank = self.get_bank(pin=pin, offset=offset)
         to_pad, to_pad_oe, odelay_state = self.handle_oser(
-            cd_out=cd_out, out_sig=out_sig, oe_sig=oe_sig, inc_sig=inc_sig, rst_sig=rst_sig)
+            cd_out=cd_out,
+            out_sig=out_sig,
+            bank=bank,
+            oe_sig=oe_sig,
+            inc_sig=inc_sig,
+            rst_sig=rst_sig
+        )
 
         inc_sig, rst_sig = self.get_in_inc_rst(pin, offset=offset, cd=cd_out[0])
         from_pad, idelay_state = self.handle_iser(
-            cd_in=cd_in, in_sig=in_sig, inc_sig=inc_sig, rst_sig=rst_sig, idelay_cd=cd_out[0])
+            cd_in=cd_in,
+            in_sig=in_sig,
+            idelay_cd=cd_out[0],
+            bank=bank,
+            inc_sig=inc_sig,
+            rst_sig=rst_sig,
+        )
 
         offset = offset if offset else 0
         vref_select = None
