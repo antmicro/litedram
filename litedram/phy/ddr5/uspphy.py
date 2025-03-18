@@ -352,30 +352,26 @@ class USPCompoDDR5PHY(DDR5PHY):
 
         # Serialization ----------------------------------------------------------------------------
         pin_csr_mapping = {
-            "ck_t":    ((CSRs["ckdly_inc"].re,      CSRs["ckdly_rst"].re),      None),
-            "A_ck_t":    ((CSRs["ckdly_inc"].re,      CSRs["ckdly_rst"].re),      None),
-            "B_ck_t":    ((CSRs["ckdly_inc"].re,      CSRs["ckdly_rst"].re),      None),
+            "ck_t": (CSRs["ckdly_update"].re, None),
+            "A_ck_t": (CSRs["ckdly_update"].re, None),
+            "B_ck_t": (CSRs["ckdly_update"].re, None),
         }
 
         self.vref_cache = {}
 
         for prefix in prefixes:
             pin_csr_mapping |= {
-                f"{prefix}par":   (
-                    (CSRs[f"{prefix}pardly_inc"].re,   CSRs[f"{prefix}pardly_rst"].re),
-                     None),
-                f"{prefix}ca":    (
-                    (CSRs[f"{prefix}cadly_inc"].re,    CSRs[f"{prefix}cadly_rst"].re),
-                     None),
-                f"{prefix}cs_n":  (
-                    (CSRs[f"{prefix}csdly_inc"].re,    CSRs[f"{prefix}csdly_rst"].re),
-                     None),
-                f"{prefix}dq":    (
-                    (CSRs[f"{prefix}wdly_dq_inc"].re,  CSRs[f"{prefix}wdly_dq_rst"].re),
-                    (CSRs[f"{prefix}rdly_dq_inc"].re,  CSRs[f"{prefix}rdly_dq_rst"].re)),
+                f"{prefix}par": (CSRs[f"{prefix}pardly_update"].re, None),
+                f"{prefix}ca": (CSRs[f"{prefix}cadly_update"].re, None),
+                f"{prefix}cs_n": (CSRs[f"{prefix}csdly_update"].re, None),
+                f"{prefix}dq": (
+                    CSRs[f"{prefix}wdly_dq_update"].re,
+                    CSRs[f"{prefix}rdly_dq_update"].re
+                ),
                 f"{prefix}dqs_t": (
-                    (CSRs[f"{prefix}wdly_dqs_inc"].re, CSRs[f"{prefix}wdly_dqs_rst"].re),
-                    (CSRs[f"{prefix}rdly_dqs_inc"].re, CSRs[f"{prefix}rdly_dqs_rst"].re)),
+                    CSRs[f"{prefix}wdly_dqs_update"].re,
+                    CSRs[f"{prefix}rdly_dqs_update"].re
+                ),
             }
 
         self.pin_domains     = pin_domains
@@ -616,7 +612,7 @@ class USPCompoDDR5PHY(DDR5PHY):
             o_T_OUT  = tout,
         )
 
-    def odelaye3(self, din, dout, rst, inc, clk, cnt_value_out, bank):
+    def odelaye3(self, *, din, dout, load, clk, cnt_value_out, bank):
         base_delay_reg = Signal(9)
         clk_domain = getattr(self.sync, clk)
         clk_domain += [
@@ -624,6 +620,24 @@ class USPCompoDDR5PHY(DDR5PHY):
                 base_delay_reg.eq(cnt_value_out),
             )
         ]
+        min_tap = Signal(9)
+        max_tap = Signal(9)
+        load_tap = Signal(9)
+        _load = Signal()
+        _ce = Signal()
+        load = load if load is not None else 0
+        self.comb += [
+            min_tap.eq(base_delay_reg),
+            max_tap.eq(self.max_delay_taps-1),
+            _load.eq(self.CSRs['adly_ctrl'].fields.load_value & load),
+            _ce.eq(~self.CSRs['adly_ctrl'].fields.load_value & load),
+            If(self.CSRs['adly_ctrl'].fields.increment_value,
+                load_tap.eq(max_tap),
+            ).Else(
+                load_tap.eq(min_tap),
+            )
+        ]
+
         attr = set()
         attr.add(("IODELAY_GROUP", f"DDR5_PHY_{bank}"))
         self.specials += Instance("ODELAYE3",
@@ -636,22 +650,22 @@ class USPCompoDDR5PHY(DDR5PHY):
             p_DELAY_TYPE       = "VAR_LOAD",
             p_DELAY_VALUE      = 0,
             i_RST     = self.crg.get_iodelay_rst(clk),
-            i_LOAD    = rst,
+            i_LOAD    = _load,
             i_CLK     = ClockSignal(clk),
             i_EN_VTC  = self.crg.get_iodelay_vtc(clk) & self._en_vtc.storage,
-            i_CE      = inc,
-            i_INC     = 1,
+            i_CE      = _ce,
+            i_INC     = self.CSRs['adly_ctrl'].fields.increment_value,
             i_ODATAIN = din,
             o_DATAOUT = dout,
-            i_CNTVALUEIN = base_delay_reg,
+            i_CNTVALUEIN = load_tap,
             o_CNTVALUEOUT = cnt_value_out,
         )
 
-    def handle_oser(self, cd_out, out_sig, bank, *, oe_sig=None, inc_sig=None, rst_sig=None):
+    def handle_oser(self, cd_out, out_sig, bank, *, oe_sig=None, load_sig=None):
         delay     = Signal()
         _output    = Signal()
         _tri_state = None
-        _with_odelay = inc_sig is not None
+        _with_odelay = load_sig is not None
         oser_method = self.oserdese3_ddr
         if oe_sig is not None:
             old_oe = oe_sig
@@ -678,8 +692,7 @@ class USPCompoDDR5PHY(DDR5PHY):
         self.odelaye3(
             din  = delay,
             dout = _output,
-            rst  = rst_sig,
-            inc  = inc_sig,
+            load  = load_sig,
             clk  = cd_out[0],
             cnt_value_out = delay_state,
             bank = bank,
@@ -699,7 +712,7 @@ class USPCompoDDR5PHY(DDR5PHY):
             o_Q      = dout,
         )
 
-    def idelaye3(self, din, dout, rst, inc, clk, cnt_value_out, bank):
+    def idelaye3(self, *, din, dout, load, clk, cnt_value_out, bank):
         base_delay_reg = Signal(9)
         clk_domain = getattr(self.sync, clk)
         clk_domain += [
@@ -707,6 +720,24 @@ class USPCompoDDR5PHY(DDR5PHY):
                 base_delay_reg.eq(cnt_value_out),
             )
         ]
+        min_tap = Signal(9)
+        max_tap = Signal(9)
+        load_tap = Signal(9)
+        _load = Signal()
+        _ce = Signal()
+        load = load if load is not None else 0
+        self.comb += [
+            min_tap.eq(base_delay_reg),
+            max_tap.eq(self.max_delay_taps-1),
+            _load.eq(self.CSRs['adly_ctrl'].fields.load_value & load),
+            _ce.eq(~self.CSRs['adly_ctrl'].fields.load_value & load),
+            If(self.CSRs['adly_ctrl'].fields.increment_value,
+                load_tap.eq(max_tap),
+            ).Else(
+                load_tap.eq(min_tap),
+            )
+        ]
+
         attr = set()
         attr.add(("IODELAY_GROUP", f"DDR5_PHY_{bank}"))
         self.specials += Instance("IDELAYE3",
@@ -719,29 +750,28 @@ class USPCompoDDR5PHY(DDR5PHY):
             p_DELAY_TYPE       = "VAR_LOAD",
             p_DELAY_VALUE      = 0,
             i_RST     = self.crg.get_iodelay_rst(clk),
-            i_LOAD    = rst,
+            i_LOAD    = _load,
             i_CLK     = ClockSignal(clk),
             i_EN_VTC  = self.crg.get_iodelay_vtc(clk) & self._en_vtc.storage,
-            i_CE      = inc,
-            i_INC     = 1,
+            i_CE      = _ce,
+            i_INC     = self.CSRs['adly_ctrl'].fields.increment_value,
             i_IDATAIN = din,
             o_DATAOUT = dout,
             o_CNTVALUEOUT = cnt_value_out,
-            i_CNTVALUEIN = cnt_value_out,
+            i_CNTVALUEIN = load_tap,
         )
 
-    def handle_iser(self, cd_in, in_sig, idelay_cd, bank, *, inc_sig=None, rst_sig=None):
+    def handle_iser(self, cd_in, in_sig, idelay_cd, bank, *, load_sig=None):
         _input = Signal()
         _delayed_input = Signal()
         delay_state = Signal(9)
         self.idelaye3(
-            din  = _input,
-            dout = _delayed_input,
-            rst  = rst_sig,
-            inc  = inc_sig,
-            clk  = idelay_cd,
-            cnt_value_out = delay_state,
-            bank = bank,
+            din=_input,
+            dout=_delayed_input,
+            load=load_sig,
+            clk=idelay_cd,
+            cnt_value_out=delay_state,
+            bank=bank,
         )
 
         iser_output = Signal(4)
@@ -810,39 +840,31 @@ class USPCompoDDR5PHY(DDR5PHY):
             offset=0
         return self.pin_bank_mapping[pin][offset]
 
-    def get_inc_rst(self, pin, cd, not_out, offset):
+    def get_load(self, pin, cd, not_out, offset):
         prefix, _pin_func = ("", pin) if len(self.prefixes) == 1 else (pin[:2], pin[2:])
         dq = True if _pin_func in "dq" else False
-        inc = None
-        rst = None
+        load = None
         if pin not in self.pin_csr_mapping:
-            return None, None
+            return None
         if (pin, not_out, cd) not in self.cdc_cache:
             if cd != "sys":
-                self.cdc_cache[(pin, not_out, cd)] = (
-                    self.cdc_any(cd)(self.pin_csr_mapping[pin][not_out][0]),
-                    self.cdc_any(cd)(self.pin_csr_mapping[pin][not_out][1])
+                self.cdc_cache[(pin, not_out, cd)] = self.cdc_any(cd)(
+                    self.pin_csr_mapping[pin][not_out]
                 )
             else:
-                self.cdc_cache[(pin, not_out, cd)] = (
-                    self.pin_csr_mapping[pin][not_out][0],
-                    self.pin_csr_mapping[pin][not_out][1]
-                )
-        inc_sig, rst_sig = self.cdc_cache[(pin, not_out, cd)]
+                self.cdc_cache[(pin, not_out, cd)] = self.pin_csr_mapping[pin][not_out]
+        load_sig = self.cdc_cache[(pin, not_out, cd)]
         if offset is not None:
-            inc = self.get_inc(offset, inc_sig, prefix, cd, dq=dq)
-            rst = self.get_rst(offset, rst_sig, prefix, cd,
-                dq=dq, rst_overwrite=self.crg.get_rst(cd))
+            load = self.get_inc(offset, load_sig, prefix, cd, dq=dq)
         else:
-            inc  = inc_sig
-            rst  = rst_sig
-        return inc, rst
+            load  = load_sig
+        return load
 
-    def get_out_inc_rst(self, pin, *, cd, offset=None):
-        return self.get_inc_rst(pin, cd, 0, offset)
+    def get_out_load(self, pin, *, cd, offset=None):
+        return self.get_load(pin, cd, 0, offset)
 
-    def get_in_inc_rst(self, pin, *, cd, offset=None):
-        return self.get_inc_rst(pin, cd, 1, offset)
+    def get_in_load(self, pin, *, cd, offset=None):
+        return self.get_load(pin, cd, 1, offset)
 
     def handle_o(self, cd_out, out_sig, pin, *, offset=None, oe_sig=None):
         pad_t, pad_c = self.get_pads(pin, offset=offset)
@@ -851,16 +873,22 @@ class USPCompoDDR5PHY(DDR5PHY):
 
         if _pin_func == "ck_t":
             offset = None
-        inc_sig, rst_sig = None, None
+        load_sig = None
         if pin in self.pin_csr_mapping:
-            inc_sig, rst_sig = self.get_out_inc_rst(pin, offset=offset, cd=cd_out[0])
+            load_sig = self.get_out_load(pin, offset=offset, cd=cd_out[0])
 
         bank = self.get_bank(pin=pin, offset=offset)
         to_pad, to_pad_oe, delay_state = self.handle_oser(
-            cd_out, out_sig, bank, oe_sig=oe_sig, inc_sig=inc_sig, rst_sig=rst_sig)
+            cd_out, out_sig, bank, oe_sig=oe_sig, load_sig=load_sig)
 
         offset = offset if offset else 0
-        if "ca" == _pin_func:
+        if "ck" == _pin_func:
+            self.sync += [
+                If(self.CSRs[prefix+'dly_sel'].storage[offset],
+                    self.CSRs[prefix+'ckdly'].status.eq(delay_state),
+                ),
+            ]
+        elif "ca" == _pin_func:
             self.sync += [
                 If(self.CSRs[prefix+'dly_sel'].storage[offset],
                     self.CSRs[prefix+'cadly'].status.eq(delay_state),
@@ -881,15 +909,14 @@ class USPCompoDDR5PHY(DDR5PHY):
     def handle_i(self, cd_in, in_sig, pin, *, offset=None):
         pad_t, pad_c = self.get_pads(pin, offset=offset)
 
-        inc_sig, rst_sig = self.get_in_inc_rst(pin, offset=offset, cd=cd_in[0])
+        load_sig = self.get_in_load(pin, offset=offset, cd=cd_in[0])
         bank = self.get_bank(pin=pin, offset=offset)
         from_pad, delay_state = self.handle_iser(
             cd_in=cd_in,
             in_sig=in_sig,
             idelay_cd=cd_in[0],
             bank=bank,
-            inc_sig=inc_sig,
-            rst_sig=rst_sig,
+            load_sig=load_sig,
         )
 
         if pad_c is not None:
@@ -905,9 +932,9 @@ class USPCompoDDR5PHY(DDR5PHY):
         if "dqs" in _pin_func and offset:
             offset *= self.dq_dqs_ratio//4
 
-        inc_sig, rst_sig = None, None
+        load_sig = None
         if pin in self.pin_csr_mapping:
-            inc_sig, rst_sig = self.get_out_inc_rst(pin, offset=offset, cd=cd_out[0])
+            load_sig = self.get_out_load(pin, offset=offset, cd=cd_out[0])
 
         bank = self.get_bank(pin=pin, offset=offset)
         to_pad, to_pad_oe, odelay_state = self.handle_oser(
@@ -915,18 +942,16 @@ class USPCompoDDR5PHY(DDR5PHY):
             out_sig=out_sig,
             bank=bank,
             oe_sig=oe_sig,
-            inc_sig=inc_sig,
-            rst_sig=rst_sig
+            load_sig=load_sig,
         )
 
-        inc_sig, rst_sig = self.get_in_inc_rst(pin, offset=offset, cd=cd_out[0])
+        load_sig = self.get_in_load(pin, offset=offset, cd=cd_out[0])
         from_pad, idelay_state = self.handle_iser(
             cd_in=cd_in,
             in_sig=in_sig,
             idelay_cd=cd_out[0],
             bank=bank,
-            inc_sig=inc_sig,
-            rst_sig=rst_sig,
+            load_sig=load_sig,
         )
 
         offset = offset if offset else 0

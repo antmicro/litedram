@@ -32,11 +32,42 @@ class BasePHYCSR(Module, AutoCSR):
         self.sample_alert = CSRStorage()
         self.reset_alert = CSR()
 
+        if with_odelay or with_idelay or with_clock_odelay or with_address_odelay:
+            # Controls analog delay operation
+            # 0b00 - decrement delay
+            # 0b10 - increment delay
+            # 0b01 - load minimal delay
+            # 0b11 - load maximal delay
+            setattr(self, 'adly_ctrl' , CSRStorage(
+                name='adly_ctrl',
+                fields=[
+                    CSRField(
+                        "load_value",
+                        size=1,
+                        description="Will load min/max value if set to 1"
+                    ),
+                    CSRField(
+                        "increment_value",
+                        size=1,
+                        description="Delay increment if set to 1, decrement if set to 0"
+                    ),
+                ])
+            )
+            getattr(self, 'adly_ctrl').storage.attr.add("slow_ff")
+            getattr(self, 'adly_ctrl').storage.attr.add("keep")
+
         if with_odelay or with_clock_odelay:
-            setattr(self, 'ckdly_rst' , CSR(name='ckdly_rst'))
-            setattr(self, 'ckdly_inc' , CSR(name='ckdly_inc'))
+            setattr(self, 'ckdly_update' , CSR(name='ckdly_update'))
+            setattr(self, 'ckdly', CSRStatus(16, name='ckdly'))
+            getattr(self, 'ckdly').status.attr.add("slow_in")
+            getattr(self, 'ckdly').status.attr.add("keep")
 
         for prefix in prefixes:
+            if with_odelay or with_clock_odelay:
+                setattr(self, prefix+'ckdly', CSRStatus(16, name=prefix+'ckdly'))
+                getattr(self, prefix+'ckdly').status.attr.add("slow_in")
+                getattr(self, prefix+'ckdly').status.attr.add("keep")
+
             setattr(self, prefix+'preamble', CSRStatus(2*2, name=prefix+'preamble'))
             getattr(self, prefix+'preamble').status.attr.add("slow_in")
             getattr(self, prefix+'preamble').status.attr.add("keep")
@@ -94,12 +125,9 @@ class BasePHYCSR(Module, AutoCSR):
                 getattr(self, prefix+'dq_dly_sel').storage.attr.add("keep")
 
             if with_odelay or with_address_odelay:
-                setattr(self, prefix+'csdly_rst',  CSR(name=prefix+'csdly_rst'))
-                setattr(self, prefix+'csdly_inc',  CSR(name=prefix+'csdly_inc'))
-                setattr(self, prefix+'cadly_rst',  CSR(name=prefix+'cadly_rst'))
-                setattr(self, prefix+'cadly_inc',  CSR(name=prefix+'cadly_inc'))
-                setattr(self, prefix+'pardly_rst', CSR(name=prefix+'pardly_rst'))
-                setattr(self, prefix+'pardly_inc', CSR(name=prefix+'pardly_inc'))
+                setattr(self, prefix+'csdly_update',  CSR(name=prefix+'csdly_update'))
+                setattr(self, prefix+'cadly_update',  CSR(name=prefix+'cadly_update'))
+                setattr(self, prefix+'pardly_update', CSR(name=prefix+'pardly_update'))
 
                 setattr(self, prefix+'csdly', CSRStatus(16, name=prefix+'csdly'))
                 getattr(self, prefix+'csdly').status.attr.add("slow_in")
@@ -110,10 +138,8 @@ class BasePHYCSR(Module, AutoCSR):
                 getattr(self, prefix+'cadly').status.attr.add("keep")
 
             if with_idelay:
-                setattr(self, prefix+'rdly_dq_rst',  CSR(name=prefix+'rdly_dq_rst'))
-                setattr(self, prefix+'rdly_dq_inc',  CSR(name=prefix+'rdly_dq_inc'))
-                setattr(self, prefix+'rdly_dqs_rst', CSR(name=prefix+'rdly_dqs_rst'))
-                setattr(self, prefix+'rdly_dqs_inc', CSR(name=prefix+'rdly_dqs_inc'))
+                setattr(self, prefix+'rdly_dq_update',  CSR(name=prefix+'rdly_dq_update'))
+                setattr(self, prefix+'rdly_dqs_update', CSR(name=prefix+'rdly_dqs_update'))
 
                 setattr(self, prefix+'rdly_dqs', CSRStatus(16, name=prefix+'rdly_dqs'))
                 getattr(self, prefix+'rdly_dqs').status.attr.add("slow_in")
@@ -123,12 +149,9 @@ class BasePHYCSR(Module, AutoCSR):
                 getattr(self, prefix+'rdly_dq').status.attr.add("keep")
 
             if with_odelay:
-                setattr(self, prefix+'wdly_dq_rst',  CSR(name=prefix+'wdly_dq_rst'))
-                setattr(self, prefix+'wdly_dq_inc',  CSR(name=prefix+'wdly_dq_inc'))
-                setattr(self, prefix+'wdly_dm_rst',  CSR(name=prefix+'wdly_dm_rst'))
-                setattr(self, prefix+'wdly_dm_inc',  CSR(name=prefix+'wdly_dm_inc'))
-                setattr(self, prefix+'wdly_dqs_rst', CSR(name=prefix+'wdly_dqs_rst'))
-                setattr(self, prefix+'wdly_dqs_inc', CSR(name=prefix+'wdly_dqs_inc'))
+                setattr(self, prefix+'wdly_dq_update',  CSR(name=prefix+'wdly_dq_update'))
+                setattr(self, prefix+'wdly_dm_update',  CSR(name=prefix+'wdly_dm_update'))
+                setattr(self, prefix+'wdly_dqs_update', CSR(name=prefix+'wdly_dqs_update'))
 
                 setattr(self, prefix+'wdly_dqs', CSRStatus(16, name=prefix+'wdly_dqs'))
                 getattr(self, prefix+'wdly_dqs').status.attr.add("slow_in")

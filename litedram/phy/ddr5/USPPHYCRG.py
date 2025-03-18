@@ -174,10 +174,17 @@ class USPPHYCRG(Module):
             ),
             # 2. d Release IDELAYCTRL reset
             If(counter == 0x60,
-               self.idelayctrl_rst.eq(0),
+                self.idelayctrl_rst.eq(0),
             ),
             # 2. e Ready state is not indicated to SW. so no step for ready check
+            If((counter == 0xEF) | (counter == 0xF0),
+                halt.eq(~self.idelayctrl_ready),
+            ),
+            If((counter == 0xFE),
+                self.load_base_delay.eq(1),
+            ),
             If(counter == 0xFF,
+                self.load_base_delay.eq(0),
                 self.stable_clk.eq(1),
             ),
         ]
@@ -234,17 +241,12 @@ class USPPHYCRG(Module):
                 o_Q=idelayctrl_rst_regs[bank],
             )
 
+        _idelayctrl_ready = Signal()
         self.comb += [
-            self.idelayctrl_ready.eq(reduce(and_, [sig for _, sig in idelayctrl_readys.items()])),
+            _idelayctrl_ready.eq(reduce(and_, [sig for _, sig in idelayctrl_readys.items()])),
         ]
-        idelayctrl_ready_1 = Signal()
-        idelayctrl_ready_2 = Signal()
         self.sync += [
-            idelayctrl_ready_1.eq(self.idelayctrl_ready),
-            idelayctrl_ready_2.eq(idelayctrl_ready_1),
-        ]
-        self.comb += [
-            self.load_base_delay.eq(idelayctrl_ready_1 & ~idelayctrl_ready_2),
+            self.idelayctrl_ready.eq(_idelayctrl_ready),
         ]
 
     def create_clock_domains(self, clock_domains):
