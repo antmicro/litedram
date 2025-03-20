@@ -54,7 +54,6 @@ class USPPHYCRG(Module):
         self.cd_sys4x_90_raw_buf.clk.attr.add(("DONT_TOUCH", "TRUE"))
         attr = set()
         attr.add(("DONT_TOUCH", "TRUE"))
-        attr.add(("CLOCK_DELAY_GROUP", "PHY_CE"))
         self.specials += Instance(
             "BUFG",
             name="_sys4x_raw_buf",
@@ -78,7 +77,6 @@ class USPPHYCRG(Module):
         self.clock_domains.cd_sys4x_90_ctrl = ClockDomain()
         attr = set()
         attr.add(("DONT_TOUCH", "TRUE"))
-        attr.add(("CLOCK_DELAY_GROUP", "PHY_CE"))
         if self.sys_clk_freq > 150e6:
             self.specials += Instance(
                 "BUFGCE_DIV",

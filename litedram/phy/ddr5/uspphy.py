@@ -324,8 +324,6 @@ class USPCompoDDR5PHY(DDR5PHY):
         self.mult = self.dq_dqs_ratio//4
         self.max_delay_taps = 512
 
-        self._en_vtc = CSRStorage(reset=1)
-
         self.handled_ca_vref_status = {}
         for prefix in prefixes + [""]:
             self.handled_ca_vref_status[prefix] = False
@@ -645,14 +643,14 @@ class USPCompoDDR5PHY(DDR5PHY):
             p_SIM_DEVICE         = "ULTRASCALE_PLUS",
             p_CASCADE          = "NONE",
             p_UPDATE_MODE      = "ASYNC",
-            p_REFCLK_FREQUENCY = self.iodelay_clk_freq/1e6,
-            p_DELAY_FORMAT     = "TIME",
+            p_REFCLK_FREQUENCY = 300,
+            p_DELAY_FORMAT     = "COUNT",
             p_DELAY_TYPE       = "VAR_LOAD",
             p_DELAY_VALUE      = 0,
             i_RST     = self.crg.get_iodelay_rst(clk),
             i_LOAD    = _load,
             i_CLK     = ClockSignal(clk),
-            i_EN_VTC  = self.crg.get_iodelay_vtc(clk) & self._en_vtc.storage,
+            i_EN_VTC  = 0,
             i_CE      = _ce,
             i_INC     = self.CSRs['adly_ctrl'].fields.increment_value,
             i_ODATAIN = din,
@@ -745,14 +743,14 @@ class USPCompoDDR5PHY(DDR5PHY):
             p_SIM_DEVICE         = "ULTRASCALE_PLUS",
             p_CASCADE          = "NONE",
             p_UPDATE_MODE      = "ASYNC",
-            p_REFCLK_FREQUENCY = self.iodelay_clk_freq/1e6,
-            p_DELAY_FORMAT     = "TIME",
+            p_REFCLK_FREQUENCY = 300,
+            p_DELAY_FORMAT     = "COUNT",
             p_DELAY_TYPE       = "VAR_LOAD",
             p_DELAY_VALUE      = 0,
             i_RST     = self.crg.get_iodelay_rst(clk),
             i_LOAD    = _load,
             i_CLK     = ClockSignal(clk),
-            i_EN_VTC  = self.crg.get_iodelay_vtc(clk) & self._en_vtc.storage,
+            i_EN_VTC  = 0,
             i_CE      = _ce,
             i_INC     = self.CSRs['adly_ctrl'].fields.increment_value,
             i_IDATAIN = din,
@@ -870,7 +868,7 @@ class USPCompoDDR5PHY(DDR5PHY):
         pad_t, pad_c = self.get_pads(pin, offset=offset)
 
         prefix, _pin_func = ("", pin) if len(self.prefixes) == 1 else (pin[:2], pin[2:])
-
+        _offset = offset
         if _pin_func == "ck_t":
             offset = None
         load_sig = None
@@ -882,9 +880,13 @@ class USPCompoDDR5PHY(DDR5PHY):
             cd_out, out_sig, bank, oe_sig=oe_sig, load_sig=load_sig)
 
         offset = offset if offset else 0
-        if "ck" == _pin_func:
+        if "ck_t" == pin:
             self.sync += [
-                If(self.CSRs[prefix+'dly_sel'].storage[offset],
+                self.CSRs['ckdly'].status.eq(delay_state),
+            ]
+        elif "ck" == _pin_func:
+            self.sync += [
+                If(self.CSRs[prefix+'dly_sel'].storage[_offset],
                     self.CSRs[prefix+'ckdly'].status.eq(delay_state),
                 ),
             ]

@@ -639,6 +639,7 @@ class S7DDR5PHY(DDR5PHY, S7Common):
 
         prefix, _pin_func = ("", pin) if len(self.prefixes) == 1 else (pin[:2], pin[2:])
 
+        _offset = offset
         if _pin_func == "ck_t":
             offset = None
         load_sig = None
@@ -650,9 +651,13 @@ class S7DDR5PHY(DDR5PHY, S7Common):
 
         offset = offset if offset else 0
         if self.with_odelay:
-            if "ck" == _pin_func:
+            if "ck_t" == pin:
                 self.sync += [
-                    If(self.CSRs[prefix+'dly_sel'].storage[offset],
+                    self.CSRs['ckdly'].status.eq(delay_state),
+                ]
+            elif "ck" == _pin_func:
+                self.sync += [
+                    If(self.CSRs[prefix+'dly_sel'].storage[_offset],
                         self.CSRs[prefix+'ckdly'].status.eq(delay_state),
                     ),
                 ]
@@ -754,10 +759,10 @@ class K7DDR5PHY(S7DDR5PHY):
     def __init__(self, pads, **kwargs):
         S7DDR5PHY.__init__(self, pads, with_odelay=True, **kwargs)
 
-class A7DDR5PHY(S7DDR5PHY):
-    """Xilinx Artix7 DDR5 PHY (without odelay)
-
-    This variant requires generating sys4x_90 clock in CRG with a 90° phase shift vs sys4x.
-    """
-    def __init__(self, pads, **kwargs):
-        S7DDR5PHY.__init__(self, pads, with_odelay=False, **kwargs)
+#class A7DDR5PHY(S7DDR5PHY):
+#    """Xilinx Artix7 DDR5 PHY (without odelay)
+#
+#    This variant requires generating sys4x_90 clock in CRG with a 90° phase shift vs sys4x.
+#    """
+#    def __init__(self, pads, **kwargs):
+#        S7DDR5PHY.__init__(self, pads, with_odelay=False, **kwargs)
