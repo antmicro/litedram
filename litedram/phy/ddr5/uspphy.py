@@ -783,7 +783,7 @@ class USPCompoDDR5PHY(DDR5PHY):
             clkdiv  = cd_in[0],
             rst_sig = self.crg.get_serdes_rst(cd_in[0]),
         )
-        return _input, delay_state
+        return _input, delay_state, iser_output
 
     def get_pads(self, pin, *, offset=None):
         if offset is None:
@@ -913,7 +913,7 @@ class USPCompoDDR5PHY(DDR5PHY):
 
         load_sig = self.get_in_load(pin, offset=offset, cd=cd_in[0])
         bank = self.get_bank(pin=pin, offset=offset)
-        from_pad, delay_state = self.handle_iser(
+        from_pad, delay_state, _ = self.handle_iser(
             cd_in=cd_in,
             in_sig=in_sig,
             idelay_cd=cd_in[0],
@@ -948,7 +948,7 @@ class USPCompoDDR5PHY(DDR5PHY):
         )
 
         load_sig = self.get_in_load(pin, offset=offset, cd=cd_out[0])
-        from_pad, idelay_state = self.handle_iser(
+        from_pad, idelay_state, iser_output = self.handle_iser(
             cd_in=cd_in,
             in_sig=in_sig,
             idelay_cd=cd_out[0],
@@ -959,6 +959,21 @@ class USPCompoDDR5PHY(DDR5PHY):
         offset = offset if offset else 0
         vref_select = None
         data = False
+        if "dq" in _pin_func and "B_" == prefix:
+            _out_sig = Signal.like(out_sig)
+            _in_sig = Signal.like(iser_output)
+            _oe_sig = Signal.like(oe_sig)
+            _out_sig.name = f"{_pin_func}_{offset}_out"
+            _in_sig.name = f"{_pin_func}_{offset}_in"
+            _oe_sig.name = f"{_pin_func}_{offset}_oe"
+            _out_sig.attr.add(("MARK_DEBUG", "TRUE"))
+            _in_sig.attr.add(("MARK_DEBUG", "TRUE"))
+            _oe_sig.attr.add(("MARK_DEBUG", "TRUE"))
+            self.comb += [
+                _out_sig.eq(out_sig),
+                _in_sig.eq(iser_output),
+                _oe_sig.eq(oe_sig),
+            ]
         if "dq" == _pin_func:
             data = True
             vref_select = offset//8
