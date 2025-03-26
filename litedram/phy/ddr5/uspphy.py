@@ -214,7 +214,6 @@ class XilinxUSPAsyncFIFOWrap(Module, _FIFOInterface):
             self.comb += cdc._rst.eq(self._rst(self.wclk))
 
 
-
 class USPCompoDDR5PHY(DDR5PHY):
     def __init__(
         self,
@@ -505,13 +504,14 @@ class USPCompoDDR5PHY(DDR5PHY):
                     cdc.re.eq(cdc.readable),
                 ]
                 rsum = 0
+                div = output_width//input_width
                 for _, _output in values:
                     start = rsum
-                    end = rsum+len(_output)//2
+                    end = rsum+len(_output)//div
                     self.comb += [
-                        _output.eq(Cat(output_sig[start:end], output_sig[input_width+start:input_width+end]))
+                        _output.eq(Cat([output_sig[i*input_width+start:i*input_width+end] for i in range(div)]))
                     ]
-                    rsum += len(_output)//2
+                    rsum += len(_output)//div
 
     def get_domains(self, pin, is_in, is_out):
         cd_out, cd_in = self.pin_domains[pin]
@@ -593,21 +593,109 @@ class USPCompoDDR5PHY(DDR5PHY):
         else:
             self.obufds(din=out_sig, dout=pad_t, dout_b=pad_c)
 
-    def oserdese3_ddr(self, din, dout, tin, tout, clkdiv, clk, rst_sig):
-        self.specials += Instance("OSERDESE3",
-            p_SIM_DEVICE         = "ULTRASCALE_PLUS",
-            p_DATA_WIDTH         = 4,
-            p_INIT               = 0,
-            p_IS_RST_INVERTED    = 0,
-            p_IS_CLK_INVERTED    = 0,
-            p_IS_CLKDIV_INVERTED = 0,
-            i_RST    = rst_sig,
-            i_CLK    = ClockSignal(clk),
-            i_CLKDIV = ClockSignal(clkdiv),
-            i_D      = din,
-            i_T      = tin,
-            o_OQ     = dout,
-            o_T_OUT  = tout,
+    def simple_cdc(self, *, din, dout, src_clk, dst_clk, reset_value=1):
+        assert len(din)/len(dout) == 2.0, (len(din), len(dout))
+        rst = ResetSignal(src_clk)
+        clk = ClockSignal(dst_clk)
+        internal_rst = Signal()
+        cnt = Signal()
+        self.specials += Instance("FDPE",
+            p_INIT=1,
+            p_IS_C_INVERTED=0,
+            p_IS_D_INVERTED=0,
+            p_IS_PRE_INVERTED=0,
+            i_C=clk,
+            i_CE=1,
+            i_D=0,
+            i_PRE=rst,
+            o_Q=internal_rst,
+        )
+        self.specials += Instance("FDPE",
+            p_INIT=1,
+            p_IS_C_INVERTED=0,
+            p_IS_D_INVERTED=0,
+            p_IS_PRE_INVERTED=0,
+            i_C=clk,
+            i_CE=1,
+            i_D=~cnt,
+            i_PRE=internal_rst,
+            o_Q=cnt,
+        )
+        intermediate = Signal.like(din)
+        muxed_intermediate = Signal.like(dout)
+        half = len(dout)
+        init = 1
+        primitive = "FDPE"
+        reset = {
+            "i_PRE":internal_rst,
+            "p_IS_PRE_INVERTED":0,
+        }
+        if reset_value == 0:
+            init = 0
+            primitive = "FDCE"
+            reset = {
+                "i_CLR":internal_rst,
+                "p_IS_CLR_INVERTED":0,
+            }
+        for i in range(len(din)):
+            self.specials += Instance(primitive,
+                p_INIT=init,
+                p_IS_C_INVERTED=0,
+                p_IS_D_INVERTED=0,
+                i_C=clk,
+                i_CE=cnt,
+                i_D=din[i],
+                **reset,
+                o_Q=intermediate[i],
+            )
+        self.comb += [
+            If(cnt,
+               muxed_intermediate.eq(intermediate[half:])
+            ).Else(
+               muxed_intermediate.eq(intermediate[:half])
+            )
+        ]
+        for i in range(len(dout)):
+            self.specials += Instance(primitive,
+                p_INIT=init,
+                p_IS_C_INVERTED=0,
+                p_IS_D_INVERTED=0,
+                i_C=clk,
+                i_CE=cnt,
+                i_D=muxed_intermediate[i],
+                **reset,
+                o_Q=dout[i],
+            )
+
+
+    def oddre1_with_t(self, *, din, dout, tin, tout, clk, rst_sig, reset_value=0):
+        assert len(din) == 2, len(din)
+        assert len(tin) == 2, len(tin)
+        self.specials += Instance(
+            "ODDRE1",
+            p_SRVAL=reset_value,
+            p_IS_C_INVERTED=0,
+            p_IS_D1_INVERTED=0,
+            p_IS_D2_INVERTED=0,
+            p_SIM_DEVICE="ULTRASCALE_PLUS",
+            o_Q=tout,
+            i_C=ClockSignal(clk),
+            i_D1=tin[0],
+            i_D2=tin[1],
+            i_SR=rst_sig,
+        )
+        self.specials += Instance(
+            "ODDRE1",
+            p_SRVAL=reset_value,
+            p_IS_C_INVERTED=0,
+            p_IS_D1_INVERTED=0,
+            p_IS_D2_INVERTED=0,
+            p_SIM_DEVICE="ULTRASCALE_PLUS",
+            o_Q=dout,
+            i_C=ClockSignal(clk),
+            i_D1=din[0],
+            i_D2=din[1],
+            i_SR=rst_sig,
         )
 
     def odelaye3(self, *, din, dout, load, clk, cnt_value_out, bank):
@@ -660,30 +748,42 @@ class USPCompoDDR5PHY(DDR5PHY):
         )
 
     def handle_oser(self, cd_out, out_sig, bank, *, oe_sig=None, load_sig=None):
+        assert len(out_sig) == 4
+        assert oe_sig is None or len(oe_sig) == 4
         delay     = Signal()
         _output    = Signal()
-        _tri_state = None
+        _tri_state = Signal()
         _with_odelay = load_sig is not None
-        oser_method = self.oserdese3_ddr
-        if oe_sig is not None:
-            old_oe = oe_sig
-            oe_sig = Signal()
-            _tri_state = Signal()
-            tri_state_domain = getattr(self.sync, cd_out[0])
-            tri_state_domain += oe_sig.eq(reduce(or_, old_oe))
-        else:
-            oe_sig = Signal()
-            _tri_state = Signal()
-            self.comb += oe_sig.eq(0)
 
-        oserdes = oser_method(
-            din = out_sig,
+        if oe_sig is not None:
+            oe_sig_cdc = Signal(len(out_sig)//2)
+            self.simple_cdc(
+                din=oe_sig,
+                dout=oe_sig_cdc,
+                src_clk=cd_out[0],
+                dst_clk=cd_out[1],
+                reset_value=0,
+            )
+        else:
+            oe_sig_cdc = Signal(2)
+            self.comb += oe_sig_cdc.eq(0)
+
+        out_sig_cdc = Signal(len(out_sig)//2)
+        self.simple_cdc(
+            din=out_sig,
+            dout=out_sig_cdc,
+            src_clk=cd_out[0],
+            dst_clk=cd_out[1],
+            reset_value=1,
+        )
+
+        self.oddre1_with_t(
+            din = out_sig_cdc,
             dout = delay,
             tout = _tri_state,
-            tin = oe_sig,
-            clkdiv = cd_out[0],
+            tin = oe_sig_cdc,
             clk = cd_out[1],
-            rst_sig = self.crg.get_serdes_rst(cd_out[0]),
+            rst_sig = self.crg.get_serdes_rst(cd_out[1]),
         )
         delay_state = None
         delay_state = Signal(9)
@@ -697,17 +797,18 @@ class USPCompoDDR5PHY(DDR5PHY):
         )
         return _output, _tri_state, delay_state
 
-    def iserdese3_ddr(self, din, dout, clkdiv, clk, rst_sig):
-        self.specials += Instance("ISERDESE3",
-            p_SIM_DEVICE         = "ULTRASCALE_PLUS",
-            p_DATA_WIDTH         = 8,
-            p_IS_CLK_B_INVERTED  = 1,
-            i_RST    = rst_sig,
-            i_CLK    = ClockSignal(clk),
-            i_CLK_B  = ClockSignal(clk),
-            i_CLKDIV = ClockSignal(clkdiv),
-            i_D      = din,
-            o_Q      = dout,
+    def iddre1(self, din, dout, clk, rst_sig):
+        assert len(dout) == 2
+        self.specials += Instance("IDDRE1",
+            p_DDR_CLK_EDGE="SAME_EDGE_PIPELINED",
+            p_IS_C_INVERTED=0,
+            p_IS_CB_INVERTED=1,
+            i_R=rst_sig,
+            i_C=ClockSignal(clk),
+            i_CB=ClockSignal(clk),
+            i_D=din,
+            o_Q1=dout[0],
+            o_Q2=dout[1],
         )
 
     def idelaye3(self, *, din, dout, load, clk, cnt_value_out, bank):
@@ -772,16 +873,15 @@ class USPCompoDDR5PHY(DDR5PHY):
             bank=bank,
         )
 
-        iser_output = Signal(4)
+        iser_output = Signal(2)
         if cd_in[0] not in self.fast_input:
             self.fast_input[cd_in[0]] = []
         self.fast_input[cd_in[0]].append((iser_output, in_sig))
-        self.iserdese3_ddr(
+        self.iddre1(
             din     = _delayed_input,
             dout    = iser_output,
             clk     = cd_in[1],
-            clkdiv  = cd_in[0],
-            rst_sig = self.crg.get_serdes_rst(cd_in[0]),
+            rst_sig = self.crg.get_serdes_rst(cd_in[1]),
         )
         return _input, delay_state, iser_output
 
