@@ -333,8 +333,10 @@ class USPPHYCRG(Module):
         if clock_domain == "sys":
             return self._raw_reset_signal
         if clock_domain not in self.domain_resets:
+            _reset_sig = Signal()
+            self.specials += MultiReg(self.rst, _reset_sig, clock_domain, reset=1)
             reset_sig = Signal()
-            self.specials += MultiReg(self.rst, reset_sig, clock_domain, reset=1)
+            self.comb += reset_sig.eq(_reset_sig)
             self.domain_resets[clock_domain] = reset_sig
         return self.domain_resets[clock_domain]
 
