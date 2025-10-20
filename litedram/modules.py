@@ -1584,7 +1584,7 @@ class LPDDR5Module(SDRAMModule):
 
 class MT62F1G32D4DR(LPDDR5Module):
     nbanks = 16
-    nrows = 65536
+    nrows = 32768
     ncols = 64
 
     technology_timings = _TechnologyTimings(tREFI=3.906 * 1e3, tWTR=(4, 12), tCCD=(8, None), tRRD=(2, 10), tZQCS=None)
