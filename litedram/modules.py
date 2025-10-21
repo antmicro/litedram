@@ -1585,7 +1585,7 @@ class LPDDR5Module(SDRAMModule):
 class MT62F1G32D4DR(LPDDR5Module):
     nbanks = 16
     nrows = 32768
-    ncols = 64
+    ncols = 64 * 16 # LPDDR5 uses single column per burst, while all previous generations used single column per bit
 
     technology_timings = _TechnologyTimings(tREFI=3.906 * 1e3, tWTR=(4, 12), tCCD=(8, None), tRRD=(2, 10), tZQCS=None)
     speedgrade_timings = {
