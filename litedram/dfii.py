@@ -35,12 +35,6 @@ class PhaseInjector(Module, AutoCSR):
 
         # # #
 
-        wdata_ready = phase.wrdata_en
-        for _ in range(write_latency):
-            new_wdata_ready = Signal.like(wdata_ready)
-            self.sync += new_wdata_ready.eq(wdata_ready)
-            wdata_ready = new_wdata_ready
-
         self.comb += [
             If(self._command_issue.re,
                 phase.cs_n.eq(Replicate(~self._command.fields.cs, len(phase.cs_n))),
@@ -57,7 +51,7 @@ class PhaseInjector(Module, AutoCSR):
             phase.bank.eq(self._baddress.storage),
             phase.wrdata_en.eq(self._command_issue.re & self._command.fields.wren),
             phase.rddata_en.eq(self._command_issue.re & self._command.fields.rden),
-            phase.wrdata.eq(self._wrdata.storage & Replicate(wdata_ready, len(phase.wrdata))),
+            phase.wrdata.eq(self._wrdata.storage),
             phase.wrdata_mask.eq(0)
         ]
         self.sync += If(phase.rddata_valid, self._rddata.status.eq(phase.rddata))
